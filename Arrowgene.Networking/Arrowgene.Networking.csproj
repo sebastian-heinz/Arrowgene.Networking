@@ -1,0 +1,19 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <RootNamespace>Arrowgene.Networking</RootNamespace>
+    <Title>Arrowgene.Networking</Title>
+    <Company>Arrowgene</Company>
+    <Copyright>Copyright © 2017-2020 Arrowgene</Copyright>
+    <Version>$(Version)</Version>
+    <Authors>sebastian-heinz</Authors>
+    <Description>Server socket</Description>
+    <PackageProjectUrl>https://github.com/sebastian-heinz/Arrowgene.Networking</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/sebastian-heinz/Arrowgene.Networking</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>socket,network,arrowgene</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Arrowgene.Logging" Version="1.0.0" />
+  </ItemGroup>
+</Project>
