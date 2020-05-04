@@ -12,9 +12,10 @@ namespace Arrowgene.Networking.Tcp.Consumer.BlockingQueueConsumption
      */
     public abstract class ThreadedBlockingQueueConsumer : IConsumer
     {
+        private static readonly ILogger Logger = LogProvider.Logger(typeof(ThreadedBlockingQueueConsumer));
+
         private readonly BlockingCollection<ClientEvent>[] _queues;
         private readonly Thread[] _threads;
-        private readonly ILogger _logger;
         private readonly int _maxUnitOfOrder;
         private volatile bool _isRunning;
         private readonly string _identity;
@@ -24,7 +25,6 @@ namespace Arrowgene.Networking.Tcp.Consumer.BlockingQueueConsumption
         public ThreadedBlockingQueueConsumer(AsyncEventSettings socketSetting,
             string identity = "ThreadedBlockingQueueConsumer")
         {
-            _logger = LogProvider.Logger(this);
             _maxUnitOfOrder = socketSetting.MaxUnitOfOrder;
             _identity = identity;
             _queues = new BlockingCollection<ClientEvent>[_maxUnitOfOrder];
@@ -44,8 +44,10 @@ namespace Arrowgene.Networking.Tcp.Consumer.BlockingQueueConsumption
                 {
                     clientEvent = _queues[unitOfOrder].Take(_cancellationTokenSource.Token);
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException ex)
                 {
+                    Logger.Exception(ex);
+                    Stop();
                     return;
                 }
 
@@ -68,7 +70,7 @@ namespace Arrowgene.Networking.Tcp.Consumer.BlockingQueueConsumption
         {
             if (_isRunning)
             {
-                _logger.Error($"[{_identity}] Consumer already running.");
+                Logger.Error($"[{_identity}] Consumer already running.");
                 return;
             }
 
@@ -80,7 +82,7 @@ namespace Arrowgene.Networking.Tcp.Consumer.BlockingQueueConsumption
                 _queues[i] = new BlockingCollection<ClientEvent>();
                 _threads[i] = new Thread(() => Consume(uuo));
                 _threads[i].Name = $"[{_identity}] Consumer: {i}";
-                _logger.Info($"[{_identity}] Starting Consumer: {i}");
+                Logger.Info($"[{_identity}] Starting Consumer: {i}");
                 _threads[i].Start();
             }
         }
@@ -106,9 +108,18 @@ namespace Arrowgene.Networking.Tcp.Consumer.BlockingQueueConsumption
 
         void IConsumer.OnStop()
         {
+            Stop();
+        }
+
+        void IConsumer.OnStopped()
+        {
+        }
+
+        private void Stop()
+        {
             if (!_isRunning)
             {
-                _logger.Error($"[{_identity}] Consumer already stopped.");
+                Logger.Error($"[{_identity}] Consumer already stopped.");
                 return;
             }
 
@@ -117,15 +128,11 @@ namespace Arrowgene.Networking.Tcp.Consumer.BlockingQueueConsumption
             for (int i = 0; i < _maxUnitOfOrder; i++)
             {
                 Thread consumerThread = _threads[i];
-                _logger.Info($"[{_identity}] Shutting Consumer: {i} down...");
-                Service.JoinThread(consumerThread, 10000, _logger);
-                _logger.Info($"[{_identity}] Consumer: {i} ended.");
+                Logger.Info($"[{_identity}] Shutting Consumer: {i} down...");
+                Service.JoinThread(consumerThread, 10000, Logger);
+                Logger.Info($"[{_identity}] Consumer: {i} ended.");
                 _threads[i] = null;
             }
-        }
-
-        void IConsumer.OnStopped()
-        {
         }
     }
 }

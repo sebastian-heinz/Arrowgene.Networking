@@ -32,6 +32,8 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         private const int ThreadTimeoutMs = 10000;
         private const int NumAccepts = 10;
 
+        private static readonly ILogger Logger = LogProvider.Logger(typeof(AsyncEventServer));
+        
         private readonly ConcurrentStack<SocketAsyncEventArgs> _receivePool;
         private readonly ConcurrentStack<SocketAsyncEventArgs> _sendPool;
         private readonly ConcurrentStack<SocketAsyncEventArgs> _acceptPool;
@@ -39,7 +41,6 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         private readonly SemaphoreSlim _maxNumberAccepts;
         private readonly SemaphoreSlim _maxNumberSendOperations;
         private readonly byte[] _buffer;
-        private readonly ILogger _logger;
         private readonly AsyncEventSettings _settings;
         private readonly TimeSpan _socketTimeout;
         private readonly int[] _unitOfOrders;
@@ -61,7 +62,6 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             _clients = new AsyncEventClientList<AsyncEventClient>();
             _settings = new AsyncEventSettings(settings);
             _socketTimeout = TimeSpan.FromSeconds(_settings.SocketTimeoutSeconds);
-            _logger = LogProvider.Logger(this);
             _isRunning = false;
             _isRunningLock = new object();
             _unitOfOrderLock = new object();
@@ -123,13 +123,13 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         {
             if (socket == null)
             {
-                _logger.Error($"{_identity}called send with null-socket");
+                Logger.Error($"{_identity}called send with null-socket");
                 return;
             }
 
             if (!(socket is AsyncEventClient client))
             {
-                _logger.Error($"{_identity}called send with wrong instance");
+                Logger.Error($"{_identity}called send with wrong instance");
                 return;
             }
 
@@ -141,7 +141,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             _maxNumberSendOperations.Wait();
             if (!_isRunning)
             {
-                _logger.Debug($"{_identity}Server stopped, not sending anymore.");
+                Logger.Debug($"{_identity}Server stopped, not sending anymore.");
                 _maxNumberSendOperations.Release();
                 return;
             }
@@ -154,7 +154,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 
             if (!client.Socket.Connected)
             {
-                _logger.Error(
+                Logger.Error(
                     $"{_identity}AsyncEventClient not connected during send, closing socket. ({client.Identity})");
                 client.Close();
                 _maxNumberSendOperations.Release();
@@ -163,7 +163,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 
             if (!_sendPool.TryPop(out SocketAsyncEventArgs writeEventArgs))
             {
-                _logger.Error(
+                Logger.Error(
                     $"{_identity}Could not acquire writeEventArgs, closing socket. ({client.Identity})");
                 client.Close();
                 _maxNumberSendOperations.Release();
@@ -179,7 +179,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         {
             if (client.ReadEventArgs == null)
             {
-                _logger.Error($"{_identity}Already returned AsyncEventArgs to poll ({client.Identity})");
+                Logger.Error($"{_identity}Already returned AsyncEventArgs to poll ({client.Identity})");
                 return;
             }
 
@@ -187,20 +187,20 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             ReleaseAccept(client.ReadEventArgs);
             if (!_clients.Remove(client))
             {
-                _logger.Error($"{_identity}Could not remove client from list. ({client.Identity})");
+                Logger.Error($"{_identity}Could not remove client from list. ({client.Identity})");
             }
 
-            _logger.Debug($"{_identity}Free Receive: {_maxNumberAcceptedClients.CurrentCount}");
-            _logger.Debug($"{_identity}Free Send: {_maxNumberSendOperations.CurrentCount}");
-            _logger.Debug($"{_identity}NotifyDisconnected::Current Connections: {_clients.Count}");
+            Logger.Debug($"{_identity}Free Receive: {_maxNumberAcceptedClients.CurrentCount}");
+            Logger.Debug($"{_identity}Free Send: {_maxNumberSendOperations.CurrentCount}");
+            Logger.Debug($"{_identity}NotifyDisconnected::Current Connections: {_clients.Count}");
             try
             {
                 OnClientDisconnected(client);
             }
             catch (Exception ex)
             {
-                _logger.Error($"{_identity}Error during OnClientDisconnected() user code ({client.Identity})");
-                _logger.Exception(ex);
+                Logger.Error($"{_identity}Error during OnClientDisconnected() user code ({client.Identity})");
+                Logger.Exception(ex);
             }
         }
 
@@ -210,7 +210,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             {
                 if (_isRunning)
                 {
-                    _logger.Error($"{_identity}Error: Server already running.");
+                    Logger.Error($"{_identity}Error: Server already running.");
                     return;
                 }
 
@@ -240,14 +240,14 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             {
                 if (!_isRunning)
                 {
-                    _logger.Error($"{_identity}Error: Server already stopped.");
+                    Logger.Error($"{_identity}Error: Server already stopped.");
                     return;
                 }
 
                 _isRunning = false;
                 _cancellation.Cancel();
-                Service.JoinThread(_serverThread, ThreadTimeoutMs, _logger);
-                Service.JoinThread(_timeoutThread, ThreadTimeoutMs, _logger);
+                Service.JoinThread(_serverThread, ThreadTimeoutMs, Logger);
+                Service.JoinThread(_timeoutThread, ThreadTimeoutMs, Logger);
                 if (_listenSocket != null)
                 {
                     _listenSocket.Close();
@@ -270,8 +270,8 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                 }
                 catch (Exception ex)
                 {
-                    _logger.Error($"{_identity}Error during OnStopped() user code");
-                    _logger.Exception(ex);
+                    Logger.Error($"{_identity}Error during OnStopped() user code");
+                    Logger.Exception(ex);
                 }
             }
         }
@@ -314,8 +314,8 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                 }
                 catch (Exception ex)
                 {
-                    _logger.Error($"{_identity}Error during OnStarted() user code");
-                    _logger.Exception(ex);
+                    Logger.Error($"{_identity}Error during OnStarted() user code");
+                    Logger.Exception(ex);
                 }
 
                 if (_socketTimeout.TotalSeconds > 0)
@@ -330,7 +330,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             }
             else
             {
-                _logger.Error($"{_identity}Stopping server due to startup failure...");
+                Logger.Error($"{_identity}Stopping server due to startup failure...");
                 Stop();
             }
         }
@@ -339,7 +339,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         {
             IPEndPoint localEndPoint = new IPEndPoint(IpAddress, Port);
             _listenSocket = new Socket(localEndPoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-            _settings.SocketSettings.ConfigureSocket(_listenSocket, _logger);
+            _settings.SocketSettings.ConfigureSocket(_listenSocket, Logger);
             bool success = false;
             int retries = 0;
             while (_isRunning && !success && _settings.Retries >= retries)
@@ -352,21 +352,21 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                 }
                 catch (Exception exception)
                 {
-                    _logger.Exception(exception);
+                    Logger.Exception(exception);
                     if (exception is SocketException socketException &&
                         socketException.SocketErrorCode == SocketError.AddressAlreadyInUse)
                     {
-                        _logger.Error(
+                        Logger.Error(
                             $"{_identity}Address is already in use ({IpAddress}:{Port}), try another IP/Port");
                     }
 
-                    _logger.Error($"{_identity}Retrying in 1 Minute");
+                    Logger.Error($"{_identity}Retrying in 1 Minute");
                     Thread.Sleep(TimeSpan.FromMinutes(1));
                     retries++;
                 }
             }
 
-            _logger.Info($"{_identity}Startup Result: {success}");
+            Logger.Info($"{_identity}Startup Result: {success}");
             return success;
         }
 
@@ -377,7 +377,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 
             if (!_isRunning)
             {
-                _logger.Debug($"{_identity}Server stopped, not accepting new connections anymore.");
+                Logger.Debug($"{_identity}Server stopped, not accepting new connections anymore.");
                 _maxNumberAccepts.Release();
                 _maxNumberAcceptedClients.Release();
                 return;
@@ -385,7 +385,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 
             if (!_acceptPool.TryPop(out SocketAsyncEventArgs acceptEventArgs))
             {
-                _logger.Error($"{_identity}Could not acquire acceptEventArgs.");
+                Logger.Error($"{_identity}Could not acquire acceptEventArgs.");
                 _maxNumberAccepts.Release();
                 _maxNumberAcceptedClients.Release();
                 return;
@@ -416,13 +416,13 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             {
                 if (!_receivePool.TryPop(out SocketAsyncEventArgs readEventArgs))
                 {
-                    _logger.Error($"{_identity}Could not acquire readEventArgs");
+                    Logger.Error($"{_identity}Could not acquire readEventArgs");
                     _maxNumberAcceptedClients.Release();
                     return;
                 }
 
                 int unitOfOrder = ClaimUnitOfOrder();
-                _logger.Debug($"{_identity}ProcessAccept::Claimed UnitOfOrder: {unitOfOrder}");
+                Logger.Debug($"{_identity}ProcessAccept::Claimed UnitOfOrder: {unitOfOrder}");
                 AsyncEventClient client = new AsyncEventClient(
                     acceptSocket,
                     readEventArgs,
@@ -432,16 +432,16 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                 _clients.Add(client);
                 readEventArgs.UserToken = client;
                 Interlocked.Increment(ref _acceptedConnections);
-                _logger.Debug($"{_identity}ProcessAccept::Current Connections: {_clients.Count}");
-                _logger.Debug($"{_identity}Accepted Connections: {_acceptedConnections}");
+                Logger.Debug($"{_identity}ProcessAccept::Current Connections: {_clients.Count}");
+                Logger.Debug($"{_identity}Accepted Connections: {_acceptedConnections}");
                 try
                 {
                     OnClientConnected(client);
                 }
                 catch (Exception ex)
                 {
-                    _logger.Error($"{_identity}Error during OnClientConnected() user code ({client.Identity})");
-                    _logger.Exception(ex);
+                    Logger.Error($"{_identity}Error during OnClientConnected() user code ({client.Identity})");
+                    Logger.Exception(ex);
                 }
 
                 StartReceive(readEventArgs);
@@ -450,11 +450,11 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             {
                 if (socketError == SocketError.OperationAborted)
                 {
-                    _logger.Info($"{_identity}Accept Socket aborted");
+                    Logger.Info($"{_identity}Accept Socket aborted");
                 }
                 else
                 {
-                    _logger.Error($"{_identity}Accept Socket Error: {socketError}");
+                    Logger.Error($"{_identity}Accept Socket Error: {socketError}");
                 }
 
                 _maxNumberAcceptedClients.Release();
@@ -466,7 +466,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             AsyncEventClient client = (AsyncEventClient) readEventArgs.UserToken;
             if (client == null)
             {
-                _logger.Error($"{_identity}StartReceive - Client is null");
+                Logger.Error($"{_identity}StartReceive - Client is null");
                 return;
             }
 
@@ -482,7 +482,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             }
             catch (InvalidOperationException)
             {
-                _logger.Error($"{_identity}Error during StartReceive: InvalidOperationException ({client.Identity})");
+                Logger.Error($"{_identity}Error during StartReceive: InvalidOperationException ({client.Identity})");
                 StartReceive(readEventArgs);
                 return;
             }
@@ -503,7 +503,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             AsyncEventClient client = (AsyncEventClient) readEventArgs.UserToken;
             if (client == null)
             {
-                _logger.Error($"{_identity}ProcessReceive - Client is null");
+                Logger.Error($"{_identity}ProcessReceive - Client is null");
                 return;
             }
 
@@ -518,8 +518,8 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                 }
                 catch (Exception ex)
                 {
-                    _logger.Error($"{_identity}Error during OnReceivedData() user code ({client.Identity})");
-                    _logger.Exception(ex);
+                    Logger.Error($"{_identity}Error during OnReceivedData() user code ({client.Identity})");
+                    Logger.Exception(ex);
                 }
 
                 StartReceive(readEventArgs);
@@ -559,7 +559,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             }
             catch (InvalidOperationException)
             {
-                _logger.Error(
+                Logger.Error(
                     $"{_identity}Error during StartSend: InvalidOperationException ({token.Client.Identity})");
                 token.Client.Close();
                 ReleaseWrite(writeEventArgs);
@@ -632,7 +632,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                     TimeSpan lastOp = now - client.LastActive;
                     if (lastOp > _socketTimeout)
                     {
-                        _logger.Error(
+                        Logger.Error(
                             $"{_identity}Client socket timed out after {lastOp.TotalSeconds} seconds. SocketTimeout: {_socketTimeout.TotalSeconds} LastActive: {client.LastActive:yyyy-MM-dd HH:mm:ss} ({client.Identity})");
                         client.Close();
                     }

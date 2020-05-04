@@ -9,12 +9,12 @@ namespace Arrowgene.Networking.Tcp.Client.SyncReceive
 {
     public class SyncReceiveTcpClient : TcpClient
     {
+        private static readonly ILogger Logger = LogProvider.Logger(typeof(SyncReceiveTcpClient));
         private const string DefaultName = "Tcp Client";
 
         private volatile bool _isConnected;
         private readonly int _pollTimeout;
         private readonly int _bufferSize;
-        private readonly ILogger _logger;
         private Socket _socket;
         private Thread _readThread;
 
@@ -26,7 +26,6 @@ namespace Arrowgene.Networking.Tcp.Client.SyncReceive
 
         public SyncReceiveTcpClient(IConsumer consumer) : base(consumer)
         {
-            _logger = LogProvider.Logger(this);
             SocketPollTimeout = 100;
             Name = DefaultName;
             ThreadJoinTimeout = 1000;
@@ -67,7 +66,7 @@ namespace Arrowgene.Networking.Tcp.Client.SyncReceive
                             else
                             {
                                 const string errTimeout = "Client connection timed out.";
-                                _logger.Error(errTimeout);
+                                Logger.Error(errTimeout);
                                 socket.Close();
                                 OnConnectError(this, errTimeout, RemoteIpAddress, Port, timeout);
                             }
@@ -81,20 +80,20 @@ namespace Arrowgene.Networking.Tcp.Client.SyncReceive
                     else
                     {
                         const string errConnect = "Client could not connect.";
-                        _logger.Error(errConnect);
+                        Logger.Error(errConnect);
                         OnConnectError(this, errConnect, RemoteIpAddress, Port, timeout);
                     }
                 }
                 catch (Exception exception)
                 {
-                    _logger.Exception(exception);
+                    Logger.Exception(exception);
                     OnConnectError(this, exception.Message, RemoteIpAddress, Port, timeout);
                 }
             }
             else
             {
                 const string errConnected = "Client is already connected.";
-                _logger.Error(errConnected);
+                Logger.Error(errConnected);
                 OnConnectError(this, errConnected, RemoteIpAddress, Port, timeout);
             }
         }
@@ -102,30 +101,30 @@ namespace Arrowgene.Networking.Tcp.Client.SyncReceive
         protected override void OnClose()
         {
             _isConnected = false;
-            Service.JoinThread(_readThread, ThreadJoinTimeout, _logger);
+            Service.JoinThread(_readThread, ThreadJoinTimeout, Logger);
 
             if (_socket != null)
             {
                 _socket.Close();
             }
 
-            _logger.Debug($"{Name} Closed");
+            Logger.Debug($"{Name} Closed");
             OnClientDisconnected(this);
         }
 
         private Socket CreateSocket()
         {
             Socket socket;
-            _logger.Info($"{Name} Creating Socket...");
+            Logger.Info($"{Name} Creating Socket...");
             if (RemoteIpAddress.AddressFamily == AddressFamily.InterNetworkV6)
             {
                 socket = new Socket(AddressFamily.InterNetworkV6, SocketType.Stream, ProtocolType.Tcp);
-                _logger.Info($"{Name} Created Socket (IPv6)");
+                Logger.Info($"{Name} Created Socket (IPv6)");
             }
             else
             {
                 socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-                _logger.Info($"{Name} Created Socket (IPv4)");
+                Logger.Info($"{Name} Created Socket (IPv4)");
             }
 
             return socket;
@@ -137,13 +136,13 @@ namespace Arrowgene.Networking.Tcp.Client.SyncReceive
             _readThread = new Thread(ReadProcess);
             _readThread.Name = Name;
             _readThread.Start();
-            _logger.Info($"{Name} connected");
+            Logger.Info($"{Name} connected");
             OnClientConnected(this);
         }
 
         private void ReadProcess()
         {
-            _logger.Info($"{Name} started.");
+            Logger.Info($"{Name} started.");
             _isConnected = true;
             while (_isConnected)
             {
@@ -165,11 +164,11 @@ namespace Arrowgene.Networking.Tcp.Client.SyncReceive
                     {
                         if (!_socket.Connected)
                         {
-                            _logger.Error($"{Name} {e.Message}");
+                            Logger.Error($"{Name} {e.Message}");
                         }
                         else
                         {
-                            _logger.Exception(e);
+                            Logger.Exception(e);
                         }
 
                         Close();
@@ -179,7 +178,7 @@ namespace Arrowgene.Networking.Tcp.Client.SyncReceive
                 Thread.Sleep(SocketPollTimeout);
             }
 
-            _logger.Info($"{Name} ended.");
+            Logger.Info($"{Name} ended.");
         }
     }
 }
