@@ -46,7 +46,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             Retries = settings.Retries;
             SocketSettings = new SocketSettings(settings.SocketSettings);
             MaxUnitOfOrder = settings.MaxUnitOfOrder;
-            MaxSimultaneousSendsPerClient = settings.NumSimultaneouslyWriteOperations;
+            MaxSimultaneousSendsPerClient = settings.MaxSimultaneousSendsPerClient;
             SocketTimeoutSeconds = settings.SocketTimeoutSeconds;
         }
 
