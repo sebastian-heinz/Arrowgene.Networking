@@ -169,9 +169,9 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                 _maxNumberSendOperations.Release();
                 return;
             }
-
             AsyncEventToken token = (AsyncEventToken) writeEventArgs.UserToken;
             token.Assign(client, data);
+            client.WaitSend();
             StartSend(writeEventArgs);
         }
 
@@ -427,7 +427,8 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                     acceptSocket,
                     readEventArgs,
                     this,
-                    unitOfOrder
+                    unitOfOrder,
+                    _settings.MaxSimultaneousSendsPerClient
                 );
                 _clients.Add(client);
                 readEventArgs.UserToken = client;
@@ -603,6 +604,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         private void ReleaseWrite(SocketAsyncEventArgs writeEventArgs)
         {
             AsyncEventToken token = (AsyncEventToken) writeEventArgs.UserToken;
+            token.Client.ReleaseSend();
             token.Reset();
             _sendPool.Push(writeEventArgs);
             _maxNumberSendOperations.Release();

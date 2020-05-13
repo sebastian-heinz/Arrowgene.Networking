@@ -1,11 +1,14 @@
 ﻿using System;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
 
 namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 {
     public class AsyncEventClient : ITcpSocket
     {
+        private readonly SemaphoreSlim _maxSimultaneousSends;
+        
         public string Identity { get; }
         public IPAddress RemoteIpAddress { get; }
         public ushort Port { get; }
@@ -30,9 +33,11 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         private readonly AsyncEventServer _server;
         private readonly object _lock;
 
-        public AsyncEventClient(Socket socket, SocketAsyncEventArgs readEventArgs, AsyncEventServer server, int uoo)
+        public AsyncEventClient(Socket socket, SocketAsyncEventArgs readEventArgs, AsyncEventServer server, int uoo,
+            int maxSimultaneousSends)
         {
             _lock = new object();
+            _maxSimultaneousSends = new SemaphoreSlim(maxSimultaneousSends, maxSimultaneousSends);
             _isAlive = true;
             Socket = socket;
             ReadEventArgs = readEventArgs;
@@ -51,6 +56,16 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         public void Send(byte[] data)
         {
             _server.Send(this, data);
+        }
+
+        public void ReleaseSend()
+        {
+            _maxSimultaneousSends.Release();
+        }
+
+        public void WaitSend()
+        {
+            _maxSimultaneousSends.Wait();
         }
 
         public void Close()

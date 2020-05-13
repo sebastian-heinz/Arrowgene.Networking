@@ -17,6 +17,8 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         [DataMember(Order = 4)] public int Retries { get; set; }
 
         [DataMember(Order = 5)] public int MaxUnitOfOrder { get; set; }
+        
+        [DataMember(Order = 6)] public int MaxSimultaneousSendsPerClient { get; set; }
 
         [DataMember(Order = 9)] public int SocketTimeoutSeconds { get; set; }
 
@@ -31,6 +33,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             SocketSettings = new SocketSettings();
             Identity = "";
             MaxUnitOfOrder = 1;
+            MaxSimultaneousSendsPerClient = 1;
             SocketTimeoutSeconds = -1;
         }
 
@@ -43,6 +46,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             Retries = settings.Retries;
             SocketSettings = new SocketSettings(settings.SocketSettings);
             MaxUnitOfOrder = settings.MaxUnitOfOrder;
+            MaxSimultaneousSendsPerClient = settings.NumSimultaneouslyWriteOperations;
             SocketTimeoutSeconds = settings.SocketTimeoutSeconds;
         }
 
