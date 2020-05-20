@@ -46,8 +46,11 @@ namespace Arrowgene.Networking.Tcp.Consumer.BlockingQueueConsumption
                 }
                 catch (OperationCanceledException ex)
                 {
-                    Logger.Exception(ex);
-                    Stop();
+                    if (_isRunning)
+                    {
+                        Logger.Exception(ex);
+                        Stop();
+                    }
                     return;
                 }
 
