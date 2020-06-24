@@ -51,6 +51,7 @@ namespace Arrowgene.Networking.Tcp.Consumer.BlockingQueueConsumption
                         Logger.Exception(ex);
                         Stop();
                     }
+
                     return;
                 }
 
@@ -69,7 +70,7 @@ namespace Arrowgene.Networking.Tcp.Consumer.BlockingQueueConsumption
             }
         }
 
-        void IConsumer.OnStart()
+        public virtual void OnStart()
         {
             if (_isRunning)
             {
@@ -90,7 +91,7 @@ namespace Arrowgene.Networking.Tcp.Consumer.BlockingQueueConsumption
             }
         }
 
-        void IConsumer.OnStarted()
+        public virtual void OnStarted()
         {
         }
 
@@ -114,7 +115,7 @@ namespace Arrowgene.Networking.Tcp.Consumer.BlockingQueueConsumption
             Stop();
         }
 
-        void IConsumer.OnStopped()
+        public virtual void OnStopped()
         {
         }
 
@@ -135,6 +136,17 @@ namespace Arrowgene.Networking.Tcp.Consumer.BlockingQueueConsumption
                 Service.JoinThread(consumerThread, 10000, Logger);
                 Logger.Info($"[{_identity}] Consumer: {i} ended.");
                 _threads[i] = null;
+            }
+        }
+
+        public void LogStatus()
+        {
+            Logger.Info($"[{_identity}] _isRunning :{_isRunning}");
+            for (int i = 0; i < _maxUnitOfOrder; i++)
+            {
+                Logger.Info($"[{_identity}] _threads[{i}].IsAlive:{_threads[i].IsAlive}");
+                Logger.Info($"[{_identity}] _threads[{i}].ThreadState:{_threads[i].ThreadState}");
+                Logger.Info($"[{_identity}] _queues[{i}].Count :{_queues[i].Count}");
             }
         }
     }
