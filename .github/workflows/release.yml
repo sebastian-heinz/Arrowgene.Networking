@@ -21,8 +21,8 @@ jobs:
         run: |
           VERSION_FILE=${{ github.workspace }}/.version
           VERSION=$(<"$VERSION_FILE")
-          echo ::set-env name=VERSION::$VERSION
-          echo ::set-env name=VERSION_E::$(echo ${GITHUB_SHA} | cut -c1-8)
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "VERSION_E=$(echo ${GITHUB_SHA} | cut -c1-8)" >> $GITHUB_ENV
           mkdir ./release
           for RUNTIME in win-x86 win-x64 linux-x64 osx-x64; do
               # Server
