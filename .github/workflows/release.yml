@@ -23,6 +23,8 @@ jobs:
           VERSION=$(<"$VERSION_FILE")
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "VERSION_E=$(echo ${GITHUB_SHA} | cut -c1-8)" >> $GITHUB_ENV
+          echo $VERSION
+          echo VERSION_E
           mkdir ./release
           for RUNTIME in win-x86 win-x64 linux-x64 osx-x64; do
               # Server
