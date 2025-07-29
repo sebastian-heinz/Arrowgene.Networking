@@ -27,7 +27,9 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 
         public Socket Socket { get; }
         public SocketAsyncEventArgs ReadEventArgs { get; private set; }
-        public DateTime LastActive { get; set; }
+        public DateTime LastRead { get; set; }
+        public DateTime LastWrite { get; set; }
+        public DateTime ConnectedAt { get; set; }
 
         private bool _isAlive;
         private readonly AsyncEventServer _server;
@@ -43,14 +45,19 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             ReadEventArgs = readEventArgs;
             _server = server;
             UnitOfOrder = uoo;
-            LastActive = DateTime.Now;
+            
+            DateTime now = DateTime.Now;
+            LastRead = now;
+            LastWrite = now;
+            ConnectedAt = now;
+            
             if (Socket.RemoteEndPoint is IPEndPoint ipEndPoint)
             {
                 RemoteIpAddress = ipEndPoint.Address;
                 Port = (ushort) ipEndPoint.Port;
             }
 
-            Identity = $"{RemoteIpAddress}:{Port}";
+            Identity = $"[{RemoteIpAddress}:{Port}]";
         }
 
         public void Send(byte[] data)
@@ -88,8 +95,16 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             {
                 // ignored
             }
-
-            Socket.Close();
+            
+            try
+            {
+                Socket.Close();
+            }
+            catch
+            {
+                // ignored
+            }
+            
             _server.NotifyDisconnected(this);
             ReadEventArgs = null;
         }

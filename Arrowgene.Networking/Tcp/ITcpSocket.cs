@@ -15,10 +15,20 @@ namespace Arrowgene.Networking.Tcp
         int UnitOfOrder { get; }
 
         /// <summary>
-        /// Timestamp of last recv/send operation.
+        /// Timestamp of last recv operation.
         /// </summary>
-        DateTime LastActive { get; set; }
-
+        public DateTime LastRead { get; }
+        
+        /// <summary>
+        /// Timestamp of last send operation.
+        /// </summary>
+        public DateTime LastWrite { get; }
+        
+        /// <summary>
+        /// Timestamp when client connected
+        /// </summary>
+        public DateTime ConnectedAt { get; }
+        
         /// <summary>
         /// Determines if this socket can be used for send/recv.
         /// </summary>

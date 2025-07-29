@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
@@ -31,6 +32,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         private const string TimeoutThreadName = "AsyncEventServer_Timeout";
         private const int ThreadTimeoutMs = 10000;
         private const int NumAccepts = 10;
+        private const int MinSocketTimeoutDelayMs = 30000;
 
         private static readonly ILogger Logger = LogProvider.Logger(typeof(AsyncEventServer));
         
@@ -141,13 +143,14 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             _maxNumberSendOperations.Wait();
             if (!_isRunning)
             {
-                Logger.Debug($"{_identity}Server stopped, not sending anymore.");
+                Logger.Debug($"{_identity}{client.Identity} Server stopped, not sending anymore.");
                 _maxNumberSendOperations.Release();
                 return;
             }
 
             if (!client.IsAlive)
             {
+                Logger.Debug($"{_identity}{client.Identity} not alive, not sending.");
                 _maxNumberSendOperations.Release();
                 return;
             }
@@ -155,7 +158,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             if (!client.Socket.Connected)
             {
                 Logger.Error(
-                    $"{_identity}AsyncEventClient not connected during send, closing socket. ({client.Identity})");
+                    $"{_identity}{client.Identity} AsyncEventClient not connected during send, closing socket.");
                 client.Close();
                 _maxNumberSendOperations.Release();
                 return;
@@ -164,7 +167,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             if (!_sendPool.TryPop(out SocketAsyncEventArgs writeEventArgs))
             {
                 Logger.Error(
-                    $"{_identity}Could not acquire writeEventArgs, closing socket. ({client.Identity})");
+                    $"{_identity}{client.Identity} Could not acquire writeEventArgs, closing socket.");
                 client.Close();
                 _maxNumberSendOperations.Release();
                 return;
@@ -179,7 +182,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         {
             if (client.ReadEventArgs == null)
             {
-                Logger.Error($"{_identity}Already returned AsyncEventArgs to poll ({client.Identity})");
+                Logger.Error($"{_identity}{client.Identity} NotifyDisconnected - already returned AsyncEventArgs to poll");
                 return;
             }
 
@@ -187,30 +190,37 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             ReleaseAccept(client.ReadEventArgs);
             if (!_clients.Remove(client))
             {
-                Logger.Error($"{_identity}Could not remove client from list. ({client.Identity})");
+                Logger.Error($"{_identity}{client.Identity} NotifyDisconnected - could not remove client from list.");
             }
 
-            Logger.Debug($"{_identity}Free Receive: {_maxNumberAcceptedClients.CurrentCount}");
-            Logger.Debug($"{_identity}Free Send: {_maxNumberSendOperations.CurrentCount}");
-            Logger.Debug($"{_identity}NotifyDisconnected::Current Connections: {_clients.Count}");
+            if (_settings.DebugMode)
+            {
+                Logger.Debug($"{_identity}Free Receive: {_maxNumberAcceptedClients.CurrentCount}");
+                Logger.Debug($"{_identity}Free Send: {_maxNumberSendOperations.CurrentCount}");
+                
+                StackTrace stackTrace = new StackTrace(true);
+                Logger.Debug($"{_identity}{client.Identity} Stack Trace:{Environment.NewLine}{stackTrace}");
+            }
+            Logger.Debug($"{_identity}{client.Identity} NotifyDisconnected::Current Connections: {_clients.Count}");
             try
             {
                 OnClientDisconnected(client);
             }
             catch (Exception ex)
             {
-                Logger.Error($"{_identity}Error during OnClientDisconnected() user code ({client.Identity})");
+                Logger.Error($"{_identity}{client.Identity} Error during OnClientDisconnected() user code");
                 Logger.Exception(ex);
             }
         }
 
         protected override void OnStart()
         {
+            Logger.Info($"{_identity}Starting...");
             lock (_isRunningLock)
             {
                 if (_isRunning)
                 {
-                    Logger.Error($"{_identity}Error: Server already running.");
+                    Logger.Error($"{_identity}Server already running.");
                     return;
                 }
 
@@ -232,27 +242,33 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                 _serverThread.IsBackground = true;
                 _serverThread.Start();
             }
+            Logger.Info($"{_identity}Started");
         }
 
         protected override void OnStop()
         {
+            Logger.Info($"{_identity}Stopping...");
             lock (_isRunningLock)
             {
                 if (!_isRunning)
                 {
-                    Logger.Error($"{_identity}Error: Server already stopped.");
+                    Logger.Error($"{_identity}Server already stopped.");
                     return;
                 }
-
+                
+                Logger.Info($"{_identity}Closing Threads...");
                 _isRunning = false;
                 _cancellation.Cancel();
                 Service.JoinThread(_serverThread, ThreadTimeoutMs, Logger);
                 Service.JoinThread(_timeoutThread, ThreadTimeoutMs, Logger);
+                
+                Logger.Info($"{_identity}Shutting down listening socket...");
                 if (_listenSocket != null)
                 {
                     _listenSocket.Close();
                 }
 
+                Logger.Info($"{_identity}Shutting down client sockets...");
                 List<AsyncEventClient> clients = _clients.Snapshot();
                 foreach (AsyncEventClient client in clients)
                 {
@@ -263,7 +279,8 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 
                     client.Close();
                 }
-
+                
+                Logger.Info($"{_identity}Notify shutdown to user code...");
                 try
                 {
                     OnStopped();
@@ -274,6 +291,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                     Logger.Exception(ex);
                 }
             }
+            Logger.Info($"{_identity}Stopped");
         }
 
         private int ClaimUnitOfOrder()
@@ -411,18 +429,26 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             _acceptPool.Push(acceptEventArg);
             _maxNumberAccepts.Release();
             StartAccept();
+            
+            
+            string clientIdentity = $"[Unknown Client]";
+            if (acceptSocket.RemoteEndPoint is IPEndPoint ipEndPoint)
+            {
+                clientIdentity = $"[{ipEndPoint.Address}:{ipEndPoint.Port}]";
+            }
+
 
             if (socketError == SocketError.Success)
             {
                 if (!_receivePool.TryPop(out SocketAsyncEventArgs readEventArgs))
                 {
-                    Logger.Error($"{_identity}Could not acquire readEventArgs");
+                    Logger.Error($"{_identity}{clientIdentity} ProcessAccept - could not acquire readEventArgs");
                     _maxNumberAcceptedClients.Release();
                     return;
                 }
 
                 int unitOfOrder = ClaimUnitOfOrder();
-                Logger.Debug($"{_identity}ProcessAccept::Claimed UnitOfOrder: {unitOfOrder}");
+                Logger.Debug($"{_identity}{clientIdentity} ProcessAccept - claimed UnitOfOrder: {unitOfOrder}");
                 AsyncEventClient client = new AsyncEventClient(
                     acceptSocket,
                     readEventArgs,
@@ -433,15 +459,15 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                 _clients.Add(client);
                 readEventArgs.UserToken = client;
                 Interlocked.Increment(ref _acceptedConnections);
-                Logger.Debug($"{_identity}ProcessAccept::Current Connections: {_clients.Count}");
-                Logger.Debug($"{_identity}Accepted Connections: {_acceptedConnections}");
+                Logger.Debug($"{_identity}ProcessAccept - Active Client Connections: {_clients.Count}");
+                Logger.Debug($"{_identity}ProcessAccept - Total Accepted Connections: {_acceptedConnections}");
                 try
                 {
                     OnClientConnected(client);
                 }
                 catch (Exception ex)
                 {
-                    Logger.Error($"{_identity}Error during OnClientConnected() user code ({client.Identity})");
+                    Logger.Error($"{_identity}{clientIdentity} ProcessAccept - error during OnClientConnected() user code.");
                     Logger.Exception(ex);
                 }
 
@@ -451,11 +477,11 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             {
                 if (socketError == SocketError.OperationAborted)
                 {
-                    Logger.Info($"{_identity}Accept Socket aborted");
+                    Logger.Info($"{_identity}{clientIdentity} ProcessAccept - accept socket aborted");
                 }
                 else
                 {
-                    Logger.Error($"{_identity}Accept Socket Error: {socketError}");
+                    Logger.Error($"{_identity}{clientIdentity} ProcessAccept - socket error: {socketError}");
                 }
 
                 _maxNumberAcceptedClients.Release();
@@ -467,7 +493,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             AsyncEventClient client = (AsyncEventClient) readEventArgs.UserToken;
             if (client == null)
             {
-                Logger.Error($"{_identity}StartReceive - Client is null");
+                Logger.Error($"{_identity}StartReceive - client is null");
                 return;
             }
 
@@ -478,12 +504,13 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             }
             catch (ObjectDisposedException)
             {
+                Logger.Debug($"{_identity}{client.Identity} StartReceive - client is disposed");
                 client.Close();
                 return;
             }
             catch (InvalidOperationException)
             {
-                Logger.Error($"{_identity}Error during StartReceive: InvalidOperationException ({client.Identity})");
+                Logger.Error($"{_identity}{client.Identity} StartReceive - InvalidOperationException, retrying...");
                 StartReceive(readEventArgs);
                 return;
             }
@@ -504,7 +531,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             AsyncEventClient client = (AsyncEventClient) readEventArgs.UserToken;
             if (client == null)
             {
-                Logger.Error($"{_identity}ProcessReceive - Client is null");
+                Logger.Error($"{_identity}ProcessReceive - client is null");
                 return;
             }
 
@@ -512,14 +539,14 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             {
                 byte[] data = new byte[readEventArgs.BytesTransferred];
                 Buffer.BlockCopy(readEventArgs.Buffer, readEventArgs.Offset, data, 0, readEventArgs.BytesTransferred);
-                client.LastActive = DateTime.Now;
+                client.LastRead = DateTime.Now;
                 try
                 {
                     OnReceivedData(client, data);
                 }
                 catch (Exception ex)
                 {
-                    Logger.Error($"{_identity}Error during OnReceivedData() user code ({client.Identity})");
+                    Logger.Error($"{_identity}{client.Identity} ProcessReceive - error in OnReceivedData() user code.");
                     Logger.Exception(ex);
                 }
 
@@ -554,6 +581,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             }
             catch (ObjectDisposedException)
             {
+                Logger.Debug($"{_identity}{token.Client.Identity} StartSend - client is disposed");
                 token.Client.Close();
                 ReleaseWrite(writeEventArgs);
                 return;
@@ -561,7 +589,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             catch (InvalidOperationException)
             {
                 Logger.Error(
-                    $"{_identity}Error during StartSend: InvalidOperationException ({token.Client.Identity})");
+                    $"{_identity}{token.Client.Identity} StartSend - InvalidOperationException");
                 token.Client.Close();
                 ReleaseWrite(writeEventArgs);
                 return;
@@ -586,7 +614,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                 token.Update(writeEventArgs.BytesTransferred);
                 if (token.OutstandingCount == 0)
                 {
-                    token.Client.LastActive = DateTime.Now;
+                    token.Client.LastWrite = DateTime.Now;
                     ReleaseWrite(writeEventArgs);
                 }
                 else
@@ -596,6 +624,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             }
             else
             {
+                Logger.Debug($"{_identity}{token.Client.Identity} ProcessSend - socket error {writeEventArgs.SocketError}");
                 token.Client.Close();
                 ReleaseWrite(writeEventArgs);
             }
@@ -630,18 +659,24 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                     {
                         continue;
                     }
+                    
+                    DateTime lastActive = client.LastWrite > client.LastRead ? client.LastWrite : client.LastRead;
 
-                    TimeSpan lastOp = now - client.LastActive;
-                    if (lastOp > _socketTimeout)
+                    TimeSpan elapsedSinceLastActive = now - lastActive;
+                    if (elapsedSinceLastActive > _socketTimeout)
                     {
                         Logger.Error(
-                            $"{_identity}Client socket timed out after {lastOp.TotalSeconds} seconds. SocketTimeout: {_socketTimeout.TotalSeconds} LastActive: {client.LastActive:yyyy-MM-dd HH:mm:ss} ({client.Identity})");
+                            $"{_identity}{client.Identity}) CheckSocketTimeout - client socket timed out after {elapsedSinceLastActive.TotalSeconds} seconds. SocketTimeout: {_socketTimeout.TotalSeconds} LastActive: {lastActive:yyyy-MM-dd HH:mm:ss}");
                         client.Close();
                     }
                 }
-
-                // TODO next check based on longest lastActive (nextCheck = _socketTimeout - client.LastActive)
-                cancellationToken.WaitHandle.WaitOne((int) _socketTimeout.TotalMilliseconds / 2);
+                
+                int timeoutMs = (int)_socketTimeout.TotalMilliseconds;
+                if (timeoutMs < MinSocketTimeoutDelayMs)
+                {
+                    timeoutMs = MinSocketTimeoutDelayMs;
+                }
+                cancellationToken.WaitHandle.WaitOne(timeoutMs);
             }
         }
     }

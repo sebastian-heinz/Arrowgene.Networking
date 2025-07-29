@@ -23,6 +23,8 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         [DataMember(Order = 9)] public int SocketTimeoutSeconds { get; set; }
 
         [DataMember(Order = 10)] public SocketSettings SocketSettings { get; set; }
+        
+        [DataMember(Order = 11)] public bool DebugMode { get; set; }
 
         public AsyncEventSettings()
         {
@@ -35,6 +37,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             MaxUnitOfOrder = 1;
             MaxSimultaneousSendsPerClient = 1;
             SocketTimeoutSeconds = -1;
+            DebugMode = false;
         }
 
         public AsyncEventSettings(AsyncEventSettings settings)
@@ -48,6 +51,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             MaxUnitOfOrder = settings.MaxUnitOfOrder;
             MaxSimultaneousSendsPerClient = settings.MaxSimultaneousSendsPerClient;
             SocketTimeoutSeconds = settings.SocketTimeoutSeconds;
+            DebugMode = settings.DebugMode;
         }
 
         public object Clone()
