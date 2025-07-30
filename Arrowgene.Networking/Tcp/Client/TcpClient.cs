@@ -23,7 +23,8 @@ namespace Arrowgene.Networking.Tcp.Client
         public DateTime LastRead { get; set; }
         public DateTime LastWrite { get; set; }
         public DateTime ConnectedAt { get; set; }
-        
+        public ulong BytesReceived { get; set; }
+        public ulong BytesSend { get; set; }
         public abstract void Send(byte[] payload);
 
         public void Connect(IPAddress serverIpAddress, ushort serverPort, TimeSpan timeout)

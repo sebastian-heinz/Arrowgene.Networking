@@ -30,7 +30,8 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         public DateTime LastRead { get; set; }
         public DateTime LastWrite { get; set; }
         public DateTime ConnectedAt { get; set; }
-
+        public ulong BytesReceived { get; set; }
+        public ulong BytesSend { get; set; }
         private bool _isAlive;
         private readonly AsyncEventServer _server;
         private readonly object _lock;

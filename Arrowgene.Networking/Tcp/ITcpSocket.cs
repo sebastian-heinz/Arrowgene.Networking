@@ -30,6 +30,16 @@ namespace Arrowgene.Networking.Tcp
         public DateTime ConnectedAt { get; }
         
         /// <summary>
+        /// Number of bytes received
+        /// </summary>
+        public ulong BytesReceived { get; }
+        
+        /// <summary>
+        /// Number of bytes send
+        /// </summary>
+        public ulong BytesSend { get; }
+        
+        /// <summary>
         /// Determines if this socket can be used for send/recv.
         /// </summary>
         bool IsAlive { get; }

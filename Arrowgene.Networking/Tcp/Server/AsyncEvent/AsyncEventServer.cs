@@ -201,7 +201,15 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                 StackTrace stackTrace = new StackTrace(true);
                 Logger.Debug($"{_identity}{client.Identity} Stack Trace:{Environment.NewLine}{stackTrace}");
             }
-            Logger.Debug($"{_identity}{client.Identity} NotifyDisconnected::Current Connections: {_clients.Count}");
+
+            TimeSpan duration = DateTime.Now - client.ConnectedAt;
+            Logger.Debug(
+                $"{_identity}{client.Identity} NotifyDisconnected - {Environment.NewLine}" +
+                $"Total Seconds:{duration.TotalSeconds} ({Service.GetHumanReadableDuration(duration)}){Environment.NewLine}" +
+                $"Total Bytes Received:{client.BytesReceived} ({Service.GetHumanReadableSize(client.BytesReceived)}){Environment.NewLine}" +
+                $"Total Bytes Send:{client.BytesSend} ({Service.GetHumanReadableSize(client.BytesSend)}){Environment.NewLine}" +
+                $"Current Connections: {_clients.Count}"
+                );
             try
             {
                 OnClientDisconnected(client);
@@ -456,6 +464,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                     unitOfOrder,
                     _settings.MaxSimultaneousSendsPerClient
                 );
+                client.ConnectedAt = DateTime.Now;
                 _clients.Add(client);
                 readEventArgs.UserToken = client;
                 Interlocked.Increment(ref _acceptedConnections);
@@ -540,6 +549,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                 byte[] data = new byte[readEventArgs.BytesTransferred];
                 Buffer.BlockCopy(readEventArgs.Buffer, readEventArgs.Offset, data, 0, readEventArgs.BytesTransferred);
                 client.LastRead = DateTime.Now;
+                client.BytesReceived += (ulong)data.Length;
                 try
                 {
                     OnReceivedData(client, data);
@@ -554,6 +564,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             }
             else
             {
+                Logger.Debug($"{_identity}{client.Identity} ProcessReceive - socket error {readEventArgs.SocketError}");
                 client.Close();
             }
         }
@@ -615,6 +626,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                 if (token.OutstandingCount == 0)
                 {
                     token.Client.LastWrite = DateTime.Now;
+                    token.Client.BytesSend += (ulong)token.TransferredCount;
                     ReleaseWrite(writeEventArgs);
                 }
                 else
