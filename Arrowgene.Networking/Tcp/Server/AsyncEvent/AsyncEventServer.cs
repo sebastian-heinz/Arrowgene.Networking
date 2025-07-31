@@ -564,7 +564,15 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             }
             else
             {
-                Logger.Debug($"{_identity}{client.Identity} ProcessReceive - socket error {readEventArgs.SocketError}");
+                if (readEventArgs.SocketError != SocketError.Success)
+                {
+                    Logger.Debug($"{_identity}{client.Identity} ProcessReceive - socket error {readEventArgs.SocketError}");
+                }
+                if (readEventArgs.BytesTransferred <= 0)
+                {
+                    Logger.Debug($"{_identity}{client.Identity} ProcessReceive - no bytes transferred (readEventArgs.BytesTransferred:{readEventArgs.BytesTransferred}), remote most likely closed");
+                }
+
                 client.Close();
             }
         }
