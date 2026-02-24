@@ -58,5 +58,17 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         {
             return new AsyncEventSettings(this);
         }
+
+        public void Validate()
+        {
+            if (MaxUnitOfOrder <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(MaxUnitOfOrder), "MaxUnitOfOrder must be greater than zero.");
+            }
+            if (MaxSimultaneousSendsPerClient <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(MaxSimultaneousSendsPerClient), "MaxSimultaneousSendsPerClient must be greater than zero.");
+            }
+        }
     }
 }

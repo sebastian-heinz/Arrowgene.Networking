@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Net.Sockets;
 using System.Threading;
 using Arrowgene.Logging;
 
@@ -37,6 +38,28 @@ namespace Arrowgene.Networking
                 }
             }
         }
+
+        public static void CloseSocket(Socket socket)
+        {
+            try
+            {
+                socket.Shutdown(SocketShutdown.Both);
+            }
+            catch
+            {
+                // ignored
+            }
+            
+            try
+            {
+                socket.Close();
+            }
+            catch
+            {
+                // ignored
+            }
+        }
+        
         //739461 days, 14 hours, 32 minutes, 24 seconds
         public static string GetHumanReadableDuration(TimeSpan timeSpan)
         {

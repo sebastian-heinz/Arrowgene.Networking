@@ -65,7 +65,17 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         {
             _server.Send(this, data);
         }
-
+        
+        public SocketAsyncEventArgs DetachReadEventArgs()
+        {
+            lock (_lock)
+            {
+                SocketAsyncEventArgs args = ReadEventArgs;
+                ReadEventArgs = null;
+                return args;
+            }
+        }
+        
         public void ReleaseSend()
         {
             _maxSimultaneousSends.Release();
@@ -105,9 +115,6 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             {
                 // ignored
             }
-            
-            _server.NotifyDisconnected(this);
-            ReadEventArgs = null;
         }
     }
 }
