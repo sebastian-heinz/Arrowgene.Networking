@@ -11,6 +11,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         public IPAddress RemoteIpAddress { get; private set; }
         public ushort Port { get; private set; }
         public int UnitOfOrder { get; private set; }
+        internal int Generation { get; }
         public Socket Socket { get; private set; }
         public DateTime LastRead { get; internal set; }
         public DateTime LastWrite { get; internal set; }
@@ -24,6 +25,8 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 
         private int _isAlive;
         private int _disconnectInProgress;
+        private int _pendingIoOperations;
+        private int _returnedToPool;
         private readonly AsyncEventServer _server;
 
         public bool IsAlive
@@ -34,10 +37,14 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         public AsyncEventClient(
             SocketAsyncEventArgs readEventArgs,
             SocketAsyncEventArgs writeEventArgs,
-            AsyncEventServer server)
+            AsyncEventServer server,
+            int generation)
         {
             _isAlive = 0;
             _disconnectInProgress = 1;
+            _pendingIoOperations = 0;
+            _returnedToPool = 1;
+            Generation = generation;
             _server = server;
             WriteState = new AsyncEventWriteState();
             ReadEventArgs = readEventArgs;
@@ -73,6 +80,8 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 
             WriteState.Reset();
 
+            Interlocked.Exchange(ref _pendingIoOperations, 0);
+            Volatile.Write(ref _returnedToPool, 0);
             Volatile.Write(ref _disconnectInProgress, 0);
             Volatile.Write(ref _isAlive, 1);
         }
@@ -120,6 +129,50 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         internal bool TryBeginDisconnect()
         {
             return Interlocked.CompareExchange(ref _disconnectInProgress, 1, 0) == 0;
+        }
+
+        internal bool TryBeginIoOperation()
+        {
+            if (Volatile.Read(ref _isAlive) == 0)
+            {
+                return false;
+            }
+
+            Interlocked.Increment(ref _pendingIoOperations);
+            if (Volatile.Read(ref _isAlive) == 0)
+            {
+                CompleteIoOperation();
+                return false;
+            }
+
+            return true;
+        }
+
+        internal bool CompleteIoOperation()
+        {
+            int pendingIoOperations = Interlocked.Decrement(ref _pendingIoOperations);
+            if (pendingIoOperations < 0)
+            {
+                Interlocked.Exchange(ref _pendingIoOperations, 0);
+                return false;
+            }
+
+            return pendingIoOperations == 0 && Volatile.Read(ref _isAlive) == 0;
+        }
+
+        internal bool TryMarkReturnedToPool()
+        {
+            if (Volatile.Read(ref _isAlive) != 0)
+            {
+                return false;
+            }
+
+            if (Volatile.Read(ref _pendingIoOperations) != 0)
+            {
+                return false;
+            }
+
+            return Interlocked.CompareExchange(ref _returnedToPool, 1, 0) == 0;
         }
     }
 }
