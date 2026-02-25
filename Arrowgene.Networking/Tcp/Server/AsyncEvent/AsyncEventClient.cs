@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
 
 namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 {
@@ -11,28 +12,23 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         public ushort Port { get; private set; }
         public int UnitOfOrder { get; private set; }
         public Socket Socket { get; private set; }
-        public SocketAsyncEventArgs ReadEventArgs { get;  }
-        public SocketAsyncEventArgs WriteEventArgs { get; }
         public DateTime LastRead { get; internal set; }
         public DateTime LastWrite { get; internal set; }
         public DateTime ConnectedAt { get; private set; }
         public ulong BytesReceived { get; internal set; }
         public ulong BytesSend { get; internal set; }
-        private bool _isAlive;
-        private readonly AsyncEventServer _server;
-        private readonly object _lock;
         
+        internal SocketAsyncEventArgs ReadEventArgs { get;  }
+        internal SocketAsyncEventArgs WriteEventArgs { get; }
         internal AsyncEventWriteState WriteState { get; set; }
-        
+
+        private int _isAlive;
+        private int _disconnectInProgress;
+        private readonly AsyncEventServer _server;
+
         public bool IsAlive
         {
-            get
-            {
-                lock (_lock)
-                {
-                    return _isAlive;
-                }
-            }
+            get => Volatile.Read(ref _isAlive) == 1;
         }
 
         public AsyncEventClient(
@@ -40,12 +36,12 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             SocketAsyncEventArgs writeEventArgs,
             AsyncEventServer server)
         {
-            _lock = new object();
-            _isAlive = false;
+            _isAlive = 0;
+            _disconnectInProgress = 1;
             _server = server;
+            WriteState = new AsyncEventWriteState();
             ReadEventArgs = readEventArgs;
             WriteEventArgs = writeEventArgs;
-
             ReadEventArgs.UserToken = this;
             WriteEventArgs.UserToken = this;
         }
@@ -57,12 +53,16 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         {
             Socket = socket;
             UnitOfOrder = unitOfOrder;
-            
+
             DateTime now = DateTime.Now;
             LastRead = now;
             LastWrite = now;
             ConnectedAt = now;
-            
+            BytesReceived = 0;
+            BytesSend = 0;
+
+            RemoteIpAddress = null;
+            Port = 0;
             if (Socket.RemoteEndPoint is IPEndPoint ipEndPoint)
             {
                 RemoteIpAddress = ipEndPoint.Address;
@@ -70,11 +70,11 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             }
 
             Identity = $"[{RemoteIpAddress}:{Port}]";
-            
-            lock (_lock)
-            {
-                _isAlive = true;
-            }
+
+            WriteState.Reset();
+
+            Volatile.Write(ref _disconnectInProgress, 0);
+            Volatile.Write(ref _isAlive, 1);
         }
         
         public void Send(byte[] data)
@@ -84,33 +84,42 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         
         public void Close()
         {
-            lock (_lock)
+            if (Interlocked.Exchange(ref _isAlive, 0) == 0)
             {
-                if (!_isAlive)
-                {
-                    return;
-                }
+                return;
+            }
 
-                _isAlive = false;
+            WriteState.Reset();
+
+            Socket socket = Socket;
+            Socket = null;
+            if (socket == null)
+            {
+                return;
             }
 
             try
             {
-                Socket.Shutdown(SocketShutdown.Both);
+                socket.Shutdown(SocketShutdown.Both);
             }
             catch
             {
                 // ignored
             }
-            
+
             try
             {
-                Socket.Close();
+                socket.Close();
             }
             catch
             {
                 // ignored
             }
+        }
+
+        internal bool TryBeginDisconnect()
+        {
+            return Interlocked.CompareExchange(ref _disconnectInProgress, 1, 0) == 0;
         }
     }
 }

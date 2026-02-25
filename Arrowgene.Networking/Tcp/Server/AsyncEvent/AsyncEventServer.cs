@@ -22,7 +22,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
     /// <summary>
     /// Implementation of socket server using AsyncEventArgs.
     /// 
-    /// - Preallocate all objects -> No further allocations during runtime.
+    /// - Preallocate socket/runtime objects and reuse client/event-arg instances.
     /// - Support UnitOfOrder -> Enables to simultaneously process tcp packages and preserving order.
     /// - Support SocketTimeout -> Prevent half-open connections by closing the socket if last recv/send time is larger.
     /// </summary>
@@ -43,6 +43,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         private readonly TimeSpan _socketTimeout;
         private readonly int[] _unitOfOrders;
         private readonly object _unitOfOrderLock;
+        private readonly object _clientPoolLock;
         private readonly object _isRunningLock;
         private readonly string _identity;
         private readonly AsyncEventClientList<AsyncEventClient> _clients;
@@ -65,6 +66,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             _socketTimeout = TimeSpan.FromSeconds(_settings.SocketTimeoutSeconds);
             _isRunningLock = new object();
             _unitOfOrderLock = new object();
+            _clientPoolLock = new object();
             _identity = "";
             _unitOfOrders = new int[_settings.MaxUnitOfOrder];
             if (!string.IsNullOrEmpty(_settings.Identity))
@@ -107,7 +109,6 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                 
                 SocketAsyncEventArgs writeEventArgs = new SocketAsyncEventArgs();
                 writeEventArgs.Completed += Send_Completed;
-                writeEventArgs.UserToken = new AsyncEventToken();
                 writeEventArgs.SetBuffer(_buffer, bufferOffset, _settings.BufferSize);
                 bufferOffset += _settings.BufferSize;
 
@@ -181,7 +182,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                         continue;
                     }
 
-                    client.Close();
+                    DisconnectClient(client);
                 }
                 
                 Service.JoinThread(_serverThread, ThreadTimeoutMs, Logger);
@@ -270,6 +271,18 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 
         public void Send(AsyncEventClient client, byte[] data)
         {
+            if (client == null)
+            {
+                Logger.Error($"{_identity}called send with null client instance");
+                return;
+            }
+
+            if (data == null || data.Length == 0)
+            {
+                Logger.Debug($"{_identity}{client.Identity} empty payload, not sending.");
+                return;
+            }
+
             if (!_isRunning)
             {
                 Logger.Debug($"{_identity}{client.Identity} Server stopped, not sending anymore.");
@@ -282,16 +295,33 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                 return;
             }
 
-            if (!client.Socket.Connected)
+            Socket socket = client.Socket;
+            bool isConnected = false;
+            if (socket != null)
+            {
+                try
+                {
+                    isConnected = socket.Connected;
+                }
+                catch (ObjectDisposedException)
+                {
+                    isConnected = false;
+                }
+            }
+
+            if (!isConnected)
             {
                 Logger.Error(
                     $"{_identity}{client.Identity} AsyncEventClient not connected during send, closing socket.");
-                client.Close();
+                DisconnectClient(client);
                 return;
             }
             
-            client.WriteState.Assign(data);
-            StartSend(client);
+            AsyncEventWriteState state = client.WriteState;
+            if (state.EnqueueSend(data))
+            {
+                StartSend(client);
+            }
         }
         
         private void StartAccept()
@@ -378,20 +408,41 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                     return;
                 }
                 
-                int currentConnections = Interlocked.Increment(ref _currentConnections);
-                if (currentConnections > _settings.MaxConnections)
+                AsyncEventClient client;
+                bool rejectedByMaxConnections = false;
+                lock (_clientPoolLock)
                 {
-                    Interlocked.Decrement(ref _currentConnections);
-                    Logger.Error(
-                        $"{_identity}{clientIdentity} ProcessAccept - max connections exceeded");
-                    Service.CloseSocket(acceptSocket);
-                    return;
+                    if (_currentConnections >= _settings.MaxConnections)
+                    {
+                        client = null;
+                        rejectedByMaxConnections = true;
+                    }
+                    else if (!_clientPool.TryPop(out client))
+                    {
+                        client = null;
+                        Logger.Error(
+                            $"{_identity}{clientIdentity} ProcessAccept - no available client in _clientPool.");
+                    }
+                    else
+                    {
+                        _currentConnections++;
+                    }
                 }
 
-                if (!_clientPool.TryPop(out AsyncEventClient client))
+                if (client == null)
                 {
-                    Logger.Error($"{_identity}{clientIdentity} ProcessAccept - could not acquire client from _clientPool");
-                    throw new Exception("counter '_currentConnections' is out of sync with available AsyncEventClient in '_clientPool' ConcurrentStack");
+                    if (rejectedByMaxConnections)
+                    {
+                        Logger.Error(
+                            $"{_identity}{clientIdentity} ProcessAccept - max connections exceeded");
+                    }
+                    else
+                    {
+                        Logger.Error(
+                            $"{_identity}{clientIdentity} ProcessAccept - rejecting connection because no client instance is available.");
+                    }
+                    Service.CloseSocket(acceptSocket);
+                    return;
                 }
 
                 int unitOfOrder = ClaimUnitOfOrder();
@@ -441,10 +492,17 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                 return;
             }
 
+            Socket socket = client.Socket;
+            if (socket == null)
+            {
+                DisconnectClient(client);
+                return;
+            }
+
             bool willRaiseEvent;
             try
             {
-                willRaiseEvent =  client.Socket.ReceiveAsync(client.ReadEventArgs);
+                willRaiseEvent = socket.ReceiveAsync(client.ReadEventArgs);
             }
             catch (ObjectDisposedException)
             {
@@ -480,15 +538,19 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                 return;
             }
 
+            if (!client.IsAlive)
+            {
+                DisconnectClient(client);
+                return;
+            }
+
             if (readEventArgs.BytesTransferred > 0 && readEventArgs.SocketError == SocketError.Success)
             {
-                byte[] data = new byte[readEventArgs.BytesTransferred];
-                Buffer.BlockCopy(readEventArgs.Buffer, readEventArgs.Offset, data, 0, readEventArgs.BytesTransferred);
                 client.LastRead = DateTime.Now;
-                client.BytesReceived += (ulong)data.Length;
+                client.BytesReceived += (ulong)readEventArgs.BytesTransferred;
                 try
                 {
-                    OnReceivedData(client, data);
+                    OnReceivedData(client, readEventArgs.Buffer, readEventArgs.Offset, readEventArgs.BytesTransferred);
                 }
                 catch (Exception ex)
                 {
@@ -515,25 +577,39 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 
         private void StartSend(AsyncEventClient client)
         {
-            AsyncEventWriteState state = client.WriteState;
+            if (client == null)
+            {
+                Logger.Error($"{_identity}StartSend - client is null");
+                return;
+            }
+
+            if (!client.IsAlive)
+            {
+                DisconnectClient(client);
+                return;
+            }
+
+            Socket socket = client.Socket;
+            if (socket == null)
+            {
+                DisconnectClient(client);
+                return;
+            }
+
             SocketAsyncEventArgs writeEventArgs = client.WriteEventArgs;
-            if (state.OutstandingCount <= _settings.BufferSize)
+            AsyncEventWriteState state = client.WriteState;
+            if (!state.TryGetSendChunk(_settings.BufferSize, out byte[] data, out int dataOffset, out int chunkSize))
             {
-                writeEventArgs.SetBuffer(writeEventArgs.Offset, state.OutstandingCount);
-                Buffer.BlockCopy(state.Data, state.TransferredCount, writeEventArgs.Buffer, writeEventArgs.Offset,
-                    state.OutstandingCount);
+                return;
             }
-            else
-            {
-                writeEventArgs.SetBuffer(writeEventArgs.Offset, _settings.BufferSize);
-                Buffer.BlockCopy(state.Data, state.TransferredCount, writeEventArgs.Buffer, writeEventArgs.Offset,
-                    _settings.BufferSize);
-            }
+
+            writeEventArgs.SetBuffer(writeEventArgs.Offset, chunkSize);
+            Buffer.BlockCopy(data, dataOffset, writeEventArgs.Buffer, writeEventArgs.Offset, chunkSize);
 
             bool willRaiseEvent;
             try
             {
-                willRaiseEvent = client.Socket.SendAsync(writeEventArgs);
+                willRaiseEvent = socket.SendAsync(writeEventArgs);
             }
             catch (ObjectDisposedException)
             {
@@ -563,6 +639,19 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         private void ProcessSend(SocketAsyncEventArgs writeEventArgs)
         {
             AsyncEventClient client = (AsyncEventClient)writeEventArgs.UserToken;
+            if (client == null)
+            {
+                Logger.Error($"{_identity}ProcessSend - client is null");
+                return;
+            }
+
+            if (!client.IsAlive)
+            {
+                DisconnectClient(client);
+                return;
+            }
+
+            AsyncEventWriteState state = client.WriteState;
             if (writeEventArgs.SocketError == SocketError.Success)
             {
                 if (writeEventArgs.BytesTransferred <= 0)
@@ -572,17 +661,15 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                     DisconnectClient(client);
                     return;
                 }
-                
-                AsyncEventWriteState state = client.WriteState;
-                state.Update(writeEventArgs.BytesTransferred);
-                if (state.OutstandingCount == 0)
+
+                client.BytesSend += (ulong) writeEventArgs.BytesTransferred;
+                if (state.CompleteSend(writeEventArgs.BytesTransferred))
                 {
-                    client.LastWrite = DateTime.Now;
-                    client.BytesSend += (ulong)state.TransferredCount;
+                    StartSend(client);
                 }
                 else
                 {
-                    StartSend(client);
+                    client.LastWrite = DateTime.Now;
                 }
             }
             else
@@ -595,21 +682,24 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         
         private void DisconnectClient(AsyncEventClient client)
         {
+            if (client == null)
+            {
+                Logger.Error($"{_identity}DisconnectClient - client is null");
+                return;
+            }
+
+            if (!client.TryBeginDisconnect())
+            {
+                return;
+            }
+
             client.Close();
             
             FreeUnitOfOrder(client.UnitOfOrder);
-            
-            int currentConnections = Interlocked.Decrement(ref _currentConnections);
+
             if (!_clients.Remove(client))
             {
                 Logger.Error($"{_identity}{client.Identity} NotifyDisconnected - could not remove client from list.");
-            }
-
-            if (_settings.DebugMode)
-            {
-                Logger.Debug($"{_identity}Current Connections: {currentConnections}");
-                StackTrace stackTrace = new StackTrace(true);
-                Logger.Debug($"{_identity}{client.Identity} Stack Trace:{Environment.NewLine}{stackTrace}");
             }
 
             TimeSpan duration = DateTime.Now - client.ConnectedAt;
@@ -628,6 +718,28 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             {
                 Logger.Error($"{_identity}{client.Identity} Error during OnClientDisconnected() user code");
                 Logger.Exception(ex);
+            }
+
+            int currentConnections;
+            lock (_clientPoolLock)
+            {
+                _clientPool.Push(client);
+                if (_currentConnections > 0)
+                {
+                    _currentConnections--;
+                }
+                else
+                {
+                    Logger.Error($"{_identity}{client.Identity} NotifyDisconnected - _currentConnections already zero.");
+                }
+                currentConnections = _currentConnections;
+            }
+
+            if (_settings.DebugMode)
+            {
+                Logger.Debug($"{_identity}Current Connections: {currentConnections}");
+                StackTrace stackTrace = new StackTrace(true);
+                Logger.Debug($"{_identity}{client.Identity} Stack Trace:{Environment.NewLine}{stackTrace}");
             }
         }
         
@@ -653,6 +765,12 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 
         private void FreeUnitOfOrder(int unitOfOrder)
         {
+            if (unitOfOrder < 0 || unitOfOrder >= _unitOfOrders.Length)
+            {
+                Logger.Error($"{_identity}FreeUnitOfOrder - invalid unitOfOrder: {unitOfOrder}");
+                return;
+            }
+
             lock (_unitOfOrderLock)
             {
                 _unitOfOrders[unitOfOrder]--;
@@ -662,10 +780,11 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         private void CheckSocketTimeout()
         {
             CancellationToken cancellationToken = _cancellation.Token;
+            List<AsyncEventClient> clients = new List<AsyncEventClient>(_settings.MaxConnections);
             while (_isRunning)
             {
                 DateTime now = DateTime.Now;
-                List<AsyncEventClient> clients = _clients.Snapshot();
+                _clients.SnapshotTo(clients);
                 foreach (AsyncEventClient client in clients)
                 {
                     if (client == null)
@@ -680,7 +799,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                     {
                         Logger.Error(
                             $"{_identity}{client.Identity}) CheckSocketTimeout - client socket timed out after {elapsedSinceLastActive.TotalSeconds} seconds. SocketTimeout: {_socketTimeout.TotalSeconds} LastActive: {lastActive:yyyy-MM-dd HH:mm:ss}");
-                        client.Close();
+                        DisconnectClient(client);
                     }
                 }
 

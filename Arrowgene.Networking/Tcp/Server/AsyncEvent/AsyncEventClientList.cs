@@ -32,6 +32,23 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             }
         }
 
+        /// <summary>
+        /// Copies the current list state into <paramref name="target"/> and reuses its backing array.
+        /// </summary>
+        public void SnapshotTo(List<T> target)
+        {
+            if (target == null)
+            {
+                throw new System.ArgumentNullException(nameof(target));
+            }
+
+            lock (_lock)
+            {
+                target.Clear();
+                target.AddRange(_list);
+            }
+        }
+
         public int Count
         {
             get

@@ -1,29 +1,109 @@
-﻿namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
+﻿using System.Collections.Generic;
+
+namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 {
     public class AsyncEventWriteState
     {
-        public byte[] Data { get; private set; }
-        public int TransferredCount { get; private set; }
-        public int OutstandingCount { get; private set; }
+        private byte[] _data;
+        private int _transferredCount;
+        private int _outstandingCount;
+        private readonly object _sendLock;
+        private readonly Queue<byte[]> _sendQueue;
+        private bool _sendInProgress;
 
-        public void Assign(byte[] data)
+        public AsyncEventWriteState()
         {
-            Data = data;
-            OutstandingCount = data.Length;
-            TransferredCount = 0;
+            _sendLock = new object();
+            _sendQueue = new Queue<byte[]>();
+            _sendInProgress = false;
         }
-
-        public void Update(int transferredCount)
-        {
-            TransferredCount += transferredCount;
-            OutstandingCount -= transferredCount;
-        }
-
+        
         public void Reset()
         {
-            Data = null;
-            OutstandingCount = 0;
-            TransferredCount = 0;
+            lock (_sendLock)
+            {
+                _sendQueue.Clear();
+                _data = null;
+                _outstandingCount = 0;
+                _transferredCount = 0;
+                _sendInProgress = false;
+            }
+        }
+        
+        internal bool EnqueueSend(byte[] data)
+        {
+            lock (_sendLock)
+            {
+                _sendQueue.Enqueue(data);
+                if (_sendInProgress)
+                {
+                    return false;
+                }
+
+                _sendInProgress = true;
+                if (_outstandingCount == 0 && _sendQueue.Count > 0)
+                {
+                    _data = _sendQueue.Dequeue();
+                    _outstandingCount = _data.Length;
+                    _transferredCount = 0;
+                }
+                return true;
+            }
+        }
+
+        internal bool TryGetSendChunk(int maxChunkSize, out byte[] data, out int offset, out int count)
+        {
+            lock (_sendLock)
+            {
+                if (_outstandingCount == 0)
+                {
+                    if (_sendQueue.Count == 0)
+                    {
+                        _sendInProgress = false;
+                        data = null;
+                        offset = 0;
+                        count = 0;
+                        return false;
+                    }
+
+                    _data = _sendQueue.Dequeue();
+                    _outstandingCount = _data.Length;
+                    _transferredCount = 0;
+                }
+
+                data = _data;
+                offset = _transferredCount;
+                count = _outstandingCount <= maxChunkSize ? _outstandingCount : maxChunkSize;
+                return true;
+            }
+        }
+
+        internal bool CompleteSend(int transferredCount)
+        {
+            lock (_sendLock)
+            {
+                _transferredCount += transferredCount;
+                _outstandingCount -= transferredCount;
+                
+                if (_outstandingCount > 0)
+                {
+                    return true;
+                }
+                
+                if (_sendQueue.Count > 0)
+                {
+                    _data = _sendQueue.Dequeue();
+                    _outstandingCount = _data.Length;
+                    _transferredCount = 0;
+                    return true;
+                }
+                
+                _data = null;
+                _outstandingCount = 0;
+                _transferredCount = 0;
+                _sendInProgress = false;
+                return false;
+            }
         }
     }
 }
