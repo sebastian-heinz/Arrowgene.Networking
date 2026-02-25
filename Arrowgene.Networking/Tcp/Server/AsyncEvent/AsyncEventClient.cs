@@ -1,19 +1,29 @@
 ﻿using System;
 using System.Net;
 using System.Net.Sockets;
-using System.Threading;
 
 namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 {
     public class AsyncEventClient : ITcpSocket
     {
-        private readonly SemaphoreSlim _maxSimultaneousSends;
+        public string Identity { get; private set; }
+        public IPAddress RemoteIpAddress { get; private set; }
+        public ushort Port { get; private set; }
+        public int UnitOfOrder { get; private set; }
+        public Socket Socket { get; private set; }
+        public SocketAsyncEventArgs ReadEventArgs { get;  }
+        public SocketAsyncEventArgs WriteEventArgs { get; }
+        public DateTime LastRead { get; internal set; }
+        public DateTime LastWrite { get; internal set; }
+        public DateTime ConnectedAt { get; private set; }
+        public ulong BytesReceived { get; internal set; }
+        public ulong BytesSend { get; internal set; }
+        private bool _isAlive;
+        private readonly AsyncEventServer _server;
+        private readonly object _lock;
         
-        public string Identity { get; }
-        public IPAddress RemoteIpAddress { get; }
-        public ushort Port { get; }
-        public int UnitOfOrder { get; }
-
+        internal AsyncEventWriteState WriteState { get; set; }
+        
         public bool IsAlive
         {
             get
@@ -25,27 +35,28 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             }
         }
 
-        public Socket Socket { get; }
-        public SocketAsyncEventArgs ReadEventArgs { get; private set; }
-        public DateTime LastRead { get; set; }
-        public DateTime LastWrite { get; set; }
-        public DateTime ConnectedAt { get; set; }
-        public ulong BytesReceived { get; set; }
-        public ulong BytesSend { get; set; }
-        private bool _isAlive;
-        private readonly AsyncEventServer _server;
-        private readonly object _lock;
-
-        public AsyncEventClient(Socket socket, SocketAsyncEventArgs readEventArgs, AsyncEventServer server, int uoo,
-            int maxSimultaneousSends)
+        public AsyncEventClient(
+            SocketAsyncEventArgs readEventArgs,
+            SocketAsyncEventArgs writeEventArgs,
+            AsyncEventServer server)
         {
             _lock = new object();
-            _maxSimultaneousSends = new SemaphoreSlim(maxSimultaneousSends, maxSimultaneousSends);
-            _isAlive = true;
-            Socket = socket;
-            ReadEventArgs = readEventArgs;
+            _isAlive = false;
             _server = server;
-            UnitOfOrder = uoo;
+            ReadEventArgs = readEventArgs;
+            WriteEventArgs = writeEventArgs;
+
+            ReadEventArgs.UserToken = this;
+            WriteEventArgs.UserToken = this;
+        }
+
+        internal void Open(
+            Socket socket,
+            int unitOfOrder
+        )
+        {
+            Socket = socket;
+            UnitOfOrder = unitOfOrder;
             
             DateTime now = DateTime.Now;
             LastRead = now;
@@ -59,33 +70,18 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             }
 
             Identity = $"[{RemoteIpAddress}:{Port}]";
+            
+            lock (_lock)
+            {
+                _isAlive = true;
+            }
         }
-
+        
         public void Send(byte[] data)
         {
             _server.Send(this, data);
         }
         
-        public SocketAsyncEventArgs DetachReadEventArgs()
-        {
-            lock (_lock)
-            {
-                SocketAsyncEventArgs args = ReadEventArgs;
-                ReadEventArgs = null;
-                return args;
-            }
-        }
-        
-        public void ReleaseSend()
-        {
-            _maxSimultaneousSends.Release();
-        }
-
-        public void WaitSend()
-        {
-            _maxSimultaneousSends.Wait();
-        }
-
         public void Close()
         {
             lock (_lock)

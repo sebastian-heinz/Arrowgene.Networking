@@ -28,11 +28,9 @@ namespace Arrowgene.Networking.Tcp.Consumer
     public interface IConsumer
     {
         void OnStart();
-        void OnStarted();
         void OnReceivedData(ITcpSocket socket, byte[] data);
         void OnClientDisconnected(ITcpSocket socket);
         void OnClientConnected(ITcpSocket socket);
         void OnStop();
-        void OnStopped();
     }
 }

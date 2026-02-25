@@ -41,6 +41,11 @@ namespace Arrowgene.Networking
 
         public static void CloseSocket(Socket socket)
         {
+            if (socket == null)
+            {
+                return;
+            }
+            
             try
             {
                 socket.Shutdown(SocketShutdown.Both);

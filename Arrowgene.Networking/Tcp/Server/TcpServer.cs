@@ -24,8 +24,9 @@ namespace Arrowgene.Networking.Tcp.Server
         public IPAddress IpAddress { get; }
         public ushort Port { get; }
 
-        protected abstract void OnStart();
-        protected abstract void OnStop();
+        protected abstract void ServerStart();
+        protected abstract void ServerStop();
+        
         public abstract void Send(ITcpSocket socket, byte[] data);
 
         protected void OnReceivedData(ITcpSocket socket, byte[] data)
@@ -43,26 +44,16 @@ namespace Arrowgene.Networking.Tcp.Server
             _consumer.OnClientConnected(socket);
         }
 
-        protected void OnStarted()
-        {
-            _consumer.OnStarted();
-        }
-
-        protected void OnStopped()
-        {
-            _consumer.OnStopped();
-        }
-
         public void Start()
         {
             _consumer.OnStart();
-            OnStart();
+            ServerStart();
         }
 
         public void Stop()
         {
             _consumer.OnStop();
-            OnStop();
+            ServerStop();
         }
     }
 }

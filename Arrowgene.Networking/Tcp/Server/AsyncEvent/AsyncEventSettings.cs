@@ -10,15 +10,11 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 
         [DataMember(Order = 1)] public int MaxConnections { get; set; }
 
-        [DataMember(Order = 2)] public int NumSimultaneouslyWriteOperations { get; set; }
-
         [DataMember(Order = 3)] public int BufferSize { get; set; }
 
         [DataMember(Order = 4)] public int Retries { get; set; }
 
         [DataMember(Order = 5)] public int MaxUnitOfOrder { get; set; }
-        
-        [DataMember(Order = 6)] public int MaxSimultaneousSendsPerClient { get; set; }
 
         [DataMember(Order = 9)] public int SocketTimeoutSeconds { get; set; }
 
@@ -30,12 +26,10 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         {
             BufferSize = 2000;
             MaxConnections = 100;
-            NumSimultaneouslyWriteOperations = 100;
             Retries = 10;
             SocketSettings = new SocketSettings();
             Identity = "";
             MaxUnitOfOrder = 1;
-            MaxSimultaneousSendsPerClient = 1;
             SocketTimeoutSeconds = -1;
             DebugMode = false;
         }
@@ -45,11 +39,9 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             Identity = settings.Identity;
             BufferSize = settings.BufferSize;
             MaxConnections = settings.MaxConnections;
-            NumSimultaneouslyWriteOperations = settings.NumSimultaneouslyWriteOperations;
             Retries = settings.Retries;
             SocketSettings = new SocketSettings(settings.SocketSettings);
             MaxUnitOfOrder = settings.MaxUnitOfOrder;
-            MaxSimultaneousSendsPerClient = settings.MaxSimultaneousSendsPerClient;
             SocketTimeoutSeconds = settings.SocketTimeoutSeconds;
             DebugMode = settings.DebugMode;
         }
@@ -64,10 +56,6 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             if (MaxUnitOfOrder <= 0)
             {
                 throw new ArgumentOutOfRangeException(nameof(MaxUnitOfOrder), "MaxUnitOfOrder must be greater than zero.");
-            }
-            if (MaxSimultaneousSendsPerClient <= 0)
-            {
-                throw new ArgumentOutOfRangeException(nameof(MaxSimultaneousSendsPerClient), "MaxSimultaneousSendsPerClient must be greater than zero.");
             }
         }
     }
