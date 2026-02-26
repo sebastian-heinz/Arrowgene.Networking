@@ -8,6 +8,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
     public class AsyncEventClient : ITcpSocket
     {
         public string Identity { get; private set; }
+        public int ClientId { get; private set; }
         public IPAddress RemoteIpAddress { get; private set; }
         public ushort Port { get; private set; }
         public int UnitOfOrder { get; private set; }
@@ -21,6 +22,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         
         internal SocketAsyncEventArgs ReadEventArgs { get;  }
         internal SocketAsyncEventArgs WriteEventArgs { get; }
+        internal SocketAsyncEventArgs AcceptEventArgs { get; }
         internal AsyncEventWriteState WriteState { get; set; }
 
         private int _isAlive;
@@ -35,27 +37,31 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         }
 
         public AsyncEventClient(
-            SocketAsyncEventArgs readEventArgs,
-            SocketAsyncEventArgs writeEventArgs,
+            int clientId,
             AsyncEventServer server,
-            int generation)
+            SocketAsyncEventArgs readEventArgs,
+            SocketAsyncEventArgs writeEventArgs)
         {
+            ClientId = clientId;
             _isAlive = 0;
             _disconnectInProgress = 1;
             _pendingIoOperations = 0;
             _returnedToPool = 1;
-            Generation = generation;
+            Generation = 0;
             _server = server;
             WriteState = new AsyncEventWriteState();
             ReadEventArgs = readEventArgs;
             WriteEventArgs = writeEventArgs;
+            
             ReadEventArgs.UserToken = this;
             WriteEventArgs.UserToken = this;
+            AcceptEventArgs.UserToken = this;
         }
 
         internal void Open(
             Socket socket,
-            int unitOfOrder
+            int unitOfOrder,
+            int clientGeneration
         )
         {
             Socket = socket;

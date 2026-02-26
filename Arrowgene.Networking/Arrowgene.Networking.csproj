@@ -1,6 +1,6 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>netstandard2.1</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Arrowgene.Networking</RootNamespace>
     <Title>Arrowgene.Networking</Title>
     <Company>Arrowgene</Company>
@@ -12,6 +12,7 @@
     <RepositoryUrl>https://github.com/sebastian-heinz/Arrowgene.Networking</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>socket,network,arrowgene</PackageTags>
+    <LangVersion>14</LangVersion>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Arrowgene.Logging" Version="1.2.1" />

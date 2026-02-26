@@ -7,7 +7,6 @@ namespace Arrowgene.Networking.Tcp.Server
     public abstract class TcpServer : ITcpServer
     {
         private readonly IConsumer _consumer;
-        private readonly IBufferConsumer _bufferConsumer;
 
         protected TcpServer(IPAddress ipAddress, ushort port, IConsumer consumer)
         {
@@ -20,7 +19,6 @@ namespace Arrowgene.Networking.Tcp.Server
             IpAddress = ipAddress;
             Port = port;
             _consumer = consumer;
-            _bufferConsumer = consumer as IBufferConsumer;
         }
 
         public IPAddress IpAddress { get; }
@@ -33,23 +31,11 @@ namespace Arrowgene.Networking.Tcp.Server
 
         protected void OnReceivedData(ITcpSocket socket, byte[] data)
         {
-            if (_bufferConsumer != null)
-            {
-                _bufferConsumer.OnReceivedData(socket, data, 0, data.Length);
-                return;
-            }
-
             _consumer.OnReceivedData(socket, data);
         }
 
         protected void OnReceivedData(ITcpSocket socket, byte[] buffer, int offset, int count)
         {
-            if (_bufferConsumer != null)
-            {
-                _bufferConsumer.OnReceivedData(socket, buffer, offset, count);
-                return;
-            }
-
             byte[] data = new byte[count];
             Buffer.BlockCopy(buffer, offset, data, 0, count);
             _consumer.OnReceivedData(socket, data);
