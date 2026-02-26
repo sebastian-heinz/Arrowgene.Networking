@@ -60,8 +60,6 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         private Thread _timeoutThread;
         private Socket _listenSocket;
         private CancellationTokenSource _cancellation;
-        private long _acceptedConnections;
-        private int _currentConnections;
         private int _acceptLoopGeneration;
         private volatile bool _isRunning;
 
@@ -108,8 +106,6 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         {
             _clients.Clear();
             _isRunning = false;
-            _acceptedConnections = 0;
-            _currentConnections = 0;
             _cancellation = new CancellationTokenSource();
             int generation = Interlocked.Increment(ref _acceptLoopGeneration);
 
@@ -475,6 +471,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             if (socketError == SocketError.Success)
             {
                 AsyncEventClient client;
+                AsyncEventClientHandle clientHandle;
                 lock (_isRunningLock)
                 {
                     if (!_isRunning)
@@ -487,7 +484,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 
                     lock (_clientPoolLock)
                     {
-                        if (_currentConnections >= _settings.MaxConnections)
+                        if (_clients.Count >= _settings.MaxConnections)
                         {
                             Logger.Error($"{_identity}{clientIdentity} ProcessAccept - max connections exceeded");
                             Service.CloseSocket(acceptSocket);
@@ -502,23 +499,17 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                             return;
                         }
 
-                        _currentConnections++;
+                        int clientGeneration = Interlocked.Increment(ref _clientGenerations[client.ClientId]);
+                        int unitOfOrder = ClaimUnitOfOrder();
+                        client.Open(acceptSocket, unitOfOrder, clientGeneration);
+                        _clients.Add(client);
+                        Logger.Debug($"{_identity}ProcessAccept - Active Client Connections: {_clients.Count}");
+                        clientHandle = new AsyncEventClientHandle(client, clientGeneration);
                     }
                 }
-                
-                int clientGeneration = Interlocked.Increment(ref _clientGenerations[client.ClientId]);
-                int unitOfOrder = ClaimUnitOfOrder();
-                Logger.Debug(
-                    $"{_identity}{clientIdentity} ProcessAccept: accepted - UnitOfOrder: {unitOfOrder} clientGeneration: {clientGeneration}");
-                
-                client.Open(acceptSocket, unitOfOrder, clientGeneration);
-                _clients.Add(client);
-                Interlocked.Increment(ref _acceptedConnections);
-                Logger.Debug($"{_identity}ProcessAccept - Active Client Connections: _clients.Count:{_clients.Count} _currentConnections:{_currentConnections}");
-                Logger.Debug($"{_identity}ProcessAccept - Total Accepted Connections: {_acceptedConnections}");
                 try
                 {
-                    OnClientConnected(new AsyncEventClientHandle(client, clientGeneration));
+                    OnClientConnected(clientHandle);
                 }
                 catch (Exception ex)
                 {
