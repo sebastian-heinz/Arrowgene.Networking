@@ -7,43 +7,45 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 {
     public class AsyncEventClient : ITcpSocket
     {
-        public string Identity { get; private set; }
         public int ClientId { get; private set; }
+
+        public string Identity { get; private set; }
+
+        internal int RunGeneration { get; private set; }
+        internal int Generation { get; private set; }
+
         public IPAddress RemoteIpAddress { get; private set; }
         public ushort Port { get; private set; }
         public int UnitOfOrder { get; private set; }
-        internal int Generation { get; }
         public Socket Socket { get; private set; }
         public DateTime LastRead { get; internal set; }
         public DateTime LastWrite { get; internal set; }
         public DateTime ConnectedAt { get; private set; }
         public ulong BytesReceived { get; internal set; }
         public ulong BytesSend { get; internal set; }
-        
-        internal SocketAsyncEventArgs ReadEventArgs { get;  }
+        public bool IsAlive => _isAlive;
+
+        internal SocketAsyncEventArgs ReadEventArgs { get; }
         internal SocketAsyncEventArgs WriteEventArgs { get; }
-        internal SocketAsyncEventArgs AcceptEventArgs { get; }
         internal AsyncEventWriteState WriteState { get; set; }
 
-        private int _isAlive;
+        private volatile bool _isAlive;
         private int _disconnectInProgress;
         private int _pendingIoOperations;
         private int _returnedToPool;
         private readonly AsyncEventServer _server;
 
-        public bool IsAlive
-        {
-            get => Volatile.Read(ref _isAlive) == 1;
-        }
 
         public AsyncEventClient(
             int clientId,
+            int runGeneration,
             AsyncEventServer server,
             SocketAsyncEventArgs readEventArgs,
             SocketAsyncEventArgs writeEventArgs)
         {
             ClientId = clientId;
-            _isAlive = 0;
+            RunGeneration = runGeneration;
+            _isAlive = true;
             _disconnectInProgress = 1;
             _pendingIoOperations = 0;
             _returnedToPool = 1;
@@ -52,20 +54,22 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             WriteState = new AsyncEventWriteState();
             ReadEventArgs = readEventArgs;
             WriteEventArgs = writeEventArgs;
-            
+
             ReadEventArgs.UserToken = this;
             WriteEventArgs.UserToken = this;
-            AcceptEventArgs.UserToken = this;
         }
 
-        internal void Open(
+        internal void Initialize(
             Socket socket,
             int unitOfOrder,
+            int runGeneration,
             int clientGeneration
         )
         {
             Socket = socket;
             UnitOfOrder = unitOfOrder;
+            RunGeneration = runGeneration;
+            Generation = clientGeneration;
 
             DateTime now = DateTime.Now;
             LastRead = now;
@@ -79,7 +83,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             if (Socket.RemoteEndPoint is IPEndPoint ipEndPoint)
             {
                 RemoteIpAddress = ipEndPoint.Address;
-                Port = (ushort) ipEndPoint.Port;
+                Port = (ushort)ipEndPoint.Port;
             }
 
             Identity = $"[{RemoteIpAddress}:{Port}]";
@@ -89,17 +93,17 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             Interlocked.Exchange(ref _pendingIoOperations, 0);
             Volatile.Write(ref _returnedToPool, 0);
             Volatile.Write(ref _disconnectInProgress, 0);
-            Volatile.Write(ref _isAlive, 1);
+            _isAlive = false;
         }
-        
+
         public void Send(byte[] data)
         {
             _server.Send(this, data);
         }
-        
+
         public void Close()
         {
-            if (Interlocked.Exchange(ref _isAlive, 0) == 0)
+            if (!_isAlive)
             {
                 return;
             }
@@ -135,50 +139,6 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         internal bool TryBeginDisconnect()
         {
             return Interlocked.CompareExchange(ref _disconnectInProgress, 1, 0) == 0;
-        }
-
-        internal bool TryBeginIoOperation()
-        {
-            if (Volatile.Read(ref _isAlive) == 0)
-            {
-                return false;
-            }
-
-            Interlocked.Increment(ref _pendingIoOperations);
-            if (Volatile.Read(ref _isAlive) == 0)
-            {
-                CompleteIoOperation();
-                return false;
-            }
-
-            return true;
-        }
-
-        internal bool CompleteIoOperation()
-        {
-            int pendingIoOperations = Interlocked.Decrement(ref _pendingIoOperations);
-            if (pendingIoOperations < 0)
-            {
-                Interlocked.Exchange(ref _pendingIoOperations, 0);
-                return false;
-            }
-
-            return pendingIoOperations == 0 && Volatile.Read(ref _isAlive) == 0;
-        }
-
-        internal bool TryMarkReturnedToPool()
-        {
-            if (Volatile.Read(ref _isAlive) != 0)
-            {
-                return false;
-            }
-
-            if (Volatile.Read(ref _pendingIoOperations) != 0)
-            {
-                return false;
-            }
-
-            return Interlocked.CompareExchange(ref _returnedToPool, 1, 0) == 0;
         }
     }
 }
