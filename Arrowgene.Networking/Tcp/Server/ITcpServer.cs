@@ -8,6 +8,6 @@ namespace Arrowgene.Networking.Tcp.Server
         ushort Port { get; }
         void Start();
         void Stop();
-        void Send(ITcpSocket socket, byte[] data);
+        void Send<T>(T socket, byte[] data) where T : ITcpSocket;
     }
 }

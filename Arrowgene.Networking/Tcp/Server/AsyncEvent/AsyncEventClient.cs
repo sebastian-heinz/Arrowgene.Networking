@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Net;
 using System.Net.Sockets;
-using System.Threading;
 
 namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 {
@@ -30,9 +29,6 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         internal AsyncEventWriteState WriteState { get; set; }
 
         private volatile bool _isAlive;
-        private int _disconnectInProgress;
-        private int _pendingIoOperations;
-        private int _returnedToPool;
         private readonly AsyncEventServer _server;
 
 
@@ -45,10 +41,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         {
             ClientId = clientId;
             RunGeneration = runGeneration;
-            _isAlive = true;
-            _disconnectInProgress = 1;
-            _pendingIoOperations = 0;
-            _returnedToPool = 1;
+            _isAlive = false;
             Generation = 0;
             _server = server;
             WriteState = new AsyncEventWriteState();
@@ -57,6 +50,11 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 
             ReadEventArgs.UserToken = this;
             WriteEventArgs.UserToken = this;
+        }
+
+        public void Send(byte[] data)
+        {
+            _server.Send(this, data);
         }
 
         internal void Initialize(
@@ -89,16 +87,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             Identity = $"[{RemoteIpAddress}:{Port}]";
 
             WriteState.Reset();
-
-            Interlocked.Exchange(ref _pendingIoOperations, 0);
-            Volatile.Write(ref _returnedToPool, 0);
-            Volatile.Write(ref _disconnectInProgress, 0);
-            _isAlive = false;
-        }
-
-        public void Send(byte[] data)
-        {
-            _server.Send(this, data);
+            _isAlive = true;
         }
 
         public void Close()
@@ -107,6 +96,8 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             {
                 return;
             }
+
+            _isAlive = false;
 
             WriteState.Reset();
 
@@ -134,11 +125,6 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             {
                 // ignored
             }
-        }
-
-        internal bool TryBeginDisconnect()
-        {
-            return Interlocked.CompareExchange(ref _disconnectInProgress, 1, 0) == 0;
         }
     }
 }

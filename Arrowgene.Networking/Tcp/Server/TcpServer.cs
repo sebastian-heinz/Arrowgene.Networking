@@ -26,8 +26,8 @@ namespace Arrowgene.Networking.Tcp.Server
 
         protected abstract void ServerStart();
         protected abstract void ServerStop();
-        
-        public abstract void Send(ITcpSocket socket, byte[] data);
+
+        public abstract void Send<T>(T socket, byte[] data) where T : ITcpSocket;
 
         protected void OnReceivedData(ITcpSocket socket, byte[] data)
         {

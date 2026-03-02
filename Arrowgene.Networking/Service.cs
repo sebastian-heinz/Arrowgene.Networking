@@ -8,7 +8,7 @@ namespace Arrowgene.Networking
 {
     internal static class Service
     {
-        public static void JoinThread(Thread thread, int timeoutMs, ILogger logger)
+        public static void JoinThread(Thread? thread, int timeoutMs, ILogger logger)
         {
             if (thread != null)
             {
@@ -39,7 +39,7 @@ namespace Arrowgene.Networking
             }
         }
 
-        public static void CloseSocket(Socket socket)
+        public static void CloseSocket(Socket? socket)
         {
             if (socket == null)
             {

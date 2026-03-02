@@ -37,7 +37,6 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 
         private readonly int[] _clientGenerations;
         private readonly byte[] _buffer;
-        private readonly int _totalBufferSize;
         private readonly ConcurrentStack<AsyncEventClient> _clientPool;
         private readonly Stack<SocketAsyncEventArgs> _acceptPool;
         private readonly AsyncEventSettings _settings;
@@ -52,10 +51,10 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
         private readonly string _identity;
         private readonly AsyncEventClientList<AsyncEventClient> _clients;
 
-        private SemaphoreSlim _maxNumberAccepts;
-        private Thread _serverThread;
-        private Thread _timeoutThread;
-        private Socket _listenSocket;
+        private SemaphoreSlim? _maxNumberAccepts;
+        private Thread? _serverThread;
+        private Thread? _timeoutThread;
+        private Socket? _listenSocket;
         private CancellationTokenSource _cancellation;
         private int _runGeneration;
         private volatile bool _isRunning;
@@ -67,6 +66,9 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             _settings = new AsyncEventSettings(settings);
             _maxConnections = _settings.MaxConnections;
             _bufferSize = _settings.BufferSize;
+
+
+            _cancellation = new CancellationTokenSource();
 
             _clients = new AsyncEventClientList<AsyncEventClient>();
             _socketTimeout = TimeSpan.FromSeconds(_settings.SocketTimeoutSeconds);
@@ -90,8 +92,8 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                 _clientGenerations[i] = 0;
             }
 
-            _totalBufferSize = _bufferSize * _maxConnections * 2;
-            _buffer = GC.AllocateArray<byte>(_totalBufferSize, pinned: true);
+            int totalBufferSize = _bufferSize * _maxConnections * 2;
+            _buffer = GC.AllocateArray<byte>(totalBufferSize, pinned: true);
         }
 
         public AsyncEventServer(IPAddress ipAddress, ushort port, IConsumer consumer)
@@ -209,11 +211,6 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                 List<AsyncEventClient> clients = _clients.Snapshot();
                 foreach (AsyncEventClient client in clients)
                 {
-                    if (client == null)
-                    {
-                        continue;
-                    }
-
                     DisconnectClient(client);
                 }
 
@@ -341,7 +338,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                 bool willRaiseEvent;
                 try
                 {
-                    willRaiseEvent = _listenSocket.AcceptAsync(acceptEventArgs);
+                    willRaiseEvent = _listenSocket!.AcceptAsync(acceptEventArgs);
                 }
                 catch (ObjectDisposedException)
                 {
@@ -364,7 +361,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             }
         }
 
-        private void Accept_Completed(object sender, SocketAsyncEventArgs acceptEventArg)
+        private void Accept_Completed(object? sender, SocketAsyncEventArgs acceptEventArg)
         {
             ProcessAccept(acceptEventArg);
         }
@@ -423,7 +420,6 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                 return;
             }
 
-            AsyncEventClient client;
             AsyncEventClientHandle clientHandle;
             lock (_clientPoolLock)
             {
@@ -439,7 +435,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                     return;
                 }
 
-                if (!_clientPool.TryPop(out client))
+                if (!_clientPool.TryPop(out AsyncEventClient client))
                 {
                     Log(
                         LogLevel.Error,
@@ -479,14 +475,14 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                 Logger.Exception(ex);
             }
 
-            StartReceive(client);
+            StartReceive(clientHandle);
         }
 
-        private void StartReceive(AsyncEventClient client)
+        private void StartReceive(AsyncEventClientHandle clientHandle)
         {
-            if (client == null)
+            if (!clientHandle.TryGetClient(out AsyncEventClient client))
             {
-                Log(LogLevel.Error, "StartReceive", "AsyncEventClient 'client' is null.");
+                Log(LogLevel.Error, "StartReceive", "'clientHandle' is stale.");
                 return;
             }
 
@@ -525,21 +521,26 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 
             if (!willRaiseEvent)
             {
-                ProcessReceive(client);
+                ProcessReceive(clientHandle);
             }
         }
 
-        private void Receive_Completed(object sender, SocketAsyncEventArgs readEventArgs)
+        private void Receive_Completed(object? sender, SocketAsyncEventArgs readEventArgs)
         {
-            AsyncEventClient client = readEventArgs.UserToken as AsyncEventClient;
-            ProcessReceive(client);
+            if (readEventArgs.UserToken is not AsyncEventClientHandle clientHandle)
+            {
+                Log(LogLevel.Error, "Receive_Completed", "Unexpected user token.");
+                return;
+            }
+
+            ProcessReceive(clientHandle);
         }
 
-        private void ProcessReceive(AsyncEventClient client)
+        private void ProcessReceive(AsyncEventClientHandle clientHandle)
         {
-            if (client == null)
+            if (!clientHandle.TryGetClient(out AsyncEventClient client))
             {
-                Log(LogLevel.Error, "ProcessReceive", "AsyncEventClient 'client' is null.");
+                Log(LogLevel.Error, "StartReceive", "'clientHandle' is stale.");
                 return;
             }
 
@@ -586,24 +587,23 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                 Logger.Exception(ex);
             }
 
-            StartReceive(client);
+            StartReceive(clientHandle);
         }
 
-        public override void Send(ITcpSocket socket, byte[] data)
+        public override void Send<T>(T socket, byte[] data)
         {
-            if (socket == null)
-            {
-                Log(LogLevel.Error, "Send", "ITcpSocket 'socket' is null.");
-                return;
-            }
-
             if (socket is not AsyncEventClientHandle clientHandle)
             {
                 Log(LogLevel.Error, "Send", "ITcpSocket is not a AsyncEventClientHandle instance.");
                 return;
             }
 
-            AsyncEventClient client = clientHandle.Client;
+            if (!clientHandle.TryGetClient(out AsyncEventClient client))
+            {
+                Log(LogLevel.Error, "Send", "'clientHandle' is stale.");
+                return;
+            }
+
             if (data == null || data.Length == 0)
             {
                 Log(LogLevel.Error, "Send", "Empty payload, not sending.", client.Identity);
@@ -613,22 +613,15 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             AsyncEventWriteState state = client.WriteState;
             if (state.EnqueueSend(data))
             {
-                StartSend(client);
+                StartSend(clientHandle);
             }
         }
 
-        private void StartSend(AsyncEventClient client)
+        private void StartSend(AsyncEventClientHandle clientHandle)
         {
-            if (client == null)
+            if (!clientHandle.TryGetClient(out AsyncEventClient client))
             {
-                Log(LogLevel.Error, "StartSend", "AsyncEventClient 'client' is null.");
-                return;
-            }
-
-            if (!_isRunning)
-            {
-                Log(LogLevel.Error, "StartSend", "Server stopped, not sending anymore.", client.Identity);
-                DisconnectClient(client);
+                Log(LogLevel.Error, "StartSend", "'clientHandle' is stale.");
                 return;
             }
 
@@ -640,13 +633,6 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             }
 
             Socket socket = client.Socket;
-            if (socket == null)
-            {
-                Log(LogLevel.Error, "StartSend", "Client socket is null.", client.Identity);
-                DisconnectClient(client);
-                return;
-            }
-
             AsyncEventWriteState state = client.WriteState;
             if (!state.TryGetSendChunk(_bufferSize, out byte[] data, out int dataOffset, out int chunkSize))
             {
@@ -677,28 +663,26 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 
             if (!willRaiseEvent)
             {
-                ProcessSend(client);
+                ProcessSend(clientHandle);
             }
         }
 
-        private void Send_Completed(object sender, SocketAsyncEventArgs writeEventArgs)
+        private void Send_Completed(object? sender, SocketAsyncEventArgs writeEventArgs)
         {
-            AsyncEventClient client = writeEventArgs.UserToken as AsyncEventClient;
-            ProcessSend(client);
-        }
-
-        private void ProcessSend(AsyncEventClient client)
-        {
-            if (client == null)
+            if (writeEventArgs.UserToken is not AsyncEventClientHandle clientHandle)
             {
-                Log(LogLevel.Error, "ProcessSend", "AsyncEventClient 'client' is null.");
+                Log(LogLevel.Error, "Send_Completed_Completed", "Unexpected user token.");
                 return;
             }
 
-            if (!_isRunning)
+            ProcessSend(clientHandle);
+        }
+
+        private void ProcessSend(AsyncEventClientHandle clientHandle)
+        {
+            if (!clientHandle.TryGetClient(out AsyncEventClient client))
             {
-                Log(LogLevel.Error, "ProcessSend", "Server stopped, not sending anymore.", client.Identity);
-                DisconnectClient(client);
+                Log(LogLevel.Error, "ProcessSend", "'clientHandle' is stale.");
                 return;
             }
 
@@ -730,19 +714,13 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 
             if (state.CompleteSend(writeEventArgs.BytesTransferred))
             {
-                StartSend(client);
+                StartSend(clientHandle);
             }
         }
 
         private void DisconnectClient(AsyncEventClient client)
         {
-            if (client == null)
-            {
-                Log(LogLevel.Error, "DisconnectClient", "AsyncEventClient 'client' is null");
-                return;
-            }
-
-            if (!client.TryBeginDisconnect())
+            if (!client.IsAlive)
             {
                 return;
             }
