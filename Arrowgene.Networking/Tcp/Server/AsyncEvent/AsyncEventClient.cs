@@ -7,37 +7,47 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
     public class AsyncEventClient : ITcpSocket
     {
         public int ClientId { get; private set; }
-
         public string Identity { get; private set; }
-
-        internal int RunGeneration { get; private set; }
-        internal int Generation { get; private set; }
-
+        public int RunGeneration { get; private set; }
+        public int Generation { get; private set; }
         public IPAddress RemoteIpAddress { get; private set; }
         public ushort Port { get; private set; }
         public int UnitOfOrder { get; private set; }
         public Socket Socket { get; private set; }
-        public DateTime LastRead { get; internal set; }
-        public DateTime LastWrite { get; internal set; }
+        public long LastReadTicks { get; internal set; }
+        public long LastWriteTicks { get; internal set; }
         public DateTime ConnectedAt { get; private set; }
         public ulong BytesReceived { get; internal set; }
         public ulong BytesSend { get; internal set; }
-        public bool IsAlive => _isAlive;
+
+        public bool IsAlive
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return _isAlive;
+                }
+            }
+        }
 
         internal SocketAsyncEventArgs ReadEventArgs { get; }
         internal SocketAsyncEventArgs WriteEventArgs { get; }
         internal AsyncEventWriteState WriteState { get; set; }
 
-        private volatile bool _isAlive;
+        private bool _isAlive;
+        private bool _isShuttingDown;
         private readonly AsyncEventServer _server;
 
+        private readonly object _lock;
 
         public AsyncEventClient(
             int clientId,
             int runGeneration,
             AsyncEventServer server,
             SocketAsyncEventArgs readEventArgs,
-            SocketAsyncEventArgs writeEventArgs)
+            SocketAsyncEventArgs writeEventArgs
+        )
         {
             ClientId = clientId;
             RunGeneration = runGeneration;
@@ -47,32 +57,55 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             WriteState = new AsyncEventWriteState();
             ReadEventArgs = readEventArgs;
             WriteEventArgs = writeEventArgs;
-
-            ReadEventArgs.UserToken = this;
-            WriteEventArgs.UserToken = this;
+            _lock = new object();
         }
 
         public void Send(byte[] data)
         {
-            _server.Send(this, data);
+            Send(this, data);
+        }
+
+        public void Send<T>(T socket, byte[] data) where T : ITcpSocket
+        {
+            _server.Send(socket, data);
         }
 
         internal void Initialize(
             Socket socket,
             int unitOfOrder,
             int runGeneration,
-            int clientGeneration
+            int clientGeneration,
+            AsyncEventClientHandle handle
         )
         {
+            lock (_lock)
+            {
+                if (_isAlive)
+                {
+                    throw new InvalidOperationException("Client is alive");
+                }
+
+                if (!_isShuttingDown)
+                {
+                    throw new InvalidOperationException("Client is shutting down");
+                }
+
+                _isAlive = true;
+                _isShuttingDown = false;
+            }
+
             Socket = socket;
             UnitOfOrder = unitOfOrder;
             RunGeneration = runGeneration;
             Generation = clientGeneration;
 
-            DateTime now = DateTime.Now;
-            LastRead = now;
-            LastWrite = now;
-            ConnectedAt = now;
+            ReadEventArgs.UserToken = handle;
+            WriteEventArgs.UserToken = handle;
+
+            long now = Environment.TickCount64;
+            LastReadTicks = now;
+            LastWriteTicks = now;
+            ConnectedAt = DateTime.Now;
             BytesReceived = 0;
             BytesSend = 0;
 
@@ -87,27 +120,35 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             Identity = $"[{RemoteIpAddress}:{Port}]";
 
             WriteState.Reset();
-            _isAlive = true;
+        }
+
+        internal bool TryBeginShutdown()
+        {
+            lock (_lock)
+            {
+                if (_isShuttingDown)
+                {
+                    return false;
+                }
+
+                _isShuttingDown = true;
+                return true;
+            }
         }
 
         public void Close()
         {
-            if (!_isAlive)
+            lock (_lock)
             {
-                return;
+                if (!_isAlive)
+                {
+                    return;
+                }
+
+                _isAlive = false;
             }
-
-            _isAlive = false;
-
-            WriteState.Reset();
 
             Socket socket = Socket;
-            Socket = null;
-            if (socket == null)
-            {
-                return;
-            }
-
             try
             {
                 socket.Shutdown(SocketShutdown.Both);

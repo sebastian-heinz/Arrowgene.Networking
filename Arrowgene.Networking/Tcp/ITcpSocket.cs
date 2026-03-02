@@ -15,14 +15,14 @@ namespace Arrowgene.Networking.Tcp
         int UnitOfOrder { get; }
 
         /// <summary>
-        /// Timestamp of last recv operation.
+        /// Ticks in ms of last recv operation.
         /// </summary>
-        public DateTime LastRead { get; }
+        public long LastReadTicks { get; }
         
         /// <summary>
-        /// Timestamp of last send operation.
+        /// Ticks in ms of last send operation.
         /// </summary>
-        public DateTime LastWrite { get; }
+        public long LastWriteTicks { get; }
         
         /// <summary>
         /// Timestamp when client connected

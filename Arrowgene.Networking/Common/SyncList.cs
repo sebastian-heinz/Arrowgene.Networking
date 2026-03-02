@@ -1,22 +1,22 @@
 ﻿using System.Collections.Generic;
 
-namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
+namespace Arrowgene.Networking.Common
 {
     /// <summary>
     /// Concurrent List implementation by Lock
     /// </summary>
-    public class AsyncEventClientList<T>
+    public class SyncList<T>
     {
         private readonly List<T> _list;
         private readonly object _lock;
 
-        public AsyncEventClientList()
+        public SyncList()
         {
             _lock = new object();
             _list = new List<T>();
         }
 
-        public AsyncEventClientList(IEnumerable<T> collection) : this()
+        public SyncList(IEnumerable<T> collection) : this()
         {
             _list.AddRange(collection);
         }

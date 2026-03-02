@@ -44,9 +44,9 @@ public readonly struct AsyncEventClientHandle(AsyncEventClient client, int runGe
 
     public int UnitOfOrder => Client.UnitOfOrder;
 
-    public DateTime LastRead => Client.LastRead;
+    public long LastReadTicks => Client.LastReadTicks;
 
-    public DateTime LastWrite => Client.LastWrite;
+    public long LastWriteTicks => Client.LastWriteTicks;
 
     public DateTime ConnectedAt => Client.ConnectedAt;
 
@@ -59,7 +59,7 @@ public readonly struct AsyncEventClientHandle(AsyncEventClient client, int runGe
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Send(byte[] data)
     {
-        Client.Send(data);
+        Client.Send(this, data);
     }
 
     public void Close()
