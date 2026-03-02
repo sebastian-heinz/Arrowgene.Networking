@@ -20,8 +20,8 @@ namespace Arrowgene.Networking.Tcp.Client
         public IPAddress RemoteIpAddress { get; protected set; }
         public ushort Port { get; protected set; }
         public int UnitOfOrder => 0;
-        public DateTime LastRead { get; set; }
-        public DateTime LastWrite { get; set; }
+        public long LastReadTicks { get; set; }
+        public long LastWriteTicks { get; set; }
         public DateTime ConnectedAt { get; set; }
         public ulong BytesReceived { get; set; }
         public ulong BytesSend { get; set; }
