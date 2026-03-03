@@ -31,7 +31,8 @@ public class AsyncEventServer : TcpServer, IDisposable
     private const string TimeoutThreadName = "AsyncEventServer_Timeout";
     private const int ThreadTimeoutMs = 10000;
     private const int NumAccepts = 10;
-    private const int MinSocketTimeoutDelayMs = 30000;
+    private const int MinSocketTimeoutDelayMs = 1000;
+    private const int MaxSocketTimeoutDelayMs = 30000;
 
     private static readonly ILogger Logger = LogProvider.Logger(typeof(AsyncEventServer));
 
@@ -40,7 +41,9 @@ public class AsyncEventServer : TcpServer, IDisposable
 
     private readonly int[] _clientGenerations;
     private readonly Stack<AsyncEventClient> _clientPool;
+    private readonly AsyncEventClient[] _allClients;
     private readonly Stack<SocketAsyncEventArgs> _acceptPool;
+    private readonly SocketAsyncEventArgs[] _allAcceptEventArgs;
     private readonly AsyncEventSettings _settings;
     private readonly TimeSpan _socketTimeout;
     private readonly int _maxConnections;
@@ -73,9 +76,11 @@ public class AsyncEventServer : TcpServer, IDisposable
         _acceptPoolLock = new object();
         _buffer = GC.AllocateArray<byte>(totalBufferSize, true);
         _clientGenerations = new int[_maxConnections];
+        _allClients = new AsyncEventClient[_maxConnections];
         _clientHandles = new List<AsyncEventClientHandle>();
         _clientLock = new object();
         _clientPool = new Stack<AsyncEventClient>();
+        _allAcceptEventArgs = new SocketAsyncEventArgs[NumAccepts];
         _identity = "";
         _isRunningLock = new object();
         _maxNumberAccepts = new SemaphoreSlim(NumAccepts, NumAccepts);
@@ -118,6 +123,7 @@ public class AsyncEventServer : TcpServer, IDisposable
                 readEventArgs,
                 writeEventArgs
             );
+            _allClients[clientId] = client;
             _clientPool.Push(client);
         }
 
@@ -125,6 +131,7 @@ public class AsyncEventServer : TcpServer, IDisposable
         {
             SocketAsyncEventArgs acceptEventArgs = new SocketAsyncEventArgs();
             acceptEventArgs.Completed += Accept_Completed;
+            _allAcceptEventArgs[i] = acceptEventArgs;
             _acceptPool.Push(acceptEventArgs);
         }
     }
@@ -647,8 +654,7 @@ public class AsyncEventServer : TcpServer, IDisposable
             return;
         }
 
-        client.LastReadTicks = Environment.TickCount64;
-        client.BytesReceived += (ulong)readEventArgs.BytesTransferred;
+        client.RecordReceive(readEventArgs.BytesTransferred);
         try
         {
             OnReceivedData(clientHandle, readEventArgs.Buffer, readEventArgs.Offset,
@@ -823,8 +829,7 @@ public class AsyncEventServer : TcpServer, IDisposable
         }
 
         AsyncEventWriteState state = client.WriteState;
-        client.BytesSend += (ulong)writeEventArgs.BytesTransferred;
-        client.LastWriteTicks = Environment.TickCount64;
+        client.RecordSend(writeEventArgs.BytesTransferred);
 
         if (state.CompleteSend(writeEventArgs.BytesTransferred))
         {
@@ -983,27 +988,27 @@ public class AsyncEventServer : TcpServer, IDisposable
                     ? client.LastWriteTicks
                     : client.LastReadTicks;
                 long elapsedTicksSinceLastActive = now - lastActiveTicks;
+                if (elapsedTicksSinceLastActive < 0)
+                {
+                    elapsedTicksSinceLastActive = 0;
+                }
+
                 if (elapsedTicksSinceLastActive > _socketTimeout.TotalMilliseconds)
                 {
-                    TimeSpan uptime = TimeSpan.FromMilliseconds(now);
                     TimeSpan elapsedSinceLastActive = TimeSpan.FromMilliseconds(elapsedTicksSinceLastActive);
-                    DateTime bootTime = DateTime.UtcNow - uptime;
-                    DateTime lastActive = bootTime + elapsedSinceLastActive;
+                    DateTime lastActive = DateTime.UtcNow - elapsedSinceLastActive;
                     Log(
                         LogLevel.Error,
                         "CheckSocketTimeout",
-                        $"Client socket timed out after {elapsedSinceLastActive.TotalSeconds} seconds. SocketTimeout: {_socketTimeout.TotalSeconds} LastActive: {lastActive:yyyy-MM-dd HH:mm:ss}",
+                        $"Client socket timed out after {elapsedSinceLastActive.TotalSeconds} seconds. SocketTimeout: {_socketTimeout.TotalSeconds} LastActive(UTC): {lastActive:yyyy-MM-dd HH:mm:ss}",
                         client.Identity
                     );
                     DisconnectClient(clientHandle);
                 }
             }
 
-            int timeoutMs = (int)_socketTimeout.TotalMilliseconds;
-            if (timeoutMs < MinSocketTimeoutDelayMs)
-            {
-                timeoutMs = MinSocketTimeoutDelayMs;
-            }
+            int timeoutMs = Math.Clamp((int)_socketTimeout.TotalMilliseconds, MinSocketTimeoutDelayMs,
+                MaxSocketTimeoutDelayMs);
 
             cancellationToken.WaitHandle.WaitOne(timeoutMs);
         }
@@ -1028,59 +1033,28 @@ public class AsyncEventServer : TcpServer, IDisposable
             Stop();
         }
 
+        WaitForClientOperationsDrain();
         WaitForClientPoolDrain();
         WaitForAcceptPoolDrain();
 
-        List<SocketAsyncEventArgs> acceptEventArgsList = new List<SocketAsyncEventArgs>(NumAccepts);
         lock (_acceptPoolLock)
         {
-            while (_acceptPool.TryPop(out SocketAsyncEventArgs? acceptEventArgs))
-            {
-                acceptEventArgsList.Add(acceptEventArgs);
-            }
+            _acceptPool.Clear();
         }
 
-        foreach (SocketAsyncEventArgs acceptEventArgs in acceptEventArgsList)
+        foreach (SocketAsyncEventArgs acceptEventArgs in _allAcceptEventArgs)
         {
             acceptEventArgs.Completed -= Accept_Completed;
             acceptEventArgs.Dispose();
         }
 
-        List<AsyncEventClient> clients = new List<AsyncEventClient>(_maxConnections);
-        bool[] addedClients = new bool[_maxConnections];
         lock (_clientLock)
         {
-            foreach (AsyncEventClientHandle clientHandle in _clientHandles)
-            {
-                if (!clientHandle.TryGetClient(out AsyncEventClient client))
-                {
-                    continue;
-                }
-
-                if (addedClients[client.ClientId])
-                {
-                    continue;
-                }
-
-                clients.Add(client);
-                addedClients[client.ClientId] = true;
-            }
-
-            while (_clientPool.TryPop(out AsyncEventClient? pooledClient))
-            {
-                if (addedClients[pooledClient.ClientId])
-                {
-                    continue;
-                }
-
-                clients.Add(pooledClient);
-                addedClients[pooledClient.ClientId] = true;
-            }
-
             _clientHandles.Clear();
+            _clientPool.Clear();
         }
 
-        foreach (AsyncEventClient client in clients)
+        foreach (AsyncEventClient client in _allClients)
         {
             client.Close();
             client.ReadEventArgs.Completed -= Receive_Completed;
@@ -1093,6 +1067,33 @@ public class AsyncEventServer : TcpServer, IDisposable
         _cancellation.Dispose();
 
         GC.SuppressFinalize(this);
+    }
+
+    private void WaitForClientOperationsDrain()
+    {
+        int waitedMs = 0;
+        while (waitedMs < ThreadTimeoutMs)
+        {
+            bool drained = true;
+            foreach (AsyncEventClient client in _allClients)
+            {
+                if (client.IsAlive || client.PendingOperations > 0)
+                {
+                    drained = false;
+                    break;
+                }
+            }
+
+            if (drained)
+            {
+                return;
+            }
+
+            Thread.Sleep(10);
+            waitedMs += 10;
+        }
+
+        Log(LogLevel.Error, "Dispose", "Timed out waiting for pending client operations to drain.");
     }
 
     private void WaitForClientPoolDrain()

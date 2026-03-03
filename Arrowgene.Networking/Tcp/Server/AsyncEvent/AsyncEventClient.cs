@@ -16,11 +16,11 @@ public class AsyncEventClient : ITcpSocket
     public ushort Port { get; private set; }
     public int UnitOfOrder { get; private set; }
     public Socket Socket { get; private set; }
-    public long LastReadTicks { get; internal set; }
-    public long LastWriteTicks { get; internal set; }
+    public long LastReadTicks => Volatile.Read(ref _lastReadTicks);
+    public long LastWriteTicks => Volatile.Read(ref _lastWriteTicks);
     public DateTime ConnectedAt { get; private set; }
-    public ulong BytesReceived { get; internal set; }
-    public ulong BytesSend { get; internal set; }
+    public ulong BytesReceived => unchecked((ulong)Interlocked.Read(ref _bytesReceived));
+    public ulong BytesSend => unchecked((ulong)Interlocked.Read(ref _bytesSend));
 
     public bool IsAlive
     {
@@ -41,6 +41,10 @@ public class AsyncEventClient : ITcpSocket
     private bool _isInPool;
     private readonly AsyncEventServer _server;
     private int _pendingOperations;
+    private long _lastReadTicks;
+    private long _lastWriteTicks;
+    private long _bytesReceived;
+    private long _bytesSend;
 
     private readonly object _lock;
 
@@ -108,11 +112,11 @@ public class AsyncEventClient : ITcpSocket
         WriteEventArgs.UserToken = handle;
 
         long now = Environment.TickCount64;
-        LastReadTicks = now;
-        LastWriteTicks = now;
+        Volatile.Write(ref _lastReadTicks, now);
+        Volatile.Write(ref _lastWriteTicks, now);
         ConnectedAt = DateTime.Now;
-        BytesReceived = 0;
-        BytesSend = 0;
+        Interlocked.Exchange(ref _bytesReceived, 0);
+        Interlocked.Exchange(ref _bytesSend, 0);
 
         RemoteIpAddress = null;
         Port = 0;
@@ -151,6 +155,28 @@ public class AsyncEventClient : ITcpSocket
     internal void DecrementPendingOperations()
     {
         Interlocked.Decrement(ref _pendingOperations);
+    }
+
+    internal void RecordReceive(int transferredCount)
+    {
+        if (transferredCount <= 0)
+        {
+            return;
+        }
+
+        Volatile.Write(ref _lastReadTicks, Environment.TickCount64);
+        Interlocked.Add(ref _bytesReceived, transferredCount);
+    }
+
+    internal void RecordSend(int transferredCount)
+    {
+        if (transferredCount <= 0)
+        {
+            return;
+        }
+
+        Volatile.Write(ref _lastWriteTicks, Environment.TickCount64);
+        Interlocked.Add(ref _bytesSend, transferredCount);
     }
 
     internal bool TryMarkPooled()

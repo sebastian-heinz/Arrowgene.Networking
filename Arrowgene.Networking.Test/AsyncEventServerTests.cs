@@ -320,6 +320,38 @@ public class AsyncEventServerTests
     }
 
     [Fact]
+    public async Task Disconnects_Idle_Client_According_To_Configured_SocketTimeout()
+    {
+        var consumer = new TrackingConsumer();
+        await RunWithServerAsync(
+            consumer,
+            settings =>
+            {
+                settings.MaxConnections = 1;
+                settings.BufferSize = 64;
+                settings.SocketTimeoutSeconds = 1;
+            },
+            async port =>
+            {
+                using Socket client = await ConnectClientAsync(port, DefaultTimeout);
+                await WaitUntilAsync(
+                    () => consumer.ConnectedCount == 1,
+                    DefaultTimeout,
+                    "Expected client to connect."
+                );
+
+                await WaitUntilAsync(
+                    () => consumer.DisconnectedCount >= 1,
+                    TimeSpan.FromSeconds(6),
+                    "Expected idle client to be disconnected by socket timeout."
+                );
+
+                bool closed = await WaitForRemoteCloseAsync(client, TimeSpan.FromSeconds(2));
+                Assert.True(closed, "Client socket should be closed by server timeout handling.");
+            });
+    }
+
+    [Fact]
     public async Task Swallows_Consumer_OnReceivedData_Exception_And_Continues_Processing()
     {
         var consumer = new ThrowOnceEchoConsumer();
