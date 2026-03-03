@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
-using System.Runtime.CompilerServices;
 using System.Threading;
 using Arrowgene.Logging;
 using Arrowgene.Networking.Tcp.Consumer;
@@ -159,17 +158,34 @@ public class AsyncEventServer : TcpServer, IDisposable
                 return;
             }
 
-            _cancellation = new CancellationTokenSource();
-            int runGeneration = Interlocked.Increment(ref _runGeneration);
+            if (!WaitForDrain("ServerStart", ThreadTimeoutMs))
+            {
+                Log(LogLevel.Error, "ServerStart", "Previous run has not drained yet, aborting start.");
+                return;
+            }
 
             lock (_clientLock)
             {
                 if (_clientPool.Count != _maxConnections)
                 {
-                    ThrowInvalidStateException();
+                    Log(
+                        LogLevel.Error,
+                        "ServerStart",
+                        $"Client pool is not fully drained. ClientPoolCount:{_clientPool.Count} Expected:{_maxConnections}."
+                    );
+                    return;
                 }
 
-                _clientHandles.Clear();
+                if (_clientHandles.Count > 0)
+                {
+                    Log(
+                        LogLevel.Error,
+                        "ServerStart",
+                        $"Found stale client handles from previous run."
+                    );
+                    return;
+                }
+
                 for (int i = 0; i < _maxConnections; i++)
                 {
                     _clientGenerations[i] += 1;
@@ -181,16 +197,29 @@ public class AsyncEventServer : TcpServer, IDisposable
                 }
             }
 
+            _cancellation = new CancellationTokenSource();
+            int runGeneration = Interlocked.Increment(ref _runGeneration);
+
             lock (_acceptPoolLock)
             {
-                if (_maxNumberAccepts.CurrentCount != NumAccepts)
-                {
-                    ThrowInvalidStateException();
-                }
-
                 if (_acceptPool.Count != NumAccepts)
                 {
-                    ThrowInvalidStateException();
+                    Log(
+                        LogLevel.Error,
+                        "ServerStart",
+                        $"Accept pool is not fully drained. AcceptPoolCount:{_acceptPool.Count} Expected:{NumAccepts}."
+                    );
+                    return;
+                }
+
+                if (_maxNumberAccepts.CurrentCount != NumAccepts)
+                {
+                    Log(
+                        LogLevel.Error,
+                        "ServerStart",
+                        $"Accept semaphore is out of sync. CurrentCount:{_maxNumberAccepts.CurrentCount} Expected:{NumAccepts}."
+                    );
+                    return;
                 }
 
                 foreach (SocketAsyncEventArgs acceptEventArgs in _acceptPool)
@@ -250,6 +279,7 @@ public class AsyncEventServer : TcpServer, IDisposable
             Service.JoinThread(_timeoutThread, ThreadTimeoutMs, Logger);
             _timeoutThread = null;
 
+            WaitForDrain("ServerStop", ThreadTimeoutMs);
             _cancellation.Dispose();
         }
 
@@ -464,6 +494,8 @@ public class AsyncEventServer : TcpServer, IDisposable
             return;
         }
 
+        ConfigureAcceptedSocket(acceptSocket, clientIdentity);
+
         AsyncEventClientHandle clientHandle;
         lock (_clientLock)
         {
@@ -513,10 +545,8 @@ public class AsyncEventServer : TcpServer, IDisposable
             _unitOfOrders[unitOfOrder]++;
             // end
 
-
             int clientGeneration = Interlocked.Increment(ref _clientGenerations[client.ClientId]);
             clientHandle = new AsyncEventClientHandle(client, clientGeneration);
-
             client.Initialize(acceptSocket, unitOfOrder, runGeneration, clientGeneration, clientHandle);
             _clientHandles.Add(clientHandle);
             Log(
@@ -543,6 +573,26 @@ public class AsyncEventServer : TcpServer, IDisposable
         }
 
         StartReceive(clientHandle);
+    }
+
+    private void ConfigureAcceptedSocket(Socket acceptSocket, string clientIdentity)
+    {
+        // TODO client socket config properties
+        // _settings.SocketSettings.ConfigureSocket(acceptSocket, Logger);
+
+        if (_socketTimeout <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        try
+        {
+            acceptSocket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+        }
+        catch (Exception)
+        {
+            Log(LogLevel.Debug, "ProcessAccept", "Unable to enable SO_KEEPALIVE on accepted socket.", clientIdentity);
+        }
     }
 
     private void StartReceive(AsyncEventClientHandle clientHandle)
@@ -851,7 +901,7 @@ public class AsyncEventServer : TcpServer, IDisposable
             return;
         }
 
-        client.Close();
+        client.WriteState.ClearQueuedSends();
 
         int currentConnections;
         lock (_clientLock)
@@ -919,23 +969,15 @@ public class AsyncEventServer : TcpServer, IDisposable
             return;
         }
 
+        if (!client.TryMarkPooled())
+        {
+            return;
+        }
+
+        client.WriteState.Reset();
+
         lock (_clientLock)
         {
-            if (client.IsAlive)
-            {
-                return;
-            }
-
-            if (client.PendingOperations > 0)
-            {
-                return;
-            }
-
-            if (!client.TryMarkPooled())
-            {
-                return;
-            }
-
             _clientPool.Push(client);
         }
     }
@@ -1033,9 +1075,15 @@ public class AsyncEventServer : TcpServer, IDisposable
             Stop();
         }
 
-        WaitForClientOperationsDrain();
-        WaitForClientPoolDrain();
-        WaitForAcceptPoolDrain();
+        if (!WaitForDrain("Dispose", ThreadTimeoutMs))
+        {
+            Log(
+                LogLevel.Error,
+                "Dispose",
+                "Skipping SocketAsyncEventArgs disposal because client operations did not drain in time."
+            );
+            return;
+        }
 
         lock (_acceptPoolLock)
         {
@@ -1069,10 +1117,18 @@ public class AsyncEventServer : TcpServer, IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private void WaitForClientOperationsDrain()
+    private bool WaitForDrain(string function, int timeoutMs)
+    {
+        bool clientOperationsDrained = WaitForClientOperationsDrain(function, timeoutMs);
+        bool clientPoolDrained = WaitForClientPoolDrain(function, timeoutMs);
+        bool acceptPoolDrained = WaitForAcceptPoolDrain(function, timeoutMs);
+        return clientOperationsDrained && clientPoolDrained && acceptPoolDrained;
+    }
+
+    private bool WaitForClientOperationsDrain(string function, int timeoutMs)
     {
         int waitedMs = 0;
-        while (waitedMs < ThreadTimeoutMs)
+        while (waitedMs < timeoutMs)
         {
             bool drained = true;
             foreach (AsyncEventClient client in _allClients)
@@ -1086,26 +1142,27 @@ public class AsyncEventServer : TcpServer, IDisposable
 
             if (drained)
             {
-                return;
+                return true;
             }
 
             Thread.Sleep(10);
             waitedMs += 10;
         }
 
-        Log(LogLevel.Error, "Dispose", "Timed out waiting for pending client operations to drain.");
+        Log(LogLevel.Error, function, "Timed out waiting for pending client operations to drain.");
+        return false;
     }
 
-    private void WaitForClientPoolDrain()
+    private bool WaitForClientPoolDrain(string function, int timeoutMs)
     {
         int waitedMs = 0;
-        while (waitedMs < ThreadTimeoutMs)
+        while (waitedMs < timeoutMs)
         {
             lock (_clientLock)
             {
                 if (_clientPool.Count == _maxConnections)
                 {
-                    return;
+                    return true;
                 }
             }
 
@@ -1113,19 +1170,20 @@ public class AsyncEventServer : TcpServer, IDisposable
             waitedMs += 10;
         }
 
-        Log(LogLevel.Error, "Dispose", "Timed out waiting for client pool to drain.");
+        Log(LogLevel.Error, function, "Timed out waiting for client pool to drain.");
+        return false;
     }
 
-    private void WaitForAcceptPoolDrain()
+    private bool WaitForAcceptPoolDrain(string function, int timeoutMs)
     {
         int waitedMs = 0;
-        while (waitedMs < ThreadTimeoutMs)
+        while (waitedMs < timeoutMs)
         {
             lock (_acceptPoolLock)
             {
                 if (_acceptPool.Count == NumAccepts)
                 {
-                    return;
+                    return true;
                 }
             }
 
@@ -1133,7 +1191,8 @@ public class AsyncEventServer : TcpServer, IDisposable
             waitedMs += 10;
         }
 
-        Log(LogLevel.Error, "Dispose", "Timed out waiting for accept pool to drain.");
+        Log(LogLevel.Error, function, "Timed out waiting for accept pool to drain.");
+        return false;
     }
 
     private void Log(LogLevel level, string function, string message, string clientIdentity = "")
@@ -1141,8 +1200,4 @@ public class AsyncEventServer : TcpServer, IDisposable
         // ReSharper disable once InconsistentlySynchronizedField
         Logger.Write(level, $"{_identity}{clientIdentity} {function} - {message}", null);
     }
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private static void ThrowInvalidStateException() =>
-        throw new InvalidOperationException("Initial State is invalid.");
 }

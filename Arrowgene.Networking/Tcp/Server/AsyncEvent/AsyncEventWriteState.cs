@@ -128,5 +128,26 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                 return false;
             }
         }
+
+        internal void ClearQueuedSends()
+        {
+            lock (_sendLock)
+            {
+                _sendQueue.Clear();
+
+                if (_outstandingCount > 0)
+                {
+                    // Keep the in-flight chunk state intact so completion callbacks remain consistent.
+                    _queuedBytes = _outstandingCount;
+                    _sendInProgress = true;
+                    return;
+                }
+
+                _data = null;
+                _queuedBytes = 0;
+                _transferredCount = 0;
+                _sendInProgress = false;
+            }
+        }
     }
 }
