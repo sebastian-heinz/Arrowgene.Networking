@@ -25,7 +25,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent;
 /// - Support UnitOfOrder -> Enables to simultaneously process tcp packages and preserving order.
 /// - Support SocketTimeout -> Prevent half-open connections by closing the socket if last recv/send time is larger.
 /// </summary>
-public class AsyncEventServer : TcpServer
+public class AsyncEventServer : TcpServer, IDisposable
 {
     private const string ServerThreadName = "AsyncEventServer";
     private const string TimeoutThreadName = "AsyncEventServer_Timeout";
@@ -56,6 +56,7 @@ public class AsyncEventServer : TcpServer
     private CancellationTokenSource _cancellation;
     private int _runGeneration;
     private volatile bool _isRunning;
+    private volatile bool _isDisposed;
 
     public AsyncEventServer(IPAddress ipAddress, ushort port, IConsumer consumer, AsyncEventSettings settings)
         : base(ipAddress, port, consumer)
@@ -84,6 +85,7 @@ public class AsyncEventServer : TcpServer
         _runGeneration = 0;
         _serverThread = null;
         _timeoutThread = null;
+        _isDisposed = false;
 
         for (int i = 0; i < _maxConnections; i++)
         {
@@ -136,6 +138,12 @@ public class AsyncEventServer : TcpServer
 
         lock (_isRunningLock)
         {
+            if (_isDisposed)
+            {
+                Log(LogLevel.Error, "ServerStart", "Server is disposed.");
+                return;
+            }
+
             if (_isRunning)
             {
                 Log(LogLevel.Error, "ServerStart", "Server already started.");
@@ -206,6 +214,7 @@ public class AsyncEventServer : TcpServer
             Log(LogLevel.Info, "ServerStop", "Closing Threads...");
             _isRunning = false;
             _cancellation.Cancel();
+            Interlocked.Increment(ref _runGeneration);
 
             Log(LogLevel.Info, "ServerStop", "Shutting down listening socket...");
             Service.CloseSocket(_listenSocket);
@@ -400,6 +409,13 @@ public class AsyncEventServer : TcpServer
             clientIdentity = $"[{ipEndPoint.Address}:{ipEndPoint.Port}]";
         }
 
+        if (!_isRunning)
+        {
+            Log(LogLevel.Debug, "ProcessAccept", "Server is not running, rejecting accepted socket.", clientIdentity);
+            Service.CloseSocket(acceptSocket);
+            return;
+        }
+
         if (!(userToken is int runGeneration))
         {
             Log(
@@ -438,6 +454,13 @@ public class AsyncEventServer : TcpServer
         AsyncEventClientHandle clientHandle;
         lock (_clientLock)
         {
+            if (!_isRunning)
+            {
+                Log(LogLevel.Debug, "ProcessAccept", "Server is stopping, rejecting accepted socket.", clientIdentity);
+                Service.CloseSocket(acceptSocket);
+                return;
+            }
+
             if (_clientHandles.Count >= _maxConnections)
             {
                 Log(
@@ -649,6 +672,12 @@ public class AsyncEventServer : TcpServer
 
     public override void Send<T>(T socket, byte[] data)
     {
+        if (_isDisposed)
+        {
+            Log(LogLevel.Error, "Send", "Server is disposed.");
+            return;
+        }
+
         if (socket is not AsyncEventClientHandle clientHandle)
         {
             Log(LogLevel.Error, "Send", "ITcpSocket is not a AsyncEventClientHandle instance.");
@@ -668,9 +697,15 @@ public class AsyncEventServer : TcpServer
         }
 
         AsyncEventWriteState state = client.WriteState;
-        if (state.EnqueueSend(data))
+        bool queueOverflow;
+        if (state.EnqueueSend(data, out queueOverflow))
         {
             StartSend(clientHandle);
+        }
+        else if (queueOverflow)
+        {
+            Log(LogLevel.Error, "Send", "Write queue overflow, closing client.", client.Identity);
+            DisconnectClient(clientHandle);
         }
     }
 
@@ -914,26 +949,12 @@ public class AsyncEventServer : TcpServer
 
         lock (_acceptPoolLock)
         {
-            if (!(acceptEventArgs.UserToken is int acceptGeneration))
-            {
-                return;
-            }
-
-            if (acceptGeneration != Volatile.Read(ref _runGeneration))
-            {
-                return;
-            }
-
+            acceptEventArgs.UserToken = Volatile.Read(ref _runGeneration);
             _acceptPool.Push(acceptEventArgs);
-            SemaphoreSlim? maxNumberAccepts = _maxNumberAccepts;
-            if (maxNumberAccepts == null)
-            {
-                return;
-            }
 
             try
             {
-                maxNumberAccepts.Release();
+                _maxNumberAccepts.Release();
             }
             catch (ObjectDisposedException)
             {
@@ -994,6 +1015,132 @@ public class AsyncEventServer : TcpServer
 
             cancellationToken.WaitHandle.WaitOne(timeoutMs);
         }
+    }
+
+    public void Dispose()
+    {
+        bool shouldStop;
+        lock (_isRunningLock)
+        {
+            if (_isDisposed)
+            {
+                return;
+            }
+
+            _isDisposed = true;
+            shouldStop = _isRunning;
+        }
+
+        if (shouldStop)
+        {
+            Stop();
+        }
+
+        WaitForClientPoolDrain();
+        WaitForAcceptPoolDrain();
+
+        List<SocketAsyncEventArgs> acceptEventArgsList = new List<SocketAsyncEventArgs>(NumAccepts);
+        lock (_acceptPoolLock)
+        {
+            while (_acceptPool.TryPop(out SocketAsyncEventArgs acceptEventArgs))
+            {
+                acceptEventArgsList.Add(acceptEventArgs);
+            }
+        }
+
+        foreach (SocketAsyncEventArgs acceptEventArgs in acceptEventArgsList)
+        {
+            acceptEventArgs.Completed -= Accept_Completed;
+            acceptEventArgs.Dispose();
+        }
+
+        List<AsyncEventClient> clients = new List<AsyncEventClient>(_maxConnections);
+        bool[] addedClients = new bool[_maxConnections];
+        lock (_clientLock)
+        {
+            foreach (AsyncEventClientHandle clientHandle in _clientHandles)
+            {
+                if (!clientHandle.TryGetClient(out AsyncEventClient client))
+                {
+                    continue;
+                }
+
+                if (addedClients[client.ClientId])
+                {
+                    continue;
+                }
+
+                clients.Add(client);
+                addedClients[client.ClientId] = true;
+            }
+
+            while (_clientPool.TryPop(out AsyncEventClient pooledClient))
+            {
+                if (addedClients[pooledClient.ClientId])
+                {
+                    continue;
+                }
+
+                clients.Add(pooledClient);
+                addedClients[pooledClient.ClientId] = true;
+            }
+
+            _clientHandles.Clear();
+        }
+
+        foreach (AsyncEventClient client in clients)
+        {
+            client.Close();
+            client.ReadEventArgs.Completed -= Receive_Completed;
+            client.WriteEventArgs.Completed -= Send_Completed;
+            client.ReadEventArgs.Dispose();
+            client.WriteEventArgs.Dispose();
+        }
+
+        _maxNumberAccepts.Dispose();
+        _cancellation.Dispose();
+
+        GC.SuppressFinalize(this);
+    }
+
+    private void WaitForClientPoolDrain()
+    {
+        int waitedMs = 0;
+        while (waitedMs < ThreadTimeoutMs)
+        {
+            lock (_clientLock)
+            {
+                if (_clientPool.Count == _maxConnections)
+                {
+                    return;
+                }
+            }
+
+            Thread.Sleep(10);
+            waitedMs += 10;
+        }
+
+        Log(LogLevel.Error, "Dispose", "Timed out waiting for client pool to drain.");
+    }
+
+    private void WaitForAcceptPoolDrain()
+    {
+        int waitedMs = 0;
+        while (waitedMs < ThreadTimeoutMs)
+        {
+            lock (_acceptPoolLock)
+            {
+                if (_acceptPool.Count == NumAccepts)
+                {
+                    return;
+                }
+            }
+
+            Thread.Sleep(10);
+            waitedMs += 10;
+        }
+
+        Log(LogLevel.Error, "Dispose", "Timed out waiting for accept pool to drain.");
     }
 
     private void Log(LogLevel level, string function, string message, string clientIdentity = "")

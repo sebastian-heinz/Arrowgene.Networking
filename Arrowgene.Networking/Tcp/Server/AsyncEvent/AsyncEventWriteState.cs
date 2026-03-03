@@ -4,9 +4,12 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 {
     public class AsyncEventWriteState
     {
+        private const int MaxQueuedBytes = 16 * 1024 * 1024;
+
         private byte[] _data;
         private int _transferredCount;
         private int _outstandingCount;
+        private int _queuedBytes;
         private readonly object _sendLock;
         private readonly Queue<byte[]> _sendQueue;
         private bool _sendInProgress;
@@ -17,7 +20,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             _sendQueue = new Queue<byte[]>();
             _sendInProgress = false;
         }
-        
+
         public void Reset()
         {
             lock (_sendLock)
@@ -26,15 +29,29 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                 _data = null;
                 _outstandingCount = 0;
                 _transferredCount = 0;
+                _queuedBytes = 0;
                 _sendInProgress = false;
             }
         }
-        
-        internal bool EnqueueSend(byte[] data)
+
+        internal bool EnqueueSend(byte[] data, out bool queueOverflow)
         {
             lock (_sendLock)
             {
+                queueOverflow = false;
+                if (data.Length == 0)
+                {
+                    return false;
+                }
+
+                if (data.Length > MaxQueuedBytes - _queuedBytes)
+                {
+                    queueOverflow = true;
+                    return false;
+                }
+
                 _sendQueue.Enqueue(data);
+                _queuedBytes += data.Length;
                 if (_sendInProgress)
                 {
                     return false;
@@ -47,6 +64,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                     _outstandingCount = _data.Length;
                     _transferredCount = 0;
                 }
+
                 return true;
             }
         }
@@ -84,12 +102,17 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
             {
                 _transferredCount += transferredCount;
                 _outstandingCount -= transferredCount;
-                
+                _queuedBytes -= transferredCount;
+                if (_queuedBytes < 0)
+                {
+                    _queuedBytes = 0;
+                }
+
                 if (_outstandingCount > 0)
                 {
                     return true;
                 }
-                
+
                 if (_sendQueue.Count > 0)
                 {
                     _data = _sendQueue.Dequeue();
@@ -97,7 +120,7 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
                     _transferredCount = 0;
                     return true;
                 }
-                
+
                 _data = null;
                 _outstandingCount = 0;
                 _transferredCount = 0;
