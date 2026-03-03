@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using System.Threading;
 
 namespace Arrowgene.Networking.Tcp.Server.AsyncEvent;
@@ -61,8 +62,9 @@ public class AsyncEventClient : ITcpSocket
         _lock = new object();
         _pendingOperations = 0;
     }
+
     internal int PendingOperations => Volatile.Read(ref _pendingOperations);
-    
+
     public void Send(byte[] data)
     {
         Send(this, data);
@@ -85,12 +87,12 @@ public class AsyncEventClient : ITcpSocket
         {
             if (_isAlive)
             {
-                throw new InvalidOperationException("Client is alive");
+                ThrowInvalidStateException();
             }
 
             if (!_isInPool)
             {
-                throw new InvalidOperationException("Client is not in pool");
+                ThrowInvalidStateException();
             }
 
             _isAlive = true;
@@ -199,4 +201,8 @@ public class AsyncEventClient : ITcpSocket
             // ignored
         }
     }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ThrowInvalidStateException() =>
+        throw new InvalidOperationException("Initial State is invalid.");
 }

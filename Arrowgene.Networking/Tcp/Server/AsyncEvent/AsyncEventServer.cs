@@ -479,8 +479,7 @@ public class AsyncEventServer : TcpServer
 
 
             int clientGeneration = Interlocked.Increment(ref _clientGenerations[client.ClientId]);
-            clientHandle = new AsyncEventClientHandle(client, runGeneration, clientGeneration);
-
+            clientHandle = new AsyncEventClientHandle(client, clientGeneration);
 
             client.Initialize(acceptSocket, unitOfOrder, runGeneration, clientGeneration, clientHandle);
             _clientHandles.Add(clientHandle);
@@ -895,12 +894,6 @@ public class AsyncEventServer : TcpServer
                 return;
             }
 
-            if (client.Generation != Volatile.Read(ref _clientGenerations[client.ClientId]))
-            {
-                DisposeClientEventArgs(client);
-                return;
-            }
-
             if (!client.TryMarkPooled())
             {
                 return;
@@ -908,17 +901,6 @@ public class AsyncEventServer : TcpServer
 
             _clientPool.Push(client);
         }
-    }
-
-    private void DisposeClientEventArgs(AsyncEventClient client)
-    {
-        SocketAsyncEventArgs readEventArgs = client.ReadEventArgs;
-        readEventArgs.Completed -= Receive_Completed;
-        readEventArgs.Dispose();
-
-        SocketAsyncEventArgs writeEventArgs = client.WriteEventArgs;
-        writeEventArgs.Completed -= Send_Completed;
-        writeEventArgs.Dispose();
     }
 
     private void ReturnAcceptEventArgs(SocketAsyncEventArgs acceptEventArgs)
