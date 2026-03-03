@@ -35,8 +35,10 @@ public class AsyncEventServer : TcpServer, IDisposable
 
     private static readonly ILogger Logger = LogProvider.Logger(typeof(AsyncEventServer));
 
-    private readonly int[] _clientGenerations;
+    // ReSharper disable once PrivateFieldCanBeConvertedToLocalVariable
     private readonly byte[] _buffer;
+
+    private readonly int[] _clientGenerations;
     private readonly Stack<AsyncEventClient> _clientPool;
     private readonly Stack<SocketAsyncEventArgs> _acceptPool;
     private readonly AsyncEventSettings _settings;
@@ -191,9 +193,11 @@ public class AsyncEventServer : TcpServer, IDisposable
             }
 
             _isRunning = true;
-            _serverThread = new Thread(Run);
-            _serverThread.Name = $"{_identity}{ServerThreadName}";
-            _serverThread.IsBackground = true;
+            _serverThread = new Thread(Run)
+            {
+                Name = $"{_identity}{ServerThreadName}",
+                IsBackground = true
+            };
             _serverThread.Start();
         }
 
@@ -251,9 +255,11 @@ public class AsyncEventServer : TcpServer, IDisposable
         {
             if (_socketTimeout.TotalSeconds > 0)
             {
-                _timeoutThread = new Thread(CheckSocketTimeout);
-                _timeoutThread.Name = $"{_identity}{TimeoutThreadName}";
-                _timeoutThread.IsBackground = true;
+                _timeoutThread = new Thread(CheckSocketTimeout)
+                {
+                    Name = $"{_identity}{TimeoutThreadName}",
+                    IsBackground = true
+                };
                 _timeoutThread.Start();
             }
 
@@ -347,7 +353,7 @@ public class AsyncEventServer : TcpServer, IDisposable
             SocketAsyncEventArgs acceptEventArgs;
             lock (_acceptPoolLock)
             {
-                if (!_acceptPool.TryPop(out acceptEventArgs))
+                if (!_acceptPool.TryPop(out acceptEventArgs!))
                 {
                     Log(
                         LogLevel.Error,
@@ -392,9 +398,9 @@ public class AsyncEventServer : TcpServer, IDisposable
 
     private void ProcessAccept(SocketAsyncEventArgs acceptEventArg)
     {
-        Socket acceptSocket = acceptEventArg.AcceptSocket;
+        Socket? acceptSocket = acceptEventArg.AcceptSocket;
         SocketError socketError = acceptEventArg.SocketError;
-        object userToken = acceptEventArg.UserToken;
+        object? userToken = acceptEventArg.UserToken;
         ReturnAcceptEventArgs(acceptEventArg);
 
         string clientIdentity = $"[Unknown Client]";
@@ -473,7 +479,7 @@ public class AsyncEventServer : TcpServer, IDisposable
                 return;
             }
 
-            if (!_clientPool.TryPop(out AsyncEventClient client))
+            if (!_clientPool.TryPop(out AsyncEventClient? client))
             {
                 Log(
                     LogLevel.Error,
@@ -547,19 +553,11 @@ public class AsyncEventServer : TcpServer, IDisposable
             return;
         }
 
-        Socket socket = client.Socket;
-        if (socket == null)
-        {
-            Log(LogLevel.Error, "StartReceive", "Client socket is null.", client.Identity);
-            DisconnectClient(clientHandle);
-            return;
-        }
-
         client.IncrementPendingOperations();
         bool willRaiseEvent;
         try
         {
-            willRaiseEvent = socket.ReceiveAsync(client.ReadEventArgs);
+            willRaiseEvent = client.Socket.ReceiveAsync(client.ReadEventArgs);
         }
         catch (ObjectDisposedException)
         {
@@ -724,7 +722,6 @@ public class AsyncEventServer : TcpServer, IDisposable
             return;
         }
 
-        Socket socket = client.Socket;
         AsyncEventWriteState state = client.WriteState;
         if (!state.TryGetSendChunk(_bufferSize, out byte[] data, out int dataOffset, out int chunkSize))
         {
@@ -739,7 +736,7 @@ public class AsyncEventServer : TcpServer, IDisposable
         bool willRaiseEvent;
         try
         {
-            willRaiseEvent = socket.SendAsync(writeEventArgs);
+            willRaiseEvent = client.Socket.SendAsync(writeEventArgs);
         }
         catch (ObjectDisposedException)
         {
@@ -940,11 +937,6 @@ public class AsyncEventServer : TcpServer, IDisposable
 
     private void ReturnAcceptEventArgs(SocketAsyncEventArgs acceptEventArgs)
     {
-        if (acceptEventArgs == null)
-        {
-            return;
-        }
-
         acceptEventArgs.AcceptSocket = null;
 
         lock (_acceptPoolLock)
@@ -1042,7 +1034,7 @@ public class AsyncEventServer : TcpServer, IDisposable
         List<SocketAsyncEventArgs> acceptEventArgsList = new List<SocketAsyncEventArgs>(NumAccepts);
         lock (_acceptPoolLock)
         {
-            while (_acceptPool.TryPop(out SocketAsyncEventArgs acceptEventArgs))
+            while (_acceptPool.TryPop(out SocketAsyncEventArgs? acceptEventArgs))
             {
                 acceptEventArgsList.Add(acceptEventArgs);
             }
@@ -1074,7 +1066,7 @@ public class AsyncEventServer : TcpServer, IDisposable
                 addedClients[client.ClientId] = true;
             }
 
-            while (_clientPool.TryPop(out AsyncEventClient pooledClient))
+            while (_clientPool.TryPop(out AsyncEventClient? pooledClient))
             {
                 if (addedClients[pooledClient.ClientId])
                 {
