@@ -165,6 +165,8 @@ public sealed class AsyncEventClient : ITcpSocket, IDisposable
             throw new ArgumentNullException(nameof(socket));
         }
 
+        _sendQueue.Reset();
+
         lock (_stateLock)
         {
             if (_isAlive || !_isInPool)
@@ -172,8 +174,13 @@ public sealed class AsyncEventClient : ITcpSocket, IDisposable
                 ThrowInvalidStateException();
             }
 
-            _isAlive = true;
-            _isInPool = false;
+            long now = Environment.TickCount64;
+            Volatile.Write(ref _lastReadTicks, now);
+            Volatile.Write(ref _lastWriteTicks, now);
+            Interlocked.Exchange(ref _bytesReceived, 0);
+            Interlocked.Exchange(ref _bytesSent, 0);
+            Interlocked.Exchange(ref _pendingOperations, 0);
+
             _connectionSocket = socket;
             UnitOfOrder = unitOfOrder;
             RunGeneration = runGeneration;
@@ -192,15 +199,10 @@ public sealed class AsyncEventClient : ITcpSocket, IDisposable
                 Port = 0;
                 Identity = "[Unknown Client]";
             }
-        }
 
-        long now = Environment.TickCount64;
-        Volatile.Write(ref _lastReadTicks, now);
-        Volatile.Write(ref _lastWriteTicks, now);
-        Interlocked.Exchange(ref _bytesReceived, 0);
-        Interlocked.Exchange(ref _bytesSent, 0);
-        Interlocked.Exchange(ref _pendingOperations, 0);
-        _sendQueue.Reset();
+            _isInPool = false;
+            _isAlive = true;
+        }
     }
 
     internal AsyncEventClientHandle CreateHandle()
@@ -266,7 +268,17 @@ public sealed class AsyncEventClient : ITcpSocket, IDisposable
 
     internal bool QueueSend(byte[] data, out bool startSend, out bool queueOverflow)
     {
-        return _sendQueue.TryEnqueueCopy(data, out startSend, out queueOverflow);
+        lock (_stateLock)
+        {
+            if (!_isAlive)
+            {
+                startSend = false;
+                queueOverflow = false;
+                return false;
+            }
+
+            return _sendQueue.TryEnqueueCopy(data, out startSend, out queueOverflow);
+        }
     }
 
     internal bool CompleteSend(int transferredCount)

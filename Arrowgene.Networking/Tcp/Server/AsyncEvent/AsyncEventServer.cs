@@ -551,7 +551,6 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
         }
 
         AsyncEventClientHandle clientHandle;
-        AsyncEventClient? clientToReceive;
         try
         {
             lock (_lifecycleLock)
@@ -591,31 +590,6 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
                 }
 
                 Log(LogLevel.Info, nameof(ProcessAccept), $"Active Client Connections:{activeConnections}.", clientIdentity);
-
-                try
-                {
-                    OnClientConnected(clientHandle);
-                }
-                catch (Exception exception)
-                {
-                    Log(LogLevel.Error, nameof(ProcessAccept), "Error during OnClientConnected user code.", clientIdentity);
-                    Logger.Exception(exception);
-                }
-
-                if (!_isRunning || callbackGeneration != Volatile.Read(ref _runGeneration))
-                {
-                    if (clientHandle.TryGetClient(out AsyncEventClient activeClient))
-                    {
-                        Disconnect(activeClient);
-                    }
-
-                    return;
-                }
-
-                if (!clientHandle.TryGetClient(out clientToReceive))
-                {
-                    return;
-                }
             }
         }
         catch (Exception exception)
@@ -623,6 +597,21 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
             Log(LogLevel.Error, nameof(ProcessAccept), "Failed to activate the accepted client slot.", clientIdentity);
             Logger.Exception(exception);
             Service.CloseSocket(acceptedSocket);
+            return;
+        }
+
+        try
+        {
+            OnClientConnected(clientHandle);
+        }
+        catch (Exception exception)
+        {
+            Log(LogLevel.Error, nameof(ProcessAccept), "Error during OnClientConnected user code.", clientIdentity);
+            Logger.Exception(exception);
+        }
+
+        if (!clientHandle.TryGetClient(out AsyncEventClient clientToReceive))
+        {
             return;
         }
 
