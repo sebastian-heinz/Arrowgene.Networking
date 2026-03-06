@@ -145,7 +145,7 @@ internal sealed class AsyncEventClientRegistry : IDisposable
     {
         lock (_sync)
         {
-            if (!client.TryReturnToPool())
+            if (!client.CanReturnToPool(out _, out _, out _))
             {
                 return false;
             }
