@@ -220,7 +220,6 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
 
         if (!client.TryBeginDisconnect())
         {
-            TryRecycleClient(client);
             return;
         }
 
@@ -892,7 +891,7 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
         CancellationToken cancellationToken = _cancellation.Token;
         List<AsyncEventClientHandle> handles = new List<AsyncEventClientHandle>(_settings.MaxConnections);
 
-        while (_isRunning)
+        while (_isRunning && !cancellationToken.IsCancellationRequested)
         {
             long now = Environment.TickCount64;
             _clientRegistry.SnapshotActiveHandles(handles);
