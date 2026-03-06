@@ -1,7 +1,6 @@
 using System;
 using System.Net;
 using System.Net.Sockets;
-using System.Runtime.CompilerServices;
 using System.Threading;
 
 namespace Arrowgene.Networking.Server;
@@ -188,6 +187,7 @@ internal sealed class AsyncEventClient : IDisposable
 
     internal bool TryBeginSocketOperation(out Socket socket)
     {
+        // TODO null check + return socket in sync
         lock (_sync)
         {
             if (!_isAlive || _isInPool || _socket is not Socket connectionSocket)
@@ -233,14 +233,14 @@ internal sealed class AsyncEventClient : IDisposable
             Port = 0;
             UnitOfOrder = 0;
             ConnectedAt = DateTime.MinValue;
-        }
 
-        Volatile.Write(ref _lastReadTicks, 0);
-        Volatile.Write(ref _lastWriteTicks, 0);
-        Interlocked.Exchange(ref _bytesReceived, 0);
-        Interlocked.Exchange(ref _bytesSent, 0);
-        Interlocked.Exchange(ref _pendingOperations, 0);
-        _sendQueue.Reset();
+            Volatile.Write(ref _lastReadTicks, 0);
+            Volatile.Write(ref _lastWriteTicks, 0);
+            Interlocked.Exchange(ref _bytesReceived, 0);
+            Interlocked.Exchange(ref _bytesSent, 0);
+            Interlocked.Exchange(ref _pendingOperations, 0);
+            _sendQueue.Reset();
+        }
     }
 
 
