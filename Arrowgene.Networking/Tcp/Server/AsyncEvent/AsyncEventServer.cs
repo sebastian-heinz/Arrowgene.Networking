@@ -128,7 +128,8 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
                     $"Accept semaphore is out of sync. CurrentCount:{_acceptPool.CurrentSemaphoreCount} Expected:{_acceptPool.Capacity}.");
                 return;
             }
-
+            
+            _cancellation.Dispose();
             _cancellation = new CancellationTokenSource();
             int runGeneration = Interlocked.Increment(ref _runGeneration);
             _acceptPool.PrepareForStart(runGeneration);
@@ -183,12 +184,11 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
         {
             Disconnect(handle);
         }
-
+        
         Service.JoinThread(acceptThread, ThreadTimeoutMs, Logger);
         Service.JoinThread(timeoutThread, ThreadTimeoutMs, Logger);
 
         WaitForDrain(nameof(ServerStop), ThreadTimeoutMs);
-        cancellation.Dispose();
 
         Log(LogLevel.Info, nameof(ServerStop), "Server stopped.");
     }
@@ -196,9 +196,10 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
     /// <inheritdoc />
     public override void Send<T>(T socket, byte[] data)
     {
-        if (_isDisposed)
+        // Fix #6: Also check _isRunning.
+        if (_isDisposed || !_isRunning)
         {
-            Log(LogLevel.Error, nameof(Send), "Server is disposed.");
+            Log(LogLevel.Error, nameof(Send), "Server is not running.");
             return;
         }
 
@@ -225,7 +226,7 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
             Log(LogLevel.Error, nameof(Send), "Client is not alive.", client.Identity);
             return;
         }
-        
+
         if (!client.QueueSend(data, out bool startSend, out bool queueOverflow))
         {
             if (queueOverflow)
@@ -311,21 +312,50 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
         if (!TryStartListener())
         {
             Log(LogLevel.Error, nameof(Run), "Stopping server due to startup failure.");
-            Stop();
+            // Fix #3: Perform inline shutdown instead of calling Stop() which would self-join.
+            HandleListenerFailure();
             return;
         }
-
+        
         if (_socketTimeout > TimeSpan.Zero)
         {
-            _timeoutThread = new Thread(CheckSocketTimeout)
+            Thread timeoutThread = new Thread(CheckSocketTimeout)
             {
                 Name = $"{_identity}{TimeoutThreadName}",
                 IsBackground = true
             };
-            _timeoutThread.Start();
+
+            lock (_lifecycleLock)
+            {
+                if (_isRunning)
+                {
+                    _timeoutThread = timeoutThread;
+                    timeoutThread.Start();
+                }
+            }
         }
 
         StartAcceptLoop();
+    }
+
+    private void HandleListenerFailure()
+    {
+        lock (_lifecycleLock)
+        {
+            if (!_isRunning)
+            {
+                return;
+            }
+
+            _isRunning = false;
+            Interlocked.Increment(ref _runGeneration);
+
+            Service.CloseSocket(_listenSocket);
+            _listenSocket = null;
+        }
+
+        _cancellation.Cancel();
+        Log(LogLevel.Info, nameof(HandleListenerFailure), "Server stopped due to listener failure.");
     }
 
     private bool TryStartListener()
@@ -335,6 +365,11 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
 
         for (int attempt = 0; _isRunning && attempt <= _settings.BindRetryCount; attempt++)
         {
+            if (attempt > 0 && cancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
+
             Socket listenSocket = new Socket(localEndPoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
             _settings.SocketSettings.ConfigureSocket(listenSocket, Logger);
 
@@ -526,7 +561,7 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
 
         StartReceive(client);
     }
-
+    
     private void ConfigureAcceptedSocket(Socket acceptedSocket, string clientIdentity)
     {
         _settings.SocketSettings.ConfigureSocket(acceptedSocket, Logger);
@@ -540,9 +575,9 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
         {
             acceptedSocket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
         }
-        catch (Exception)
+        catch (Exception exception)
         {
-            Log(LogLevel.Debug, nameof(ConfigureAcceptedSocket), "Unable to enable SO_KEEPALIVE on accepted socket.", clientIdentity);
+            Log(LogLevel.Debug, nameof(ConfigureAcceptedSocket), $"Unable to enable SO_KEEPALIVE on accepted socket: {exception.Message}", clientIdentity);
         }
     }
 
@@ -799,9 +834,10 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
             Disconnect(client);
             return false;
         }
-
+        
         if (sendEventArgs.BytesTransferred <= 0)
         {
+            Log(LogLevel.Error, nameof(ProcessSend), "Send completed with zero bytes transferred.", client.Identity);
             Disconnect(client);
             return false;
         }
@@ -890,8 +926,6 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
         _acceptPool.Dispose();
         _clientRegistry.Dispose();
         _cancellation.Dispose();
-
-        GC.SuppressFinalize(this);
     }
 
     private AsyncEventClient CreateClient(int clientId)
@@ -963,9 +997,12 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
         Log(LogLevel.Error, function, "Timed out waiting for the accept pool to drain.");
         return false;
     }
-
+    
     private void Log(LogLevel level, string function, string message, string clientIdentity = "")
     {
-        Logger.Write(level, $"{_identity}{clientIdentity} {function} - {message}", null);
+        string prefix = _identity.Length > 0 || clientIdentity.Length > 0
+            ? $"{_identity}{clientIdentity} "
+            : string.Empty;
+        Logger.Write(level, $"{prefix}{function} - {message}", null);
     }
 }
