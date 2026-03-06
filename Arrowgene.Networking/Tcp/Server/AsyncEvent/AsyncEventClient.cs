@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
@@ -6,143 +6,298 @@ using System.Threading;
 
 namespace Arrowgene.Networking.Tcp.Server.AsyncEvent;
 
-public class AsyncEventClient : ITcpSocket
+/// <summary>
+/// Represents one pooled client slot managed by <see cref="AsyncEventServer"/>.
+/// </summary>
+public sealed class AsyncEventClient : ITcpSocket, IDisposable
 {
-    public int ClientId { get; private set; }
-    public string Identity { get; private set; }
-    public int RunGeneration { get; private set; }
-    public int Generation { get; private set; }
-    public IPAddress RemoteIpAddress { get; private set; }
-    public ushort Port { get; private set; }
-    public int UnitOfOrder { get; private set; }
-    public Socket Socket { get; private set; }
-    public long LastReadTicks => Volatile.Read(ref _lastReadTicks);
-    public long LastWriteTicks => Volatile.Read(ref _lastWriteTicks);
-    public DateTime ConnectedAt { get; private set; }
-    public ulong BytesReceived => unchecked((ulong)Interlocked.Read(ref _bytesReceived));
-    public ulong BytesSend => unchecked((ulong)Interlocked.Read(ref _bytesSend));
+    private readonly object _stateLock;
+    private readonly AsyncEventServer _server;
+    private readonly AsyncEventSendQueue _sendQueue;
+    private readonly int _sendBufferSize;
+    private Socket? _connectionSocket;
+    private bool _isAlive;
+    private bool _isInPool;
+    private long _lastReadTicks;
+    private long _lastWriteTicks;
+    private long _bytesReceived;
+    private long _bytesSent;
+    private int _pendingOperations;
 
+    /// <summary>
+    /// Creates a pooled client slot.
+    /// </summary>
+    /// <param name="clientId">The stable client slot identifier.</param>
+    /// <param name="server">The owning server.</param>
+    /// <param name="receiveEventArgs">The dedicated receive event args.</param>
+    /// <param name="sendEventArgs">The dedicated send event args.</param>
+    /// <param name="maxQueuedSendBytes">The maximum queued outbound bytes.</param>
+    public AsyncEventClient(
+        int clientId,
+        AsyncEventServer server,
+        SocketAsyncEventArgs receiveEventArgs,
+        SocketAsyncEventArgs sendEventArgs,
+        int maxQueuedSendBytes)
+    {
+        if (server is null)
+        {
+            throw new ArgumentNullException(nameof(server));
+        }
+
+        ClientId = clientId;
+        _server = server;
+        _stateLock = new object();
+        _sendQueue = new AsyncEventSendQueue(maxQueuedSendBytes);
+        ReceiveEventArgs = receiveEventArgs ?? throw new ArgumentNullException(nameof(receiveEventArgs));
+        SendEventArgs = sendEventArgs ?? throw new ArgumentNullException(nameof(sendEventArgs));
+        _sendBufferSize = SendEventArgs.Count;
+        ReceiveEventArgs.UserToken = this;
+        SendEventArgs.UserToken = this;
+        _isInPool = true;
+        Identity = "[Unknown Client]";
+        RemoteIpAddress = IPAddress.None;
+        ConnectedAt = DateTime.MinValue;
+    }
+
+    /// <summary>
+    /// Gets the stable pooled client slot identifier.
+    /// </summary>
+    public int ClientId { get; }
+
+    /// <summary>
+    /// Gets the current connection identity.
+    /// </summary>
+    public string Identity { get; private set; }
+
+    /// <summary>
+    /// Gets the server run generation that activated this client.
+    /// </summary>
+    public int RunGeneration { get; private set; }
+
+    /// <summary>
+    /// Gets the client generation used by <see cref="AsyncEventClientHandle"/>.
+    /// </summary>
+    public int Generation { get; private set; }
+
+    /// <inheritdoc />
+    public IPAddress RemoteIpAddress { get; private set; }
+
+    /// <inheritdoc />
+    public ushort Port { get; private set; }
+
+    /// <inheritdoc />
+    public int UnitOfOrder { get; private set; }
+
+    /// <summary>
+    /// Gets the last successful receive tick.
+    /// </summary>
+    public long LastReadTicks => Volatile.Read(ref _lastReadTicks);
+
+    /// <summary>
+    /// Gets the last successful send tick.
+    /// </summary>
+    public long LastWriteTicks => Volatile.Read(ref _lastWriteTicks);
+
+    /// <inheritdoc />
+    public DateTime ConnectedAt { get; private set; }
+
+    /// <inheritdoc />
+    public ulong BytesReceived => unchecked((ulong)Interlocked.Read(ref _bytesReceived));
+
+    /// <summary>
+    /// Gets the total bytes sent.
+    /// </summary>
+    public ulong BytesSent => unchecked((ulong)Interlocked.Read(ref _bytesSent));
+
+    /// <inheritdoc />
+    public ulong BytesSend => BytesSent;
+
+    /// <inheritdoc />
     public bool IsAlive
     {
         get
         {
-            lock (_lock)
+            lock (_stateLock)
             {
                 return _isAlive;
             }
         }
     }
 
-    internal SocketAsyncEventArgs ReadEventArgs { get; }
-    internal SocketAsyncEventArgs WriteEventArgs { get; }
-    internal AsyncEventWriteState WriteState { get; set; }
+    internal SocketAsyncEventArgs ReceiveEventArgs { get; }
 
-    private bool _isAlive;
-    private bool _isInPool;
-    private readonly AsyncEventServer _server;
-    private int _pendingOperations;
-    private long _lastReadTicks;
-    private long _lastWriteTicks;
-    private long _bytesReceived;
-    private long _bytesSend;
-
-    private readonly object _lock;
-
-    public AsyncEventClient(
-        int clientId,
-        AsyncEventServer server,
-        SocketAsyncEventArgs readEventArgs,
-        SocketAsyncEventArgs writeEventArgs
-    )
-    {
-        ClientId = clientId;
-        _isAlive = false;
-        _isInPool = true;
-        Generation = 0;
-        _server = server;
-        WriteState = new AsyncEventWriteState();
-        ReadEventArgs = readEventArgs;
-        WriteEventArgs = writeEventArgs;
-        _lock = new object();
-        _pendingOperations = 0;
-    }
+    internal SocketAsyncEventArgs SendEventArgs { get; }
 
     internal int PendingOperations => Volatile.Read(ref _pendingOperations);
 
+    internal Socket? ConnectionSocket
+    {
+        get
+        {
+            lock (_stateLock)
+            {
+                return _connectionSocket;
+            }
+        }
+    }
+
+    /// <inheritdoc />
     public void Send(byte[] data)
     {
         Send(this, data);
     }
 
+    /// <summary>
+    /// Sends data through the owning server using a stale-safe handle.
+    /// </summary>
+    /// <typeparam name="T">The socket handle type.</typeparam>
+    /// <param name="socket">The socket handle.</param>
+    /// <param name="data">The payload to send.</param>
     public void Send<T>(T socket, byte[] data) where T : ITcpSocket
     {
         _server.Send(socket, data);
     }
 
-    internal void Initialize(
-        Socket socket,
-        int unitOfOrder,
-        int runGeneration,
-        int clientGeneration,
-        AsyncEventClientHandle handle
-    )
+    internal void Activate(Socket socket, int unitOfOrder, int runGeneration, int generation)
     {
-        lock (_lock)
+        if (socket is null)
         {
-            if (_isAlive)
-            {
-                ThrowInvalidStateException();
-            }
+            throw new ArgumentNullException(nameof(socket));
+        }
 
-            if (!_isInPool)
+        lock (_stateLock)
+        {
+            if (_isAlive || !_isInPool)
             {
                 ThrowInvalidStateException();
             }
 
             _isAlive = true;
             _isInPool = false;
+            _connectionSocket = socket;
         }
 
-        Socket = socket;
         UnitOfOrder = unitOfOrder;
         RunGeneration = runGeneration;
-        Generation = clientGeneration;
-
-        ReadEventArgs.UserToken = handle;
-        WriteEventArgs.UserToken = handle;
+        Generation = generation;
 
         long now = Environment.TickCount64;
         Volatile.Write(ref _lastReadTicks, now);
         Volatile.Write(ref _lastWriteTicks, now);
-        ConnectedAt = DateTime.Now;
+        ConnectedAt = DateTime.UtcNow;
         Interlocked.Exchange(ref _bytesReceived, 0);
-        Interlocked.Exchange(ref _bytesSend, 0);
+        Interlocked.Exchange(ref _bytesSent, 0);
+        Interlocked.Exchange(ref _pendingOperations, 0);
 
-        RemoteIpAddress = null;
-        Port = 0;
-        if (Socket.RemoteEndPoint is IPEndPoint ipEndPoint)
+        if (socket.RemoteEndPoint is IPEndPoint remoteEndPoint)
         {
-            RemoteIpAddress = ipEndPoint.Address;
-            Port = (ushort)ipEndPoint.Port;
+            RemoteIpAddress = remoteEndPoint.Address;
+            Port = checked((ushort)remoteEndPoint.Port);
+            Identity = $"[{remoteEndPoint.Address}:{remoteEndPoint.Port}]";
+        }
+        else
+        {
+            RemoteIpAddress = IPAddress.None;
+            Port = 0;
+            Identity = "[Unknown Client]";
         }
 
-        Identity = $"[{RemoteIpAddress}:{Port}]";
-
-        WriteState.Reset();
-        Interlocked.Exchange(ref _pendingOperations, 0);
+        _sendQueue.Reset();
     }
 
-    internal bool TryBeginShutdown()
+    internal AsyncEventClientHandle CreateHandle()
     {
-        lock (_lock)
+        return new AsyncEventClientHandle(this, Generation);
+    }
+
+    internal bool IsHandleValid(int generation)
+    {
+        lock (_stateLock)
+        {
+            return !_isInPool && Generation == generation;
+        }
+    }
+
+    internal bool TryBeginDisconnect()
+    {
+        Socket? socketToClose;
+
+        lock (_stateLock)
         {
             if (!_isAlive)
             {
                 return false;
             }
 
-            Close();
             _isAlive = false;
+            socketToClose = _connectionSocket;
+            _connectionSocket = null;
+        }
+
+        Service.CloseSocket(socketToClose);
+        return true;
+    }
+
+    internal bool TryPrepareSendChunk(out int chunkSize)
+    {
+        byte[]? sendBuffer = SendEventArgs.Buffer;
+        if (sendBuffer is null)
+        {
+            chunkSize = 0;
+            return false;
+        }
+
+        return _sendQueue.TryCopyNextChunk(sendBuffer, SendEventArgs.Offset, _sendBufferSize, out chunkSize);
+    }
+
+    internal bool QueueSend(byte[] data, out bool startSend, out bool queueOverflow)
+    {
+        return _sendQueue.TryEnqueueCopy(data, out startSend, out queueOverflow);
+    }
+
+    internal bool CompleteSend(int transferredCount)
+    {
+        return _sendQueue.CompleteSend(transferredCount);
+    }
+
+    internal void ClearQueuedSends()
+    {
+        _sendQueue.ClearPendingMessages();
+    }
+
+    internal void ResetForPool()
+    {
+        lock (_stateLock)
+        {
+            _connectionSocket = null;
+            _isAlive = false;
+            Identity = "[Unknown Client]";
+            RemoteIpAddress = IPAddress.None;
+            Port = 0;
+            UnitOfOrder = 0;
+            ConnectedAt = DateTime.MinValue;
+            RunGeneration = 0;
+        }
+
+        Volatile.Write(ref _lastReadTicks, 0);
+        Volatile.Write(ref _lastWriteTicks, 0);
+        Interlocked.Exchange(ref _bytesReceived, 0);
+        Interlocked.Exchange(ref _bytesSent, 0);
+        Interlocked.Exchange(ref _pendingOperations, 0);
+        _sendQueue.Reset();
+        SendEventArgs.SetBuffer(SendEventArgs.Offset, _sendBufferSize);
+    }
+
+    internal bool TryReturnToPool()
+    {
+        lock (_stateLock)
+        {
+            if (_isInPool || _isAlive)
+            {
+                return false;
+            }
+
+            _isInPool = true;
             return true;
         }
     }
@@ -176,59 +331,26 @@ public class AsyncEventClient : ITcpSocket
         }
 
         Volatile.Write(ref _lastWriteTicks, Environment.TickCount64);
-        Interlocked.Add(ref _bytesSend, transferredCount);
+        Interlocked.Add(ref _bytesSent, transferredCount);
     }
 
-    internal bool TryMarkPooled()
-    {
-        lock (_lock)
-        {
-            if (_isInPool)
-            {
-                return false;
-            }
-
-            if (_isAlive)
-            {
-                return false;
-            }
-
-            _isInPool = true;
-            return true;
-        }
-    }
-
+    /// <inheritdoc />
     public void Close()
     {
-        lock (_lock)
-        {
-            if (!_isAlive)
-            {
-                return;
-            }
-        }
+        _server.Disconnect(this);
+    }
 
-        Socket socket = Socket;
-        try
-        {
-            socket.Shutdown(SocketShutdown.Both);
-        }
-        catch
-        {
-            // ignored
-        }
-
-        try
-        {
-            socket.Close();
-        }
-        catch
-        {
-            // ignored
-        }
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        Service.CloseSocket(ConnectionSocket);
+        ReceiveEventArgs.Dispose();
+        SendEventArgs.Dispose();
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static void ThrowInvalidStateException() =>
-        throw new InvalidOperationException("Initial State is invalid.");
+    private static void ThrowInvalidStateException()
+    {
+        throw new InvalidOperationException("The pooled client is in an invalid activation state.");
+    }
 }
