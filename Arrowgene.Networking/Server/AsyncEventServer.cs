@@ -24,6 +24,7 @@ public sealed class AsyncEventServer : IDisposable
     [ThreadStatic] private static int _userCallbackDepth;
 
     private readonly object _lifecycleLock;
+    private readonly IConsumer _consumer;
     private readonly AsyncEventSettings _settings;
     private readonly AsyncEventAcceptPool _acceptPool;
     private readonly AsyncEventBufferSlab _bufferSlab;
@@ -43,6 +44,10 @@ public sealed class AsyncEventServer : IDisposable
     private volatile bool _isRunning;
     private volatile bool _isDisposed;
 
+    public IPAddress IpAddress { get; }
+
+    public ushort Port { get; }
+
     /// <summary>
     /// Creates a server with explicit settings.
     /// </summary>
@@ -52,11 +57,24 @@ public sealed class AsyncEventServer : IDisposable
     /// <param name="settings">The server settings.</param>
     public AsyncEventServer(IPAddress ipAddress, ushort port, IConsumer consumer, AsyncEventSettings settings)
     {
+        if (ipAddress is null)
+        {
+            throw new ArgumentNullException(nameof(ipAddress));
+        }
+
+        if (consumer is null)
+        {
+            throw new ArgumentNullException(nameof(consumer));
+        }
+
         if (settings is null)
         {
             throw new ArgumentNullException(nameof(settings));
         }
 
+        IpAddress = ipAddress;
+        Port = port;
+        _consumer = consumer;
         settings.Validate();
         _settings = new AsyncEventSettings(settings);
         _lifecycleLock = new object();
@@ -144,13 +162,7 @@ public sealed class AsyncEventServer : IDisposable
             return;
         }
 
-        if (socket is not AsyncEventClientHandle clientHandle)
-        {
-            Log(LogLevel.Error, nameof(Send), "ITcpSocket is not an AsyncEventClientHandle.");
-            return;
-        }
-
-        if (!clientHandle.TryGetClient(out AsyncEventClient client))
+        if (!socket.TryGetClient(out AsyncEventClient client))
         {
             Log(LogLevel.Error, nameof(Send), "Client handle is stale.");
             return;
@@ -181,6 +193,7 @@ public sealed class AsyncEventServer : IDisposable
 
     public void CloseClientHandle(AsyncEventClientHandle client)
     {
+        Disconnect(client);
     }
 
     internal void Disconnect(AsyncEventClient client)
@@ -191,34 +204,20 @@ public sealed class AsyncEventServer : IDisposable
         }
 
         string clientIdentity = client.Identity;
-        IPAddress remoteIpAddress = client.RemoteIpAddress;
-        ushort remotePort = client.Port;
-        int unitOfOrder = client.UnitOfOrder;
-        long lastReadTicks = client.LastReadTicks;
-        long lastWriteTicks = client.LastWriteTicks;
         DateTime connectedAt = client.ConnectedAt;
         ulong bytesReceived = client.BytesReceived;
         ulong bytesSent = client.BytesSent;
-        AsyncEventDisconnectedSocket disconnectedSocket = new AsyncEventDisconnectedSocket(
-            clientIdentity,
-            remoteIpAddress,
-            remotePort,
-            unitOfOrder,
-            lastReadTicks,
-            lastWriteTicks,
-            connectedAt,
-            bytesReceived,
-            bytesSent);
 
-        if (!client.TryBeginDisconnect())
+        AsyncEventClientHandle disconnectHandle = new AsyncEventClientHandle(this, client);
+        // TODO verify dc handle
+        client.TryDisconnect(out bool wasAlive);
+        if (!wasAlive)
         {
             TryFinalizeDispose(nameof(Disconnect));
             return;
         }
 
-        client.ClearQueuedSends();
-
-        bool removed = _clientRegistry.TryRemoveActiveClient(client, out int currentConnections);
+        bool removed = _clientRegistry.TryRemoveActiveClient(client, disconnectHandle, out int currentConnections);
         if (!removed)
         {
             Log(LogLevel.Error, nameof(Disconnect), "Could not remove client from the active registry.",
@@ -238,7 +237,7 @@ public sealed class AsyncEventServer : IDisposable
             $"Current Connections:{currentConnections}",
             clientIdentity);
 
-        InvokeClientDisconnected(disconnectedSocket, clientIdentity);
+        InvokeClientDisconnected(disconnectHandle, clientIdentity);
         TryRecycleClient(client);
         TryFinalizeDispose(nameof(Disconnect));
     }
@@ -561,6 +560,7 @@ public sealed class AsyncEventServer : IDisposable
                 }
 
                 if (!_clientRegistry.TryActivateClient(
+                        this,
                         acceptedSocket,
                         out AsyncEventClient? client,
                         out clientHandle,
@@ -709,7 +709,13 @@ public sealed class AsyncEventServer : IDisposable
             receiveBuffer is not null)
         {
             client.RecordReceive(bytesTransferred);
-            invokeCallback = client.TryAcquireCallbackHandle(out callbackHandle);
+            if (client.IsAlive)
+            {
+                client.IncrementPendingOperations();
+                callbackHandle = new AsyncEventClientHandle(this, client);
+               // TODO verify handle
+                invokeCallback = true;
+            }
         }
 
         client.DecrementPendingOperations();
@@ -953,12 +959,11 @@ public sealed class AsyncEventServer : IDisposable
 
     private AsyncEventClient CreateClient(int clientId)
     {
-        int maxQueSendBytes = 100;
         return new AsyncEventClient(
             clientId,
             _bufferSlab.CreateReceiveEventArgs(clientId, ReceiveCompleted),
             _bufferSlab.CreateSendEventArgs(clientId, SendCompleted),
-            maxQueSendBytes
+            _settings.MaxQueuedSendBytes
         );
     }
 
@@ -1036,15 +1041,18 @@ public sealed class AsyncEventServer : IDisposable
 
     private void InvokeClientConnected(AsyncEventClient client, string clientIdentity)
     {
-        if (!client.TryAcquireCallbackHandle(out AsyncEventClientHandle clientHandle))
+        if (!client.IsAlive)
         {
             return;
         }
 
+        client.IncrementPendingOperations();
+        AsyncEventClientHandle clientHandle = new AsyncEventClientHandle(this, client);
+        // TODO verify
         EnterUserCallback();
         try
         {
-            OnClientConnected(clientHandle);
+            _consumer.OnClientConnected(clientHandle);
         }
         catch (Exception exception)
         {
@@ -1054,7 +1062,7 @@ public sealed class AsyncEventServer : IDisposable
         finally
         {
             ExitUserCallback();
-            client.ReleaseCallbackHandle();
+            client.DecrementPendingOperations();
             TryRecycleClient(client);
             TryFinalizeDispose(nameof(InvokeClientConnected));
         }
@@ -1068,10 +1076,13 @@ public sealed class AsyncEventServer : IDisposable
         int count)
     {
         string clientIdentity = client.Identity;
+        byte[] data = new byte[count];
+        Buffer.BlockCopy(receiveBuffer, offset, data, 0, count);
+
         EnterUserCallback();
         try
         {
-            OnReceivedData(clientHandle, receiveBuffer, offset, count);
+            _consumer.OnReceivedData(clientHandle, data);
         }
         catch (Exception exception)
         {
@@ -1081,18 +1092,18 @@ public sealed class AsyncEventServer : IDisposable
         finally
         {
             ExitUserCallback();
-            client.ReleaseCallbackHandle();
+            client.DecrementPendingOperations();
             TryRecycleClient(client);
             TryFinalizeDispose(nameof(InvokeReceivedData));
         }
     }
 
-    private void InvokeClientDisconnected(AsyncEventDisconnectedSocket socket, string clientIdentity)
+    private void InvokeClientDisconnected(AsyncEventClientHandle clientHandle, string clientIdentity)
     {
         EnterUserCallback();
         try
         {
-            OnClientDisconnected(socket);
+            _consumer.OnClientDisconnected(clientHandle);
         }
         catch (Exception exception)
         {
