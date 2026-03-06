@@ -128,9 +128,7 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
                     $"Accept semaphore is out of sync. CurrentCount:{_acceptPool.CurrentSemaphoreCount} Expected:{_acceptPool.Capacity}.");
                 return;
             }
-            
-            _cancellation.Dispose();
-            _cancellation = new CancellationTokenSource();
+
             int runGeneration = Interlocked.Increment(ref _runGeneration);
             _acceptPool.PrepareForStart(runGeneration);
             _isRunning = true;
@@ -149,46 +147,10 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
     protected override void ServerStop()
     {
         Log(LogLevel.Info, nameof(ServerStop), "Stopping server...");
-
-        Thread? acceptThread;
-        Thread? timeoutThread;
-        CancellationTokenSource cancellation;
-
-        lock (_lifecycleLock)
+        if (!StopCore(nameof(ServerStop), logAlreadyStopped: true))
         {
-            if (!_isRunning)
-            {
-                Log(LogLevel.Error, nameof(ServerStop), "Server already stopped.");
-                return;
-            }
-
-            _isRunning = false;
-            Interlocked.Increment(ref _runGeneration);
-
-            cancellation = _cancellation;
-            acceptThread = _acceptThread;
-            timeoutThread = _timeoutThread;
-            _acceptThread = null;
-            _timeoutThread = null;
-
-            Log(LogLevel.Info, nameof(ServerStop), "Shutting down listening socket...");
-            Service.CloseSocket(_listenSocket);
-            _listenSocket = null;
+            return;
         }
-
-        cancellation.Cancel();
-
-        List<AsyncEventClientHandle> handles = new List<AsyncEventClientHandle>(_settings.MaxConnections);
-        _clientRegistry.SnapshotActiveHandles(handles);
-        foreach (AsyncEventClientHandle handle in handles)
-        {
-            Disconnect(handle);
-        }
-        
-        Service.JoinThread(acceptThread, ThreadTimeoutMs, Logger);
-        Service.JoinThread(timeoutThread, ThreadTimeoutMs, Logger);
-
-        WaitForDrain(nameof(ServerStop), ThreadTimeoutMs);
 
         Log(LogLevel.Info, nameof(ServerStop), "Server stopped.");
     }
@@ -311,8 +273,11 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
         if (!TryStartListener())
         {
             Log(LogLevel.Error, nameof(Run), "Stopping server due to startup failure.");
-            // Fix #3: Perform inline shutdown instead of calling Stop() which would self-join.
-            HandleListenerFailure();
+            if (StopCore(nameof(Run), logAlreadyStopped: false))
+            {
+                Log(LogLevel.Info, nameof(Run), "Server stopped due to listener failure.");
+            }
+
             return;
         }
         
@@ -337,26 +302,6 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
         StartAcceptLoop();
     }
 
-    private void HandleListenerFailure()
-    {
-        lock (_lifecycleLock)
-        {
-            if (!_isRunning)
-            {
-                return;
-            }
-
-            _isRunning = false;
-            Interlocked.Increment(ref _runGeneration);
-
-            Service.CloseSocket(_listenSocket);
-            _listenSocket = null;
-        }
-
-        _cancellation.Cancel();
-        Log(LogLevel.Info, nameof(HandleListenerFailure), "Server stopped due to listener failure.");
-    }
-
     private bool TryStartListener()
     {
         IPEndPoint localEndPoint = new IPEndPoint(IpAddress, Port);
@@ -376,7 +321,18 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
             {
                 listenSocket.Bind(localEndPoint);
                 listenSocket.Listen(_settings.SocketSettings.Backlog);
-                _listenSocket = listenSocket;
+
+                lock (_lifecycleLock)
+                {
+                    if (!_isRunning)
+                    {
+                        Service.CloseSocket(listenSocket);
+                        return false;
+                    }
+
+                    _listenSocket = listenSocket;
+                }
+
                 Log(LogLevel.Info, nameof(TryStartListener), $"Listening on {IpAddress}:{Port}.");
                 return true;
             }
@@ -404,6 +360,81 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
         }
 
         return false;
+    }
+
+    private bool StopCore(string function, bool logAlreadyStopped)
+    {
+        Thread? acceptThread;
+        Thread? timeoutThread;
+        Socket? listenSocket;
+        CancellationTokenSource cancellationToCancel;
+
+        lock (_lifecycleLock)
+        {
+            if (!_isRunning)
+            {
+                if (logAlreadyStopped)
+                {
+                    Log(LogLevel.Error, function, "Server already stopped.");
+                }
+
+                return false;
+            }
+
+            _isRunning = false;
+            Interlocked.Increment(ref _runGeneration);
+
+            cancellationToCancel = _cancellation;
+            _cancellation = new CancellationTokenSource();
+
+            acceptThread = _acceptThread;
+            timeoutThread = _timeoutThread;
+            _acceptThread = null;
+            _timeoutThread = null;
+
+            listenSocket = _listenSocket;
+            _listenSocket = null;
+        }
+
+        Log(LogLevel.Info, function, "Shutting down listening socket...");
+        Service.CloseSocket(listenSocket);
+
+        try
+        {
+            cancellationToCancel.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+
+        List<AsyncEventClientHandle> handles = new List<AsyncEventClientHandle>(_settings.MaxConnections);
+        _clientRegistry.SnapshotActiveHandles(handles);
+        foreach (AsyncEventClientHandle handle in handles)
+        {
+            Disconnect(handle);
+        }
+
+        JoinThreadIfNotCurrent(acceptThread);
+        JoinThreadIfNotCurrent(timeoutThread);
+
+        WaitForDrain(function, ThreadTimeoutMs);
+        cancellationToCancel.Dispose();
+        return true;
+    }
+
+    private void JoinThreadIfNotCurrent(Thread? thread)
+    {
+        if (thread is null)
+        {
+            return;
+        }
+
+        if (ReferenceEquals(thread, Thread.CurrentThread))
+        {
+            return;
+        }
+
+        Service.JoinThread(thread, ThreadTimeoutMs, Logger);
     }
 
     private void StartAcceptLoop()
