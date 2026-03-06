@@ -1,6 +1,7 @@
 ﻿using System;
+using Arrowgene.Networking.Server;
 
-namespace Arrowgene.Networking.Tcp.Consumer.EventConsumption
+namespace Arrowgene.Networking.Consumer.EventConsumption
 {
     public class EventConsumer : IConsumer
     {
@@ -18,18 +19,8 @@ namespace Arrowgene.Networking.Tcp.Consumer.EventConsumption
         /// Occures when a packet is received.
         /// </summary>
         public event EventHandler<ReceivedPacketEventArgs> ReceivedPacket;
-
-
-        public void OnStart()
-        {
-        }
-
-        public void OnStarted()
-        {
-
-        }
-
-        public void OnReceivedData(ITcpSocket socket, byte[] data)
+        
+        public void OnReceivedData(AsyncEventClientHandle socket, byte[] data)
         {
             EventHandler<ReceivedPacketEventArgs> receivedPacket = ReceivedPacket;
             if (receivedPacket != null)
@@ -39,7 +30,7 @@ namespace Arrowgene.Networking.Tcp.Consumer.EventConsumption
             }
         }
 
-        public void OnClientDisconnected(ITcpSocket socket)
+        public void OnClientDisconnected(AsyncEventClientHandle socket)
         {
             EventHandler<DisconnectedEventArgs> clientDisconnected = ClientDisconnected;
             if (clientDisconnected != null)
@@ -49,7 +40,7 @@ namespace Arrowgene.Networking.Tcp.Consumer.EventConsumption
             }
         }
 
-        public void OnClientConnected(ITcpSocket socket)
+        public void OnClientConnected(AsyncEventClientHandle socket)
         {
             EventHandler<ConnectedEventArgs> clientConnected = ClientConnected;
             if (clientConnected != null)
@@ -58,14 +49,6 @@ namespace Arrowgene.Networking.Tcp.Consumer.EventConsumption
                 clientConnected(this, clientConnectedEventArgs);
             }
         }
-
-        public void OnStop()
-        {
-        }
-
-        public void OnStopped()
-        {
-       
-        }
+        
     }
 }

@@ -2,13 +2,13 @@ using System;
 using System.Collections.Concurrent;
 using System.Threading;
 using Arrowgene.Logging;
-using Arrowgene.Networking.Tcp.Server.AsyncEvent;
+using Arrowgene.Networking.Server;
 
-namespace Arrowgene.Networking.Tcp.Consumer.BlockingQueueConsumption
+namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
 {
     /**
      * Consumer creates number of threads based on `AsyncEventSettings.MaxUnitOfOrder`.
-     * Handle*-methods will be called from various threads with order of packets preserved.  
+     * Handle*-methods will be called from various threads with order of packets preserved.
      */
     public abstract class ThreadedBlockingQueueConsumer : IConsumer
     {
@@ -22,18 +22,18 @@ namespace Arrowgene.Networking.Tcp.Consumer.BlockingQueueConsumption
 
         private CancellationTokenSource _cancellationTokenSource;
 
-        public ThreadedBlockingQueueConsumer(AsyncEventSettings socketSetting,
+        public ThreadedBlockingQueueConsumer(int maxUnitOfOrder,
             string identity = "ThreadedBlockingQueueConsumer")
         {
-            _maxUnitOfOrder = socketSetting.MaxUnitOfOrder;
+            _maxUnitOfOrder = maxUnitOfOrder;
             _identity = identity;
             _queues = new BlockingCollection<ClientEvent>[_maxUnitOfOrder];
             _threads = new Thread[_maxUnitOfOrder];
         }
 
-        protected abstract void HandleReceived(ITcpSocket socket, byte[] data);
-        protected abstract void HandleDisconnected(ITcpSocket socket);
-        protected abstract void HandleConnected(ITcpSocket socket);
+        protected abstract void HandleReceived(AsyncEventClientHandle socket, byte[] data);
+        protected abstract void HandleDisconnected(AsyncEventClientHandle socket);
+        protected abstract void HandleConnected(AsyncEventClientHandle socket);
 
         private void Consume(int unitOfOrder)
         {
@@ -70,7 +70,7 @@ namespace Arrowgene.Networking.Tcp.Consumer.BlockingQueueConsumption
             }
         }
 
-        public virtual void OnStart()
+        public virtual void Start()
         {
             if (_isRunning)
             {
@@ -90,33 +90,20 @@ namespace Arrowgene.Networking.Tcp.Consumer.BlockingQueueConsumption
                 _threads[i].Start();
             }
         }
-
-        public virtual void OnStarted()
-        {
-        }
-
-        void IConsumer.OnReceivedData(ITcpSocket socket, byte[] data)
+        
+        void IConsumer.OnReceivedData(AsyncEventClientHandle socket, byte[] data)
         {
             _queues[socket.UnitOfOrder].Add(new ClientEvent(socket, ClientEventType.ReceivedData, data));
         }
 
-        void IConsumer.OnClientDisconnected(ITcpSocket socket)
+        void IConsumer.OnClientDisconnected(AsyncEventClientHandle socket)
         {
             _queues[socket.UnitOfOrder].Add(new ClientEvent(socket, ClientEventType.Disconnected));
         }
 
-        void IConsumer.OnClientConnected(ITcpSocket socket)
+        void IConsumer.OnClientConnected(AsyncEventClientHandle socket)
         {
             _queues[socket.UnitOfOrder].Add(new ClientEvent(socket, ClientEventType.Connected));
-        }
-
-        void IConsumer.OnStop()
-        {
-            Stop();
-        }
-
-        public virtual void OnStopped()
-        {
         }
 
         private void Stop()
@@ -136,17 +123,6 @@ namespace Arrowgene.Networking.Tcp.Consumer.BlockingQueueConsumption
                 Service.JoinThread(consumerThread, 10000, Logger);
                 Logger.Info($"[{_identity}] Consumer: {i} ended.");
                 _threads[i] = null;
-            }
-        }
-
-        public void LogStatus()
-        {
-            Logger.Info($"[{_identity}] _isRunning :{_isRunning}");
-            for (int i = 0; i < _maxUnitOfOrder; i++)
-            {
-                Logger.Info($"[{_identity}] _threads[{i}].IsAlive:{_threads[i].IsAlive}");
-                Logger.Info($"[{_identity}] _threads[{i}].ThreadState:{_threads[i].ThreadState}");
-                Logger.Info($"[{_identity}] _queues[{i}].Count :{_queues[i].Count}");
             }
         }
     }

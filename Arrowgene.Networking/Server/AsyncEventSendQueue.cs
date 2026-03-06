@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace Arrowgene.Networking.Tcp.Server.AsyncEvent;
+namespace Arrowgene.Networking.Server;
 
 internal sealed class AsyncEventSendQueue
 {
@@ -25,13 +25,8 @@ internal sealed class AsyncEventSendQueue
         _maxQueuedBytes = maxQueuedBytes;
     }
 
-    internal bool TryEnqueueCopy(byte[] data, out bool startSend, out bool queueOverflow)
+    internal bool Enqueue(byte[] data, out bool startSend, out bool queueOverflow)
     {
-        if (data is null)
-        {
-            throw new ArgumentNullException(nameof(data));
-        }
-
         startSend = false;
         queueOverflow = false;
 
@@ -65,13 +60,8 @@ internal sealed class AsyncEventSendQueue
         }
     }
 
-    internal bool TryCopyNextChunk(byte[] targetBuffer, int targetOffset, int maxChunkSize, out int chunkSize)
+    internal bool CopyNextChunk(byte[] targetBuffer, int targetOffset, int maxChunkSize, out int chunkSize)
     {
-        if (targetBuffer is null)
-        {
-            throw new ArgumentNullException(nameof(targetBuffer));
-        }
-
         lock (_sync)
         {
             if (_currentMessage is null)
@@ -127,25 +117,6 @@ internal sealed class AsyncEventSendQueue
 
             _sendInProgress = false;
             return false;
-        }
-    }
-
-    internal void ClearPendingMessages()
-    {
-        lock (_sync)
-        {
-            _pendingMessages.Clear();
-
-            if (_currentMessage is null)
-            {
-                _queuedBytes = 0;
-                _sendInProgress = false;
-                _currentOffset = 0;
-                return;
-            }
-
-            _queuedBytes = _currentMessage.Length - _currentOffset;
-            _sendInProgress = true;
         }
     }
 

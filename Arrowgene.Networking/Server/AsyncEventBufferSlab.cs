@@ -1,7 +1,7 @@
 using System;
 using System.Net.Sockets;
 
-namespace Arrowgene.Networking.Tcp.Server.AsyncEvent;
+namespace Arrowgene.Networking.Server;
 
 internal sealed class AsyncEventBufferSlab
 {

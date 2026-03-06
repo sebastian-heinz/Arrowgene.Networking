@@ -23,15 +23,17 @@
  */
 
 
-namespace Arrowgene.Networking.Tcp.Consumer.BlockingQueueConsumption
+using Arrowgene.Networking.Server;
+
+namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
 {
     public class ClientEvent
     {
         public ClientEventType ClientEventType { get; }
         public byte[] Data { get; }
-        public ITcpSocket Socket { get; }
+        public AsyncEventClientHandle Socket { get; }
 
-        public ClientEvent(ITcpSocket socket, ClientEventType clientEventType, byte[] data = null)
+        public ClientEvent(AsyncEventClientHandle socket, ClientEventType clientEventType, byte[] data = null)
         {
             Socket = socket;
             ClientEventType = clientEventType;

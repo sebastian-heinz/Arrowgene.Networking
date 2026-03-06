@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Net.Sockets;
 using System.Threading;
 
-namespace Arrowgene.Networking.Tcp.Server.AsyncEvent;
+namespace Arrowgene.Networking.Server;
 
 internal sealed class AsyncEventAcceptPool : IDisposable
 {
@@ -48,8 +48,6 @@ internal sealed class AsyncEventAcceptPool : IDisposable
         }
     }
 
-    internal int CurrentSemaphoreCount => _capacityGate.CurrentCount;
-
     internal bool TryAcquire(CancellationToken cancellationToken, out SocketAsyncEventArgs? eventArgs)
     {
         eventArgs = null;
@@ -80,22 +78,22 @@ internal sealed class AsyncEventAcceptPool : IDisposable
         throw new InvalidOperationException("The accept semaphore is out of sync with the pooled accept event args.");
     }
 
-    internal void PrepareForStart(int runGeneration)
+    internal void PrepareForStart()
     {
         lock (_sync)
         {
             foreach (SocketAsyncEventArgs eventArgs in _allEventArgs)
             {
                 eventArgs.AcceptSocket = null;
-                eventArgs.UserToken = runGeneration;
+                eventArgs.UserToken = null;
             }
         }
     }
 
-    internal void Return(SocketAsyncEventArgs eventArgs, int runGeneration)
+    internal void Return(SocketAsyncEventArgs eventArgs)
     {
         eventArgs.AcceptSocket = null;
-        eventArgs.UserToken = runGeneration;
+        eventArgs.UserToken = null;
 
         lock (_sync)
         {

@@ -1,19 +1,19 @@
 using System;
 using System.Collections.Generic;
-using System.Threading;
+using System.Net.Sockets;
 
-namespace Arrowgene.Networking.Tcp.Server.AsyncEvent;
+namespace Arrowgene.Networking.Server;
 
 internal sealed class AsyncEventClientRegistry : IDisposable
 {
     private readonly object _sync;
-    private readonly int[] _generationByClientId;
     private readonly int[] _laneLoadByIndex;
     private readonly AsyncEventClient[] _allClients;
     private readonly Stack<AsyncEventClient> _availableClients;
     private readonly List<AsyncEventClientHandle> _activeHandles;
 
-    internal AsyncEventClientRegistry(int maxConnections, int orderingLaneCount, Func<int, AsyncEventClient> clientFactory)
+    internal AsyncEventClientRegistry(int maxConnections, int orderingLaneCount,
+        Func<int, AsyncEventClient> clientFactory)
     {
         if (maxConnections <= 0)
         {
@@ -31,7 +31,6 @@ internal sealed class AsyncEventClientRegistry : IDisposable
         }
 
         _sync = new object();
-        _generationByClientId = new int[maxConnections];
         _laneLoadByIndex = new int[orderingLaneCount];
         _allClients = new AsyncEventClient[maxConnections];
         _availableClients = new Stack<AsyncEventClient>(maxConnections);
@@ -69,35 +68,9 @@ internal sealed class AsyncEventClientRegistry : IDisposable
         }
     }
 
-    internal void PrepareForStart()
-    {
-        lock (_sync)
-        {
-            if (_availableClients.Count != _allClients.Length)
-            {
-                throw new InvalidOperationException(
-                    $"The client pool is not fully drained. Count:{_availableClients.Count} Expected:{_allClients.Length}.");
-            }
-
-            if (_activeHandles.Count != 0)
-            {
-                throw new InvalidOperationException("Found active client handles from a previous server run.");
-            }
-
-            Array.Clear(_laneLoadByIndex, 0, _laneLoadByIndex.Length);
-            for (int index = 0; index < _generationByClientId.Length; index++)
-            {
-                unchecked
-                {
-                    _generationByClientId[index]++;
-                }
-            }
-        }
-    }
-
     internal bool TryActivateClient(
-        System.Net.Sockets.Socket acceptedSocket,
-        int runGeneration,
+        AsyncEventServer server,
+        Socket acceptedSocket,
         out AsyncEventClient? client,
         out AsyncEventClientHandle handle,
         out int activeConnections)
@@ -114,11 +87,10 @@ internal sealed class AsyncEventClientRegistry : IDisposable
 
             int orderingLane = FindLeastLoadedLane();
             _laneLoadByIndex[orderingLane]++;
-            int generation = unchecked(++_generationByClientId[pooledClient.ClientId]);
 
             try
             {
-                pooledClient.Activate(acceptedSocket, orderingLane, runGeneration, generation);
+                pooledClient.Activate(acceptedSocket, orderingLane);
             }
             catch
             {
@@ -127,7 +99,7 @@ internal sealed class AsyncEventClientRegistry : IDisposable
                 throw;
             }
 
-            handle = pooledClient.CreateHandle();
+            handle = new AsyncEventClientHandle(server, pooledClient);
             _activeHandles.Add(handle);
             activeConnections = _activeHandles.Count;
             client = pooledClient;
@@ -135,12 +107,8 @@ internal sealed class AsyncEventClientRegistry : IDisposable
         }
     }
 
-    internal bool TryRemoveActiveClient(AsyncEventClient client, out int activeConnections)
-    {
-        return TryRemoveActiveClient(client, client.CreateHandle(), out activeConnections);
-    }
-
-    internal bool TryRemoveActiveClient(AsyncEventClient client, AsyncEventClientHandle handle, out int activeConnections)
+    internal bool TryRemoveActiveClient(AsyncEventClient client, AsyncEventClientHandle handle,
+        out int activeConnections)
     {
         lock (_sync)
         {
@@ -186,26 +154,6 @@ internal sealed class AsyncEventClientRegistry : IDisposable
             _availableClients.Push(client);
             return true;
         }
-    }
-
-    internal bool WaitForPoolDrain(int timeoutMs)
-    {
-        int waitedMs = 0;
-        while (waitedMs < timeoutMs)
-        {
-            lock (_sync)
-            {
-                if (_availableClients.Count == _allClients.Length && _activeHandles.Count == 0)
-                {
-                    return true;
-                }
-            }
-
-            Thread.Sleep(10);
-            waitedMs += 10;
-        }
-
-        return false;
     }
 
     public void Dispose()

@@ -23,14 +23,14 @@
  */
 
 
-namespace Arrowgene.Networking.Tcp.Consumer
+using Arrowgene.Networking.Server;
+
+namespace Arrowgene.Networking.Consumer
 {
     public interface IConsumer
     {
-        void OnStart();
-        void OnReceivedData(ITcpSocket socket, byte[] data);
-        void OnClientDisconnected(ITcpSocket socket);
-        void OnClientConnected(ITcpSocket socket);
-        void OnStop();
+        void OnReceivedData(AsyncEventClientHandle socket, byte[] data);
+        void OnClientDisconnected(AsyncEventClientHandle socket);
+        void OnClientConnected(AsyncEventClientHandle socket);
     }
 }

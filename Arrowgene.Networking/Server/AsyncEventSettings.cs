@@ -1,7 +1,7 @@
 using System;
 using System.Runtime.Serialization;
 
-namespace Arrowgene.Networking.Tcp.Server.AsyncEvent;
+namespace Arrowgene.Networking.Server;
 
 /// <summary>
 /// Configuration for <see cref="AsyncEventServer"/>.
