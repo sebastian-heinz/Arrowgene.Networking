@@ -196,7 +196,6 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
     /// <inheritdoc />
     public override void Send<T>(T socket, byte[] data)
     {
-        // Fix #6: Also check _isRunning.
         if (_isDisposed || !_isRunning)
         {
             Log(LogLevel.Error, nameof(Send), "Server is not running.");
