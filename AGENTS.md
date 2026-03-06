@@ -6,7 +6,7 @@ This file provides guidance for AI coding agents (e.g., Claude Code, Copilot, Cu
 
 ## Project Overview
 
-**Arrowgene.Networking** is a C# networking library providing high-performance TCP and UDP socket abstractions built on top of .NET's `SocketAsyncEventArgs` (SAEA) pattern.
+**Arrowgene.Networking** is a C# networking library providing high-performance TCP socket abstractions built on top of .NET's `SocketAsyncEventArgs` (SAEA) pattern.
 
 | Category | Detail |
 |---|---|
@@ -32,29 +32,12 @@ Core abstractions: `AsyncEventServer`, `IConsumer`, `TcpClient`, `UdpSocket`, `S
 # Restore dependencies (usually automatic, but explicit restore is safe)
 dotnet restore
 
-# Build in Release mode
-dotnet build --configuration Release
-
 # Run all tests
 dotnet test
 
 # Run tests with verbose output
 dotnet test --logger "console;verbosity=detailed"
-
-# Pack NuGet package (replace VERSION as needed)
-dotnet pack Arrowgene.Networking/Arrowgene.Networking.csproj \
-  --output ./nupkgs /p:Version=VERSION
-
-# Publish self-contained binary for a specific runtime (replace RID and VERSION)
-dotnet publish Arrowgene.Networking/Arrowgene.Networking.csproj \
-  --self-contained true \
-  --runtime RID \
-  --configuration Release \
-  --output ./publish/RID-VERSION \
-  /p:Version=VERSION
 ```
-
-Common runtime identifiers (RIDs): `win-x64`, `win-x86`, `linux-x64`, `osx-x64`.
 
 ---
 
@@ -71,9 +54,8 @@ Follow the conventions already established in the codebase:
 ### Language Features
 - Use **file-scoped namespaces** (`namespace Arrowgene.Networking.Tcp;`) for all new files — do not use block-scoped namespaces.
 - **Nullable reference types are enabled**; always annotate nullability correctly. Do not suppress warnings with `!` unless genuinely necessary.
-- Prefer explicit types over `var` in the library project. `var` is acceptable in test code.
-- Do **not** enable `ImplicitUsings` in the library project; add explicit `using` directives.
-- Use `ImplicitUsings` where it is already enabled (test project only).
+- Prefer explicit types over `var` in the project.
+- Do **not** enable `ImplicitUsings` in the project; add explicit `using` directives.
 
 ### Documentation
 - Add **XML doc comments** (`/// <summary>`) to all public types and members.
@@ -83,8 +65,6 @@ Follow the conventions already established in the codebase:
 - One type per file; file name must match the type name.
 - Keep classes focused and small. Prefer composition to inheritance.
 - Do not introduce new external NuGet dependencies without discussion.
-- Write tests in `Arrowgene.Networking.Test/` for any new public API surface.
-
 ---
 
 ## Boundaries — Do Not Touch
@@ -108,11 +88,3 @@ Follow the conventions already established in the codebase:
 - do not run `dotnet publish` or `dotnet pack`
 
 ---
-
-## Pull Request and Commit Guidelines
-
-- Target the `master` branch for all changes.
-- CI runs `dotnet build --configuration Release` on every pull request — ensure the build passes before requesting review.
-- The release pipeline triggers automatically on push to `master` and publishes a NuGet package — do not push directly to `master` unless intentional.
-- Commit messages should be concise and describe *why* the change was made, not just *what* changed.
-- Do not amend commits that have already been pushed to the remote.
