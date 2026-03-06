@@ -137,9 +137,13 @@ internal sealed class AsyncEventClientRegistry : IDisposable
 
     internal bool TryRemoveActiveClient(AsyncEventClient client, out int activeConnections)
     {
+        return TryRemoveActiveClient(client, client.CreateHandle(), out activeConnections);
+    }
+
+    internal bool TryRemoveActiveClient(AsyncEventClient client, AsyncEventClientHandle handle, out int activeConnections)
+    {
         lock (_sync)
         {
-            AsyncEventClientHandle handle = client.CreateHandle();
             bool removed = _activeHandles.Remove(handle);
             if (removed)
             {

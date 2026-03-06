@@ -175,33 +175,31 @@ public sealed class AsyncEventClient : ITcpSocket, IDisposable
             _isAlive = true;
             _isInPool = false;
             _connectionSocket = socket;
-        }
+            UnitOfOrder = unitOfOrder;
+            RunGeneration = runGeneration;
+            Generation = generation;
+            ConnectedAt = DateTime.UtcNow;
 
-        UnitOfOrder = unitOfOrder;
-        RunGeneration = runGeneration;
-        Generation = generation;
+            if (socket.RemoteEndPoint is IPEndPoint remoteEndPoint)
+            {
+                RemoteIpAddress = remoteEndPoint.Address;
+                Port = checked((ushort)remoteEndPoint.Port);
+                Identity = $"[{remoteEndPoint.Address}:{remoteEndPoint.Port}]";
+            }
+            else
+            {
+                RemoteIpAddress = IPAddress.None;
+                Port = 0;
+                Identity = "[Unknown Client]";
+            }
+        }
 
         long now = Environment.TickCount64;
         Volatile.Write(ref _lastReadTicks, now);
         Volatile.Write(ref _lastWriteTicks, now);
-        ConnectedAt = DateTime.UtcNow;
         Interlocked.Exchange(ref _bytesReceived, 0);
         Interlocked.Exchange(ref _bytesSent, 0);
         Interlocked.Exchange(ref _pendingOperations, 0);
-
-        if (socket.RemoteEndPoint is IPEndPoint remoteEndPoint)
-        {
-            RemoteIpAddress = remoteEndPoint.Address;
-            Port = checked((ushort)remoteEndPoint.Port);
-            Identity = $"[{remoteEndPoint.Address}:{remoteEndPoint.Port}]";
-        }
-        else
-        {
-            RemoteIpAddress = IPAddress.None;
-            Port = 0;
-            Identity = "[Unknown Client]";
-        }
-
         _sendQueue.Reset();
     }
 

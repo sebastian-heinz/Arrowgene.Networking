@@ -212,6 +212,12 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
             return;
         }
 
+        AsyncEventClientHandle disconnectHandle = client.CreateHandle();
+        string clientIdentity = client.Identity;
+        DateTime connectedAt = client.ConnectedAt;
+        ulong bytesReceived = client.BytesReceived;
+        ulong bytesSent = client.BytesSent;
+
         if (!client.TryBeginDisconnect())
         {
             TryRecycleClient(client);
@@ -220,32 +226,32 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
 
         client.ClearQueuedSends();
 
-        bool removed = _clientRegistry.TryRemoveActiveClient(client, out int currentConnections);
+        bool removed = _clientRegistry.TryRemoveActiveClient(client, disconnectHandle, out int currentConnections);
         if (!removed)
         {
-            Log(LogLevel.Error, nameof(Disconnect), "Could not remove client from the active registry.", client.Identity);
+            Log(LogLevel.Error, nameof(Disconnect), "Could not remove client from the active registry.", clientIdentity);
         }
 
-        TimeSpan duration = client.ConnectedAt == DateTime.MinValue
+        TimeSpan duration = connectedAt == DateTime.MinValue
             ? TimeSpan.Zero
-            : DateTime.UtcNow - client.ConnectedAt;
+            : DateTime.UtcNow - connectedAt;
 
         Log(
             LogLevel.Debug,
             nameof(Disconnect),
             $"Total Seconds:{duration.TotalSeconds} ({Service.GetHumanReadableDuration(duration)}){Environment.NewLine}" +
-            $"Total Bytes Received:{client.BytesReceived} ({Service.GetHumanReadableSize(client.BytesReceived)}){Environment.NewLine}" +
-            $"Total Bytes Sent:{client.BytesSent} ({Service.GetHumanReadableSize(client.BytesSent)}){Environment.NewLine}" +
+            $"Total Bytes Received:{bytesReceived} ({Service.GetHumanReadableSize(bytesReceived)}){Environment.NewLine}" +
+            $"Total Bytes Sent:{bytesSent} ({Service.GetHumanReadableSize(bytesSent)}){Environment.NewLine}" +
             $"Current Connections:{currentConnections}",
-            client.Identity);
+            clientIdentity);
 
         try
         {
-            OnClientDisconnected(client.CreateHandle());
+            OnClientDisconnected(disconnectHandle);
         }
         catch (Exception exception)
         {
-            Log(LogLevel.Error, nameof(Disconnect), "Error during OnClientDisconnected user code.", client.Identity);
+            Log(LogLevel.Error, nameof(Disconnect), "Error during OnClientDisconnected user code.", clientIdentity);
             Logger.Exception(exception);
         }
 

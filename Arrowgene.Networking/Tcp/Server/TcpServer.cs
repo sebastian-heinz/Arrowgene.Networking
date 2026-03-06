@@ -59,8 +59,8 @@ namespace Arrowgene.Networking.Tcp.Server
 
         public void Stop()
         {
-            _consumer.OnStop();
             ServerStop();
+            _consumer.OnStop();
         }
     }
 }
