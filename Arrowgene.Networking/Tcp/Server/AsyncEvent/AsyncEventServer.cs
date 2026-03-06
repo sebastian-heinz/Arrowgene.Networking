@@ -550,21 +550,72 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
             return;
         }
 
-        AsyncEventClient? client;
         AsyncEventClientHandle clientHandle;
-        int activeConnections;
+        AsyncEventClient? clientToReceive;
         try
         {
-            if (!_clientRegistry.TryActivateClient(
-                    acceptedSocket,
-                    callbackGeneration,
-                    out client,
-                    out clientHandle,
-                    out activeConnections))
+            lock (_lifecycleLock)
             {
-                Log(LogLevel.Error, nameof(ProcessAccept), "No available client slot in the pool.", clientIdentity);
-                Service.CloseSocket(acceptedSocket);
-                return;
+                int currentRunGeneration = Volatile.Read(ref _runGeneration);
+                if (!_isRunning)
+                {
+                    Log(LogLevel.Debug, nameof(ProcessAccept), "Server is not running, rejecting accepted socket.", clientIdentity);
+                    Service.CloseSocket(acceptedSocket);
+                    return;
+                }
+
+                if (callbackGeneration != currentRunGeneration)
+                {
+                    Log(LogLevel.Debug, nameof(ProcessAccept), "Run generation mismatch, rejecting accepted socket.", clientIdentity);
+                    Service.CloseSocket(acceptedSocket);
+                    return;
+                }
+
+                if (!_clientRegistry.TryActivateClient(
+                        acceptedSocket,
+                        callbackGeneration,
+                        out AsyncEventClient? client,
+                        out clientHandle,
+                        out int activeConnections))
+                {
+                    Log(LogLevel.Error, nameof(ProcessAccept), "No available client slot in the pool.", clientIdentity);
+                    Service.CloseSocket(acceptedSocket);
+                    return;
+                }
+
+                if (client is null)
+                {
+                    Log(LogLevel.Error, nameof(ProcessAccept), "Client activation returned no client instance.", clientIdentity);
+                    Service.CloseSocket(acceptedSocket);
+                    return;
+                }
+
+                Log(LogLevel.Info, nameof(ProcessAccept), $"Active Client Connections:{activeConnections}.", clientIdentity);
+
+                try
+                {
+                    OnClientConnected(clientHandle);
+                }
+                catch (Exception exception)
+                {
+                    Log(LogLevel.Error, nameof(ProcessAccept), "Error during OnClientConnected user code.", clientIdentity);
+                    Logger.Exception(exception);
+                }
+
+                if (!_isRunning || callbackGeneration != Volatile.Read(ref _runGeneration))
+                {
+                    if (clientHandle.TryGetClient(out AsyncEventClient activeClient))
+                    {
+                        Disconnect(activeClient);
+                    }
+
+                    return;
+                }
+
+                if (!clientHandle.TryGetClient(out clientToReceive))
+                {
+                    return;
+                }
             }
         }
         catch (Exception exception)
@@ -575,26 +626,7 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
             return;
         }
 
-        if (client is null)
-        {
-            Log(LogLevel.Error, nameof(ProcessAccept), "Client activation returned no client instance.", clientIdentity);
-            Service.CloseSocket(acceptedSocket);
-            return;
-        }
-
-        Log(LogLevel.Info, nameof(ProcessAccept), $"Active Client Connections:{activeConnections}.", clientIdentity);
-
-        try
-        {
-            OnClientConnected(clientHandle);
-        }
-        catch (Exception exception)
-        {
-            Log(LogLevel.Error, nameof(ProcessAccept), "Error during OnClientConnected user code.", clientIdentity);
-            Logger.Exception(exception);
-        }
-
-        StartReceive(client);
+        StartReceive(clientToReceive);
     }
     
     private void ConfigureAcceptedSocket(Socket acceptedSocket, string clientIdentity)
@@ -620,20 +652,12 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
     {
         while (true)
         {
-            if (!client.IsAlive)
+            if (!client.TryBeginSocketOperation(out Socket socket))
             {
+                Disconnect(client);
                 TryRecycleClient(client);
                 return;
             }
-
-            Socket? socket = client.ConnectionSocket;
-            if (socket is null)
-            {
-                Disconnect(client);
-                return;
-            }
-
-            client.IncrementPendingOperations();
 
             bool willRaiseEvent;
             try
@@ -769,16 +793,15 @@ public sealed class AsyncEventServer : TcpServer, IDisposable
                 return;
             }
 
-            Socket? socket = client.ConnectionSocket;
-            if (socket is null)
+            if (!client.TryBeginSocketOperation(out Socket socket))
             {
                 Disconnect(client);
+                TryRecycleClient(client);
                 return;
             }
 
             SocketAsyncEventArgs sendEventArgs = client.SendEventArgs;
             sendEventArgs.SetBuffer(sendEventArgs.Offset, chunkSize);
-            client.IncrementPendingOperations();
 
             bool willRaiseEvent;
             try

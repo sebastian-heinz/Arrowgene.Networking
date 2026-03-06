@@ -248,6 +248,22 @@ public sealed class AsyncEventClient : ITcpSocket, IDisposable
         return _sendQueue.TryCopyNextChunk(sendBuffer, SendEventArgs.Offset, _sendBufferSize, out chunkSize);
     }
 
+    internal bool TryBeginSocketOperation(out Socket socket)
+    {
+        lock (_stateLock)
+        {
+            if (!_isAlive || _isInPool || _connectionSocket is not Socket connectionSocket)
+            {
+                socket = null!;
+                return false;
+            }
+
+            Interlocked.Increment(ref _pendingOperations);
+            socket = connectionSocket;
+            return true;
+        }
+    }
+
     internal bool QueueSend(byte[] data, out bool startSend, out bool queueOverflow)
     {
         return _sendQueue.TryEnqueueCopy(data, out startSend, out queueOverflow);
@@ -290,7 +306,7 @@ public sealed class AsyncEventClient : ITcpSocket, IDisposable
     {
         lock (_stateLock)
         {
-            if (_isInPool || _isAlive)
+            if (_isInPool || _isAlive || Volatile.Read(ref _pendingOperations) > 0)
             {
                 return false;
             }

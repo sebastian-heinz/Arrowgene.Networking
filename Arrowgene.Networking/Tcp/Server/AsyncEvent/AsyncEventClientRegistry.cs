@@ -175,11 +175,6 @@ internal sealed class AsyncEventClientRegistry : IDisposable
 
     internal bool TryRecycle(AsyncEventClient client)
     {
-        if (client.IsAlive || client.PendingOperations > 0)
-        {
-            return false;
-        }
-
         lock (_sync)
         {
             if (!client.TryReturnToPool())
