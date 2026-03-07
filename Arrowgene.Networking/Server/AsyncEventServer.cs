@@ -21,8 +21,6 @@ public sealed class AsyncEventServer : IDisposable
 
     private static readonly ILogger Logger = LogProvider.Logger(typeof(AsyncEventServer));
 
-    [ThreadStatic] private static int _userCallbackDepth;
-
     private readonly object _lifecycleLock;
     private readonly IConsumer _consumer;
     private readonly AsyncEventSettings _settings;
@@ -35,12 +33,6 @@ public sealed class AsyncEventServer : IDisposable
     private Thread? _acceptThread;
     private Thread? _timeoutThread;
     private Socket? _listenSocket;
-    private int _activeUserCallbacks;
-    private volatile bool _hasStarted;
-    private volatile bool _stopRequested;
-    private volatile bool _disposeRequested;
-    private volatile bool _acceptThreadExited = true;
-    private volatile bool _timeoutThreadExited = true;
     private volatile bool _isRunning;
     private volatile bool _isDisposed;
 
@@ -72,11 +64,13 @@ public sealed class AsyncEventServer : IDisposable
             throw new ArgumentNullException(nameof(settings));
         }
 
+        settings.Validate();
+
         IpAddress = ipAddress;
         Port = port;
         _consumer = consumer;
-        settings.Validate();
         _settings = new AsyncEventSettings(settings);
+
         _lifecycleLock = new object();
         _socketTimeout = TimeSpan.FromSeconds(_settings.SocketTimeoutSeconds);
         _identity = string.IsNullOrEmpty(_settings.Identity) ? string.Empty : $"[{_settings.Identity}] ";
@@ -85,43 +79,32 @@ public sealed class AsyncEventServer : IDisposable
         _clientRegistry = new AsyncEventClientRegistry(
             _settings.MaxConnections,
             _settings.OrderingLaneCount,
-            CreateClient);
+            CreateClient
+        );
         _acceptPool = new AsyncEventAcceptPool(_settings.AcceptConcurrency, AcceptCompleted);
+
+        _isDisposed = false;
+        _isRunning = false;
     }
 
-
-    /// <inheritdoc />
-    public bool ServerStart()
+    public void ServerStart()
     {
         Log(LogLevel.Info, nameof(ServerStart), "Starting server...");
 
         lock (_lifecycleLock)
         {
-            if (_isDisposed || _disposeRequested)
+            if (_isDisposed)
             {
                 Log(LogLevel.Error, nameof(ServerStart), "Server is disposed.");
-                return false;
+                return;
             }
 
-            if (_hasStarted)
+            if (_isRunning)
             {
-                Log(LogLevel.Error, nameof(ServerStart), "Server can only be started once.");
-                return false;
+                Log(LogLevel.Error, nameof(ServerStart), "Server already started.");
+                return;
             }
 
-            if (_acceptPool.CurrentCount != _acceptPool.Capacity)
-            {
-                Log(
-                    LogLevel.Error,
-                    nameof(ServerStart),
-                    $"Accept pool is not fully drained. Count:{_acceptPool.CurrentCount} Expected:{_acceptPool.Capacity}.");
-                return false;
-            }
-
-            _hasStarted = true;
-            _acceptThreadExited = false;
-            _timeoutThreadExited = _socketTimeout <= TimeSpan.Zero;
-            _acceptPool.PrepareForStart();
             _isRunning = true;
             _acceptThread = new Thread(Run)
             {
@@ -132,17 +115,53 @@ public sealed class AsyncEventServer : IDisposable
         }
 
         Log(LogLevel.Info, nameof(ServerStart), "Server start initiated.");
-        return true;
     }
 
-    /// <inheritdoc />
-    public bool ServerStop()
+    public void ServerStop()
     {
         Log(LogLevel.Info, nameof(ServerStop), "Stopping server...");
-        if (!StopCore(nameof(ServerStop), logAlreadyStopped: true))
+
+        lock (_lifecycleLock)
         {
-            return false;
+            if (_isDisposed)
+            {
+                Log(LogLevel.Error, nameof(ServerStart), "Server is disposed.");
+                return;
+            }
+
+            if (!_isRunning)
+            {
+                Log(LogLevel.Error, nameof(ServerStop), "Server already stopped.");
+                return;
+            }
+
+            _isRunning = false;
+            _isDisposed = true;
         }
+
+        Log(LogLevel.Info, nameof(ServerStop), "Shutting down listening socket...");
+        Service.CloseSocket(_listenSocket);
+
+        try
+        {
+            _cancellation.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+
+        List<AsyncEventClientHandle> handles = new List<AsyncEventClientHandle>(_settings.MaxConnections);
+        _clientRegistry.SnapshotActiveHandles(handles);
+        foreach (AsyncEventClientHandle handle in handles)
+        {
+            Disconnect(handle);
+        }
+
+        JoinThreadIfNotCurrent(acceptThread);
+        JoinThreadIfNotCurrent(timeoutThread);
+
+        TryFinalizeDispose(function);
+        return true;
 
         Log(LogLevel.Info, nameof(ServerStop), "Server stopped.");
         return true;
@@ -358,86 +377,6 @@ public sealed class AsyncEventServer : IDisposable
         }
 
         return false;
-    }
-
-    private bool StopCore(string function, bool logAlreadyStopped)
-    {
-        Thread? acceptThread;
-        Thread? timeoutThread;
-        Socket? listenSocket;
-
-        lock (_lifecycleLock)
-        {
-            if (!_hasStarted)
-            {
-                if (logAlreadyStopped)
-                {
-                    Log(LogLevel.Error, function, "Server was never started.");
-                }
-
-                return false;
-            }
-
-            if (_stopRequested)
-            {
-                if (logAlreadyStopped)
-                {
-                    Log(LogLevel.Error, function, "Server already stopped.");
-                }
-
-                return false;
-            }
-
-            _stopRequested = true;
-            _isRunning = false;
-
-            acceptThread = _acceptThread;
-            timeoutThread = _timeoutThread;
-            _acceptThread = null;
-            _timeoutThread = null;
-
-            listenSocket = _listenSocket;
-            _listenSocket = null;
-        }
-
-        Log(LogLevel.Info, function, "Shutting down listening socket...");
-        Service.CloseSocket(listenSocket);
-
-        try
-        {
-            _cancellation.Cancel();
-        }
-        catch (ObjectDisposedException)
-        {
-        }
-
-        List<AsyncEventClientHandle> handles = new List<AsyncEventClientHandle>(_settings.MaxConnections);
-        _clientRegistry.SnapshotActiveHandles(handles);
-        foreach (AsyncEventClientHandle handle in handles)
-        {
-            Disconnect(handle);
-        }
-
-        JoinThreadIfNotCurrent(acceptThread);
-        JoinThreadIfNotCurrent(timeoutThread);
-
-        TryFinalizeDispose(function);
-        return true;
-    }
-
-    private void JoinThreadIfNotCurrent(Thread? thread)
-    {
-        if (thread is null)
-        {
-            return;
-        }
-
-        if (ReferenceEquals(thread, Thread.CurrentThread))
-        {
-            return;
-        }
-
-        Service.JoinThread(thread, ThreadTimeoutMs, Logger);
     }
 
     private void StartAcceptLoop()
@@ -713,7 +652,7 @@ public sealed class AsyncEventServer : IDisposable
             {
                 client.IncrementPendingOperations();
                 callbackHandle = new AsyncEventClientHandle(this, client);
-               // TODO verify handle
+                // TODO verify handle
                 invokeCallback = true;
             }
         }

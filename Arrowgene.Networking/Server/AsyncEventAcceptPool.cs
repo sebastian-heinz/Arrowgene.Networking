@@ -30,6 +30,8 @@ internal sealed class AsyncEventAcceptPool : IDisposable
         {
             SocketAsyncEventArgs eventArgs = new SocketAsyncEventArgs();
             eventArgs.Completed += _completedHandler;
+            eventArgs.AcceptSocket = null;
+            eventArgs.UserToken = null;
             _allEventArgs[index] = eventArgs;
             _availableEventArgs.Push(eventArgs);
         }
@@ -77,19 +79,7 @@ internal sealed class AsyncEventAcceptPool : IDisposable
         _capacityGate.Release();
         throw new InvalidOperationException("The accept semaphore is out of sync with the pooled accept event args.");
     }
-
-    internal void PrepareForStart()
-    {
-        lock (_sync)
-        {
-            foreach (SocketAsyncEventArgs eventArgs in _allEventArgs)
-            {
-                eventArgs.AcceptSocket = null;
-                eventArgs.UserToken = null;
-            }
-        }
-    }
-
+    
     internal void Return(SocketAsyncEventArgs eventArgs)
     {
         eventArgs.AcceptSocket = null;
@@ -101,26 +91,6 @@ internal sealed class AsyncEventAcceptPool : IDisposable
         }
 
         _capacityGate.Release();
-    }
-
-    internal bool WaitForDrain(int timeoutMs)
-    {
-        int waitedMs = 0;
-        while (waitedMs < timeoutMs)
-        {
-            lock (_sync)
-            {
-                if (_availableEventArgs.Count == _allEventArgs.Length)
-                {
-                    return true;
-                }
-            }
-
-            Thread.Sleep(10);
-            waitedMs += 10;
-        }
-
-        return false;
     }
 
     public void Dispose()
