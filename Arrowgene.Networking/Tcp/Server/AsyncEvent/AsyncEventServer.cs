@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -431,6 +431,11 @@ namespace Arrowgene.Networking.Tcp.Server.AsyncEvent
 
         private void ProcessAccept(SocketAsyncEventArgs acceptEventArg)
         {
+			if (acceptEventArg.SocketError == SocketError.OperationAborted || _listenSocket == null)
+			{
+				return;
+			}
+			
             Socket acceptSocket = acceptEventArg.AcceptSocket;
             SocketError socketError = acceptEventArg.SocketError;
             acceptEventArg.AcceptSocket = null;
