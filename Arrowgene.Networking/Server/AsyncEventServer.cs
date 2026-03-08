@@ -35,6 +35,7 @@ public sealed class AsyncEventServer : IDisposable
     private Socket? _listenSocket;
     private volatile bool _isRunning;
     private volatile bool _isDisposed;
+    private volatile bool _isStopped;
 
     public IPAddress IpAddress { get; }
 
@@ -85,6 +86,7 @@ public sealed class AsyncEventServer : IDisposable
 
         _isDisposed = false;
         _isRunning = false;
+        _isStopped = false;
     }
 
     public void ServerStart()
@@ -96,6 +98,12 @@ public sealed class AsyncEventServer : IDisposable
             if (_isDisposed)
             {
                 Log(LogLevel.Error, nameof(ServerStart), "Server is disposed.");
+                return;
+            }
+
+            if (_isStopped)
+            {
+                Log(LogLevel.Error, nameof(ServerStart), "Server has been stopped. Restart is not supported.");
                 return;
             }
 
@@ -119,8 +127,6 @@ public sealed class AsyncEventServer : IDisposable
 
     public void ServerStop()
     {
-        Log(LogLevel.Info, nameof(ServerStop), "Stopping server...");
-
         lock (_lifecycleLock)
         {
             if (_isDisposed)
@@ -129,19 +135,30 @@ public sealed class AsyncEventServer : IDisposable
                 return;
             }
 
-            if (!_isRunning)
+            if (_isStopped)
             {
                 Log(LogLevel.Error, nameof(ServerStop), "Server already stopped.");
                 return;
             }
 
             _isRunning = false;
-            _isDisposed = true;
+            _isStopped = true;
         }
 
-        Log(LogLevel.Info, nameof(ServerStop), "Shutting down listening socket...");
-        Service.CloseSocket(_listenSocket);
+        Log(LogLevel.Info, nameof(ServerStop), "Stopping server...");
+        Shutdown();
+        Log(LogLevel.Info, nameof(ServerStop), "Server stopped.");
+    }
 
+    private void Shutdown()
+    {
+        lock (_lifecycleLock)
+        {
+            _isRunning = false;
+            _isStopped = true;
+        }
+
+        Service.CloseSocket(_listenSocket);
         try
         {
             _cancellation.Cancel();
@@ -156,26 +173,17 @@ public sealed class AsyncEventServer : IDisposable
         {
             Disconnect(handle);
         }
-
-        JoinThreadIfNotCurrent(acceptThread);
-        JoinThreadIfNotCurrent(timeoutThread);
-
-        TryFinalizeDispose(function);
-        return true;
-
-        Log(LogLevel.Info, nameof(ServerStop), "Server stopped.");
-        return true;
     }
 
     public void Send(AsyncEventClientHandle socket, byte[] data)
     {
-        if (_isDisposed || !_isRunning || _stopRequested)
+        if (_isDisposed || !_isRunning || _isDisposed)
         {
             Log(LogLevel.Error, nameof(Send), "Server is not running.");
             return;
         }
 
-        if (data is null || data.Length == 0)
+        if (data.Length == 0)
         {
             Log(LogLevel.Error, nameof(Send), "Empty payload, not sending.");
             return;
@@ -217,11 +225,6 @@ public sealed class AsyncEventServer : IDisposable
 
     internal void Disconnect(AsyncEventClient client)
     {
-        if (client is null)
-        {
-            return;
-        }
-
         string clientIdentity = client.Identity;
         DateTime connectedAt = client.ConnectedAt;
         ulong bytesReceived = client.BytesReceived;
@@ -879,21 +882,13 @@ public sealed class AsyncEventServer : IDisposable
                 return;
             }
 
-            _disposeRequested = true;
+            _isDisposed = true;
+            Shutdown();
         }
-
-        if (_hasStarted && !_stopRequested)
-        {
-            StopCore(nameof(Dispose), logAlreadyStopped: false);
-        }
-
-        if (!IsInUserCallback && !WaitForDisposeDrain(ThreadTimeoutMs))
-        {
-            Log(LogLevel.Error, nameof(Dispose),
-                "Resource disposal is deferred because operations did not drain in time.");
-        }
-
-        TryFinalizeDispose(nameof(Dispose));
+        _acceptPool.Dispose();
+        _clientRegistry.Dispose();
+        _cancellation.Dispose();
+        Log(LogLevel.Info, nameof(Dispose), "Server resources disposed.");
     }
 
     private AsyncEventClient CreateClient(int clientId)
@@ -905,79 +900,7 @@ public sealed class AsyncEventServer : IDisposable
             _settings.MaxQueuedSendBytes
         );
     }
-
-    private bool WaitForDisposeDrain(int timeoutMs)
-    {
-        int waitedMs = 0;
-        while (waitedMs < timeoutMs)
-        {
-            if (_isDisposed || CanFinalizeDispose())
-            {
-                return true;
-            }
-
-            Thread.Sleep(10);
-            waitedMs += 10;
-        }
-
-        return false;
-    }
-
-    private bool AreClientOperationsDrained()
-    {
-        IReadOnlyList<AsyncEventClient> clients = _clientRegistry.AllClients;
-        for (int index = 0; index < clients.Count; index++)
-        {
-            AsyncEventClient client = clients[index];
-            if (client.IsAlive || client.PendingOperations > 0)
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private bool AreAcceptOperationsDrained()
-    {
-        return _acceptPool.CurrentCount == _acceptPool.Capacity;
-    }
-
-    private bool CanFinalizeDispose()
-    {
-        return (!_hasStarted || _stopRequested) &&
-               _acceptThreadExited &&
-               _timeoutThreadExited &&
-               Volatile.Read(ref _activeUserCallbacks) == 0 &&
-               AreClientOperationsDrained() &&
-               AreAcceptOperationsDrained();
-    }
-
-    private bool TryFinalizeDispose(string function)
-    {
-        lock (_lifecycleLock)
-        {
-            if (_isDisposed)
-            {
-                return true;
-            }
-
-            if (!_disposeRequested || !CanFinalizeDispose())
-            {
-                return false;
-            }
-
-            _isDisposed = true;
-            _isRunning = false;
-        }
-
-        _acceptPool.Dispose();
-        _clientRegistry.Dispose();
-        _cancellation.Dispose();
-        Log(LogLevel.Info, function, "Server resources disposed.");
-        return true;
-    }
-
+ 
     private void InvokeClientConnected(AsyncEventClient client, string clientIdentity)
     {
         if (!client.IsAlive)
@@ -988,7 +911,6 @@ public sealed class AsyncEventServer : IDisposable
         client.IncrementPendingOperations();
         AsyncEventClientHandle clientHandle = new AsyncEventClientHandle(this, client);
         // TODO verify
-        EnterUserCallback();
         try
         {
             _consumer.OnClientConnected(clientHandle);
@@ -1000,7 +922,6 @@ public sealed class AsyncEventServer : IDisposable
         }
         finally
         {
-            ExitUserCallback();
             client.DecrementPendingOperations();
             TryRecycleClient(client);
             TryFinalizeDispose(nameof(InvokeClientConnected));
@@ -1018,7 +939,6 @@ public sealed class AsyncEventServer : IDisposable
         byte[] data = new byte[count];
         Buffer.BlockCopy(receiveBuffer, offset, data, 0, count);
 
-        EnterUserCallback();
         try
         {
             _consumer.OnReceivedData(clientHandle, data);
@@ -1030,7 +950,6 @@ public sealed class AsyncEventServer : IDisposable
         }
         finally
         {
-            ExitUserCallback();
             client.DecrementPendingOperations();
             TryRecycleClient(client);
             TryFinalizeDispose(nameof(InvokeReceivedData));
@@ -1039,7 +958,6 @@ public sealed class AsyncEventServer : IDisposable
 
     private void InvokeClientDisconnected(AsyncEventClientHandle clientHandle, string clientIdentity)
     {
-        EnterUserCallback();
         try
         {
             _consumer.OnClientDisconnected(clientHandle);
@@ -1051,24 +969,9 @@ public sealed class AsyncEventServer : IDisposable
         }
         finally
         {
-            ExitUserCallback();
             TryFinalizeDispose(nameof(InvokeClientDisconnected));
         }
     }
-
-    private void EnterUserCallback()
-    {
-        Interlocked.Increment(ref _activeUserCallbacks);
-        _userCallbackDepth++;
-    }
-
-    private void ExitUserCallback()
-    {
-        _userCallbackDepth--;
-        Interlocked.Decrement(ref _activeUserCallbacks);
-    }
-
-    private static bool IsInUserCallback => _userCallbackDepth > 0;
 
     private void Log(LogLevel level, string function, string message, string clientIdentity = "")
     {
