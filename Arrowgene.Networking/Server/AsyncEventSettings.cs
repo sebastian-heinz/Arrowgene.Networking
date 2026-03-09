@@ -134,7 +134,7 @@ public sealed class AsyncEventSettings : ICloneable
 
         if (OrderingLaneCount < 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(OrderingLaneCount), "Retries must be zero or greater.");
+            throw new ArgumentOutOfRangeException(nameof(OrderingLaneCount), "OrderingLaneCount must be zero or greater.");
         }
         
         if (ConcurrentAccepts <= 0)
@@ -147,6 +147,12 @@ public sealed class AsyncEventSettings : ICloneable
         {
             throw new ArgumentOutOfRangeException(nameof(MaxQueuedSendBytes),
                 "MaxQueuedSendBytes must be greater than zero.");
+        }
+
+        if (ListenSocketRetries <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(MaxQueuedSendBytes),
+                "ListenSocketRetries must be zero or greater.");
         }
 
         if (ListenSocketSettings is null)

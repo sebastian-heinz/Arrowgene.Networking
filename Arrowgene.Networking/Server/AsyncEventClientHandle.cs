@@ -56,9 +56,16 @@ public readonly struct AsyncEventClientHandle : IEquatable<AsyncEventClientHandl
         return true;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool EqualsClient(AsyncEventClient other)
     {
         return other == _client;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal bool EqualsClientGeneration(AsyncEventClient client, uint generation)
+    {
+        return _client == client && Generation == generation;
     }
 
     public string Identity => Client.Identity;

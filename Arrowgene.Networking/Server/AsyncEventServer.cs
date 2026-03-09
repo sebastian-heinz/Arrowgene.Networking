@@ -73,7 +73,7 @@ public sealed class AsyncEventServer : IDisposable
         _settings = new AsyncEventSettings(settings);
 
         _lifecycleLock = new object();
-        _socketTimeout = TimeSpan.FromSeconds(_settings.SocketTimeoutSeconds);
+        _socketTimeout = TimeSpan.FromSeconds(_settings.ClientSocketTimeoutSeconds);
         _identity = string.IsNullOrEmpty(_settings.Identity) ? string.Empty : $"[{_settings.Identity}] ";
         _cancellation = new CancellationTokenSource();
         _bufferSlab = new AsyncEventBufferSlab(_settings.MaxConnections, _settings.BufferSize);
@@ -82,7 +82,7 @@ public sealed class AsyncEventServer : IDisposable
             _settings.OrderingLaneCount,
             CreateClient
         );
-        _acceptPool = new AsyncEventAcceptPool(_settings.AcceptConcurrency, AcceptCompleted);
+        _acceptPool = new AsyncEventAcceptPool(_settings.ConcurrentAccepts, AcceptCompleted);
 
         _isDisposed = false;
         _isRunning = false;
@@ -169,7 +169,7 @@ public sealed class AsyncEventServer : IDisposable
             return;
         }
 
-        if (!TryStartListener())
+        if (!TrySocketListen())
         {
             Log(LogLevel.Error, nameof(Run), "Stopping server due to startup failure.");
             return;
@@ -178,56 +178,50 @@ public sealed class AsyncEventServer : IDisposable
         StartAccept();
     }
 
-    private bool TryStartListener()
+    private bool TrySocketListen()
     {
         IPEndPoint localEndPoint = new IPEndPoint(IpAddress, Port);
         CancellationToken cancellationToken = _cancellation.Token;
 
-        for (int attempt = 0; _isRunning && attempt <= _settings.BindRetryCount; attempt++)
+        for (int attempt = 0; attempt <= _settings.ListenSocketRetries; attempt++)
         {
-            if (attempt > 0 && cancellationToken.IsCancellationRequested)
+            if (!_isRunning || cancellationToken.IsCancellationRequested)
             {
                 break;
             }
 
             Socket listenSocket = new Socket(localEndPoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-            _settings.SocketSettings.ConfigureSocket(listenSocket);
+            _settings.ListenSocketSettings.ConfigureSocket(listenSocket);
 
             try
             {
                 listenSocket.Bind(localEndPoint);
-                listenSocket.Listen(_settings.SocketSettings.Backlog);
+                listenSocket.Listen(_settings.ListenSocketSettings.Backlog);
 
                 lock (_lifecycleLock)
                 {
-                    if (!_isRunning)
-                    {
-                        Service.CloseSocket(listenSocket);
-                        return false;
-                    }
-
                     _listenSocket = listenSocket;
                 }
 
-                Log(LogLevel.Info, nameof(TryStartListener), $"Listening on {IpAddress}:{Port}.");
+                Log(LogLevel.Info, nameof(TrySocketListen), $"Listening on {IpAddress}:{Port}.");
                 return true;
             }
             catch (Exception exception)
             {
-                Service.CloseSocket(listenSocket);
                 Logger.Exception(exception);
+                Service.CloseSocket(listenSocket);
 
                 if (exception is SocketException { SocketErrorCode: SocketError.AddressAlreadyInUse })
                 {
-                    Log(LogLevel.Error, nameof(TryStartListener), $"Address is already in use ({IpAddress}:{Port}).");
+                    Log(LogLevel.Error, nameof(TrySocketListen), $"Address is already in use ({IpAddress}:{Port}).");
                 }
 
-                if (attempt == _settings.BindRetryCount)
+                if (attempt >= _settings.ListenSocketRetries)
                 {
                     break;
                 }
 
-                Log(LogLevel.Error, nameof(TryStartListener), "Listener startup failed, retrying in 1 second...");
+                Log(LogLevel.Error, nameof(TrySocketListen), "Listener startup failed, retrying in 1 second...");
                 if (cancellationToken.WaitHandle.WaitOne(TimeSpan.FromSeconds(1)))
                 {
                     break;
@@ -248,6 +242,7 @@ public sealed class AsyncEventServer : IDisposable
             {
                 return;
             }
+
             SocketAsyncEventArgs acquiredEventArgs = acceptEventArgs!;
 
             Socket? listenSocket = _listenSocket;
@@ -294,12 +289,11 @@ public sealed class AsyncEventServer : IDisposable
 
         if (acceptedSocket is null)
         {
-            if (socketError != SocketError.Success && socketError != SocketError.OperationAborted)
-            {
-                Log(LogLevel.Error, nameof(ProcessAccept),
-                    $"Accept completed without a socket. SocketError:{socketError}.");
-            }
-
+            Log(
+                LogLevel.Error,
+                nameof(ProcessAccept),
+                $"Accept completed without a socket. SocketError:{socketError}."
+            );
             return;
         }
 
@@ -307,85 +301,34 @@ public sealed class AsyncEventServer : IDisposable
             ? $"[{endPoint.Address}:{endPoint.Port}]"
             : "[Unknown Client]";
 
-        if (!_isRunning)
-        {
-            Log(LogLevel.Debug, nameof(ProcessAccept), "Server is not running, rejecting accepted socket.",
-                clientIdentity);
-            Service.CloseSocket(acceptedSocket);
-            return;
-        }
-
         if (socketError != SocketError.Success)
         {
-            Log(LogLevel.Error, nameof(ProcessAccept), $"Socket error: {socketError}.", clientIdentity);
+            Log(LogLevel.Error, nameof(ProcessAccept), $"SocketError: {socketError}.", clientIdentity);
             Service.CloseSocket(acceptedSocket);
             return;
         }
 
-        try
+        if (!_isRunning)
         {
-            ConfigureAcceptedSocket(acceptedSocket, clientIdentity);
-        }
-        catch (Exception exception)
-        {
-            Log(LogLevel.Error, nameof(ProcessAccept), "Failed to configure the accepted socket.", clientIdentity);
-            Logger.Exception(exception);
+            Log(
+                LogLevel.Debug,
+                nameof(ProcessAccept),
+                "Server is not running, rejecting accepted socket.",
+                clientIdentity
+            );
             Service.CloseSocket(acceptedSocket);
             return;
         }
 
-        AsyncEventClientHandle clientHandle;
-        try
+        _settings.ClientSocketSettings.ConfigureSocket(acceptedSocket);
+
+        if (!_clientRegistry.TryActivateClient(this, acceptedSocket, out AsyncEventClientHandle clientHandle))
         {
-            lock (_lifecycleLock)
-            {
-                if (!_isRunning)
-                {
-                    Log(LogLevel.Debug, nameof(ProcessAccept), "Server is not running, rejecting accepted socket.",
-                        clientIdentity);
-                    Service.CloseSocket(acceptedSocket);
-                    return;
-                }
-
-                if (!_clientRegistry.TryActivateClient(
-                        this,
-                        acceptedSocket,
-                        out AsyncEventClient? client,
-                        out clientHandle,
-                        out int activeConnections))
-                {
-                    Log(LogLevel.Error, nameof(ProcessAccept), "No available client slot in the pool.", clientIdentity);
-                    Service.CloseSocket(acceptedSocket);
-                    return;
-                }
-
-                if (client is null)
-                {
-                    Log(LogLevel.Error, nameof(ProcessAccept), "Client activation returned no client instance.",
-                        clientIdentity);
-                    Service.CloseSocket(acceptedSocket);
-                    return;
-                }
-
-                Log(LogLevel.Info, nameof(ProcessAccept), $"Active Client Connections:{activeConnections}.",
-                    clientIdentity);
-            }
-        }
-        catch (Exception exception)
-        {
-            Log(LogLevel.Error, nameof(ProcessAccept), "Failed to activate the accepted client slot.", clientIdentity);
-            Logger.Exception(exception);
+            Log(LogLevel.Error, nameof(ProcessAccept), "No available client slot in the pool.", clientIdentity);
             Service.CloseSocket(acceptedSocket);
             return;
         }
 
-        if (clientHandle.TryGetClient(out AsyncEventClient connectedClient))
-        {
-            InvokeClientConnected(connectedClient, clientIdentity);
-        }
-
-        AsyncEventClientHandle clientHandle = new AsyncEventClientHandle(this, client);
-        // TODO verify
         try
         {
             _consumer.OnClientConnected(clientHandle);
@@ -396,43 +339,22 @@ public sealed class AsyncEventServer : IDisposable
             Logger.Exception(exception);
         }
 
-        if (!clientHandle.TryGetClient(out AsyncEventClient clientToReceive))
+        StartReceive(clientHandle);
+    }
+
+    private void StartReceive(AsyncEventClientHandle clientHandle)
+    {
+        if (!clientHandle.TryGetClient(out AsyncEventClient client))
         {
-            TryFinalizeDispose(nameof(ProcessAccept));
+            Log(LogLevel.Error, nameof(StartReceive), "Client handle is stale.");
             return;
         }
 
-        StartReceive(clientToReceive);
-    }
-
-    private void ConfigureAcceptedSocket(Socket acceptedSocket, string clientIdentity)
-    {
-        _settings.SocketSettings.ConfigureSocket(acceptedSocket, Logger);
-
-        if (_socketTimeout <= TimeSpan.Zero)
-        {
-            return;
-        }
-
-        try
-        {
-            acceptedSocket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
-        }
-        catch (Exception exception)
-        {
-            Log(LogLevel.Debug, nameof(ConfigureAcceptedSocket),
-                $"Unable to enable SO_KEEPALIVE on accepted socket: {exception.Message}", clientIdentity);
-        }
-    }
-
-    private void StartReceive(AsyncEventClient client)
-    {
         while (true)
         {
             if (!client.TryBeginSocketOperation(out Socket socket))
             {
-                Disconnect(client);
-                TryRecycleClient(client);
+                Disconnect(clientHandle);
                 return;
             }
 
@@ -444,20 +366,20 @@ public sealed class AsyncEventServer : IDisposable
             catch (ObjectDisposedException)
             {
                 client.DecrementPendingOperations();
-                Disconnect(client);
+                Disconnect(clientHandle);
                 return;
             }
             catch (InvalidOperationException)
             {
                 client.DecrementPendingOperations();
-                Disconnect(client);
+                Disconnect(clientHandle);
                 return;
             }
             catch (SocketException exception)
             {
                 client.DecrementPendingOperations();
                 Logger.Exception(exception);
-                Disconnect(client);
+                Disconnect(clientHandle);
                 return;
             }
 
@@ -466,7 +388,7 @@ public sealed class AsyncEventServer : IDisposable
                 return;
             }
 
-            bool continueReceiving = ProcessReceive(client);
+            bool continueReceiving = ProcessReceive(clientHandle);
             if (!continueReceiving)
             {
                 TryRecycleClient(client);
@@ -477,90 +399,76 @@ public sealed class AsyncEventServer : IDisposable
 
     private void ReceiveCompleted(object? sender, SocketAsyncEventArgs eventArgs)
     {
-        if (eventArgs.UserToken is not AsyncEventClient client)
+        if (eventArgs.UserToken is not AsyncEventClientHandle clientHandle)
         {
             Log(LogLevel.Error, nameof(ReceiveCompleted), "Unexpected user token.");
             return;
         }
 
-        bool continueReceiving = ProcessReceive(client);
+        bool continueReceiving = ProcessReceive(clientHandle);
         if (continueReceiving)
         {
-            StartReceive(client);
+            StartReceive(clientHandle);
             return;
         }
 
         TryRecycleClient(client);
     }
 
-    private bool ProcessReceive(AsyncEventClient client)
+    private bool ProcessReceive(AsyncEventClientHandle clientHandle)
     {
-        SocketAsyncEventArgs receiveEventArgs = client.ReceiveEventArgs;
-        SocketError socketError = receiveEventArgs.SocketError;
-        int bytesTransferred = receiveEventArgs.BytesTransferred;
-        byte[]? receiveBuffer = receiveEventArgs.Buffer;
-        bool wasAlive = client.IsAlive;
-        bool invokeCallback = false;
-        AsyncEventClientHandle callbackHandle = default;
-
-        if (wasAlive &&
-            socketError == SocketError.Success &&
-            bytesTransferred > 0 &&
-            receiveBuffer is not null)
+        if (!clientHandle.TryGetClient(out AsyncEventClient client))
         {
-            client.RecordReceive(bytesTransferred);
-            if (client.IsAlive)
-            {
-                client.IncrementPendingOperations();
-                callbackHandle = new AsyncEventClientHandle(this, client);
-                // TODO verify handle
-                invokeCallback = true;
-            }
+            Log(LogLevel.Error, nameof(ProcessReceive), "Client handle is stale.");
+            return false;
         }
 
         client.DecrementPendingOperations();
 
-        if (!wasAlive)
-        {
-            TryFinalizeDispose(nameof(ProcessReceive));
-            return false;
-        }
+        SocketAsyncEventArgs receiveEventArgs = client.ReceiveEventArgs;
 
+        SocketError socketError = receiveEventArgs.SocketError;
         if (socketError != SocketError.Success)
         {
             Log(LogLevel.Error, nameof(ProcessReceive), $"Socket error {socketError}.", client.Identity);
-            Disconnect(client);
+            Disconnect(clientHandle);
             return false;
         }
 
+        int bytesTransferred = receiveEventArgs.BytesTransferred;
         if (bytesTransferred <= 0)
         {
-            Disconnect(client);
+            Log(
+                LogLevel.Error,
+                nameof(ProcessReceive),
+                "No bytes transferred, remote most likely closed",
+                client.Identity
+            );
+            Disconnect(clientHandle);
             return false;
         }
 
+        byte[]? receiveBuffer = receiveEventArgs.Buffer;
+        int receiveOffset = receiveEventArgs.Offset;
         if (receiveBuffer is null)
         {
             Log(LogLevel.Error, nameof(ProcessReceive), "Receive buffer is null.", client.Identity);
-            Disconnect(client);
+            Disconnect(clientHandle);
             return false;
         }
 
-        if (invokeCallback)
-        {
-            string clientIdentity = client.Identity;
-            byte[] data = new byte[count];
-            Buffer.BlockCopy(receiveBuffer, offset, data, 0, count);
+        client.RecordReceive(bytesTransferred);
 
-            try
-            {
-                _consumer.OnReceivedData(clientHandle, data);
-            }
-            catch (Exception exception)
-            {
-                Log(LogLevel.Error, nameof(ProcessReceive), "Error in OnReceivedData user code.", clientIdentity);
-                Logger.Exception(exception);
-            }
+        byte[] data = new byte[bytesTransferred];
+        Buffer.BlockCopy(receiveBuffer, receiveOffset, data, 0, bytesTransferred);
+        try
+        {
+            _consumer.OnReceivedData(clientHandle, data);
+        }
+        catch (Exception exception)
+        {
+            Log(LogLevel.Error, nameof(ProcessReceive), "Error in OnReceivedData user code.", client.Identity);
+            Logger.Exception(exception);
         }
 
         return client.IsAlive;
@@ -597,7 +505,7 @@ public sealed class AsyncEventServer : IDisposable
             if (queueOverflow)
             {
                 Log(LogLevel.Error, nameof(Send), "Send queue overflow, closing client.", client.Identity);
-                Disconnect(client);
+                Disconnect(clientHandle);
             }
 
             return;
@@ -605,12 +513,18 @@ public sealed class AsyncEventServer : IDisposable
 
         if (startSend)
         {
-            StartSend(client);
+            StartSend(clientHandle);
         }
     }
 
-    private void StartSend(AsyncEventClient client)
+    private void StartSend(AsyncEventClientHandle clientHandle)
     {
+        if (!clientHandle.TryGetClient(out AsyncEventClient client))
+        {
+            Log(LogLevel.Error, nameof(StartSend), "Client handle is stale.");
+            return;
+        }
+
         while (true)
         {
             if (!client.IsAlive)
@@ -626,7 +540,7 @@ public sealed class AsyncEventServer : IDisposable
 
             if (!client.TryBeginSocketOperation(out Socket socket))
             {
-                Disconnect(client);
+                Disconnect(clientHandle);
                 TryRecycleClient(client);
                 return;
             }
@@ -642,20 +556,20 @@ public sealed class AsyncEventServer : IDisposable
             catch (ObjectDisposedException)
             {
                 client.DecrementPendingOperations();
-                Disconnect(client);
+                Disconnect(clientHandle);
                 return;
             }
             catch (InvalidOperationException)
             {
                 client.DecrementPendingOperations();
-                Disconnect(client);
+                Disconnect(clientHandle);
                 return;
             }
             catch (SocketException exception)
             {
                 client.DecrementPendingOperations();
                 Logger.Exception(exception);
-                Disconnect(client);
+                Disconnect(clientHandle);
                 return;
             }
 
@@ -664,7 +578,7 @@ public sealed class AsyncEventServer : IDisposable
                 return;
             }
 
-            bool continueSending = ProcessSend(client);
+            bool continueSending = ProcessSend(clientHandle);
             if (!continueSending)
             {
                 TryRecycleClient(client);
@@ -675,24 +589,30 @@ public sealed class AsyncEventServer : IDisposable
 
     private void SendCompleted(object? sender, SocketAsyncEventArgs eventArgs)
     {
-        if (eventArgs.UserToken is not AsyncEventClient client)
+        if (eventArgs.UserToken is not AsyncEventClientHandle clientHandle)
         {
             Log(LogLevel.Error, nameof(SendCompleted), "Unexpected user token.");
             return;
         }
 
-        bool continueSending = ProcessSend(client);
+        bool continueSending = ProcessSend(clientHandle);
         if (continueSending)
         {
-            StartSend(client);
+            StartSend(clientHandle);
             return;
         }
 
         TryRecycleClient(client);
     }
 
-    private bool ProcessSend(AsyncEventClient client)
+    private bool ProcessSend(AsyncEventClientHandle clientHandle)
     {
+        if (!clientHandle.TryGetClient(out AsyncEventClient client))
+        {
+            Log(LogLevel.Error, nameof(StartSend), "Client handle is stale.");
+            return false;
+        }
+
         client.DecrementPendingOperations();
 
         if (!client.IsAlive)
@@ -705,21 +625,21 @@ public sealed class AsyncEventServer : IDisposable
         if (sendEventArgs.SocketError != SocketError.Success)
         {
             Log(LogLevel.Error, nameof(ProcessSend), $"Socket error {sendEventArgs.SocketError}.", client.Identity);
-            Disconnect(client);
+            Disconnect(clientHandle);
             return false;
         }
 
         if (sendEventArgs.BytesTransferred <= 0)
         {
             Log(LogLevel.Error, nameof(ProcessSend), "Send completed with zero bytes transferred.", client.Identity);
-            Disconnect(client);
+            Disconnect(clientHandle);
             return false;
         }
 
         client.RecordSend(sendEventArgs.BytesTransferred);
         return client.CompleteSend(sendEventArgs.BytesTransferred);
     }
-    
+
     private AsyncEventClient CreateClient(int clientId)
     {
         return new AsyncEventClient(
@@ -738,11 +658,6 @@ public sealed class AsyncEventServer : IDisposable
             return;
         }
 
-        Disconnect(client);
-    }
-
-    internal void Disconnect(AsyncEventClient client, string reason = "")
-    {
         string clientIdentity = client.Identity;
         DateTime connectedAt = client.ConnectedAt;
         ulong bytesReceived = client.BytesReceived;
@@ -781,7 +696,6 @@ public sealed class AsyncEventServer : IDisposable
         }
 
         TryRecycleClient(client);
-        TryFinalizeDispose(nameof(Disconnect));
     }
 
     private void CheckSocketTimeout()
@@ -794,9 +708,9 @@ public sealed class AsyncEventServer : IDisposable
             long now = Environment.TickCount64;
             _clientRegistry.SnapshotActiveHandles(handles);
 
-            foreach (AsyncEventClientHandle handle in handles)
+            foreach (AsyncEventClientHandle clientHandle in handles)
             {
-                if (!handle.TryGetClient(out AsyncEventClient client))
+                if (!clientHandle.TryGetClient(out AsyncEventClient client))
                 {
                     continue;
                 }
@@ -819,8 +733,9 @@ public sealed class AsyncEventServer : IDisposable
                         LogLevel.Error,
                         nameof(CheckSocketTimeout),
                         $"Client socket timed out after {elapsed.TotalSeconds} seconds. SocketTimeout:{_socketTimeout.TotalSeconds} LastActive(UTC):{lastActiveUtc:yyyy-MM-dd HH:mm:ss}",
-                        client.Identity);
-                    Disconnect(client);
+                        client.Identity
+                    );
+                    Disconnect(clientHandle);
                 }
             }
 
@@ -853,9 +768,9 @@ public sealed class AsyncEventServer : IDisposable
 
         List<AsyncEventClientHandle> handles = new List<AsyncEventClientHandle>(_settings.MaxConnections);
         _clientRegistry.SnapshotActiveHandles(handles);
-        foreach (AsyncEventClientHandle handle in handles)
+        foreach (AsyncEventClientHandle clientHandle in handles)
         {
-            Disconnect(handle);
+            Disconnect(clientHandle);
         }
 
         Service.JoinThread(_acceptThread, ThreadTimeoutMs);

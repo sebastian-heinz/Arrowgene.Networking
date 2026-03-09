@@ -71,17 +71,14 @@ internal sealed class AsyncEventClientRegistry : IDisposable
     internal bool TryActivateClient(
         AsyncEventServer server,
         Socket acceptedSocket,
-        out AsyncEventClient? client,
-        out AsyncEventClientHandle handle,
-        out int activeConnections)
+        out AsyncEventClientHandle handle
+    )
     {
         lock (_sync)
         {
             if (!_availableClients.TryPop(out AsyncEventClient? pooledClient))
             {
-                client = null;
                 handle = default;
-                activeConnections = _activeHandles.Count;
                 return false;
             }
 
@@ -100,9 +97,9 @@ internal sealed class AsyncEventClientRegistry : IDisposable
             }
 
             handle = new AsyncEventClientHandle(server, pooledClient);
+            pooledClient.ReceiveEventArgs.UserToken = handle;
+            pooledClient.SendEventArgs.UserToken = handle;
             _activeHandles.Add(handle);
-            activeConnections = _activeHandles.Count;
-            client = pooledClient;
             return true;
         }
     }
@@ -111,10 +108,11 @@ internal sealed class AsyncEventClientRegistry : IDisposable
     {
         lock (_sync)
         {
-            if(!TryGetActiveHandle(client, out AsyncEventClientHandle clientHandle))
+            if (!TryGetActiveHandle(client, out AsyncEventClientHandle clientHandle))
             {
                 return false;
             }
+
             bool removed = _activeHandles.Remove(handle);
             if (removed)
             {
@@ -136,7 +134,31 @@ internal sealed class AsyncEventClientRegistry : IDisposable
     /// <param name="client"></param>
     /// <param name="clientHandle"></param>
     /// <returns></returns>
-    internal bool TryGetActiveHandle(AsyncEventClient client, out AsyncEventClientHandle clientHandle)
+    internal bool TryGetClientHandle(AsyncEventClient client, out AsyncEventClientHandle clientHandle)
+    {
+        lock (_sync)
+        {
+            foreach (AsyncEventClientHandle handle in _activeHandles)
+            {
+                if (handle.EqualsClient(client))
+                {
+                    clientHandle = handle;
+                    return true;
+                }
+            }
+        }
+
+        clientHandle = default;
+        return false;
+    }
+
+    /// <summary>
+    /// Only Compares Client Reference, not generation
+    /// </summary>
+    /// <param name="client"></param>
+    /// <param name="clientHandle"></param>
+    /// <returns></returns>
+    internal bool TryGetClientHandleGeneration(AsyncEventClient client, out AsyncEventClientHandle clientHandle)
     {
         lock (_sync)
         {

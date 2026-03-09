@@ -34,8 +34,8 @@ internal sealed class AsyncEventClient : IDisposable
         _sendQueue = new AsyncEventSendQueue(maxQueuedSendBytes);
         ReceiveEventArgs = receiveEventArgs;
         SendEventArgs = sendEventArgs;
-        ReceiveEventArgs.UserToken = this;
-        SendEventArgs.UserToken = this;
+        ReceiveEventArgs.UserToken = null;
+        SendEventArgs.UserToken = null;
         _isInPool = true;
         Identity = "[Unknown Client]";
         RemoteIpAddress = IPAddress.None;
@@ -171,6 +171,23 @@ internal sealed class AsyncEventClient : IDisposable
         }
     }
 
+    internal bool TryBeginSocketOperation(out Socket socket)
+    {
+        // TODO null check + return socket in sync
+        lock (_sync)
+        {
+            if (!_isAlive || _isInPool || _socket is not { } connectionSocket)
+            {
+                socket = null!;
+                return false;
+            }
+
+            Interlocked.Increment(ref _pendingOperations);
+            socket = connectionSocket;
+            return true;
+        }
+    }
+
     internal bool TryPrepareSendChunk(out int chunkSize)
     {
         byte[]? sendBuffer = SendEventArgs.Buffer;
@@ -183,22 +200,6 @@ internal sealed class AsyncEventClient : IDisposable
         return _sendQueue.CopyNextChunk(sendBuffer, SendEventArgs.Offset, SendEventArgs.Count, out chunkSize);
     }
 
-    internal bool TryBeginSocketOperation(out Socket socket)
-    {
-        // TODO null check + return socket in sync
-        lock (_sync)
-        {
-            if (!_isAlive || _isInPool || _socket is not Socket connectionSocket)
-            {
-                socket = null!;
-                return false;
-            }
-
-            Interlocked.Increment(ref _pendingOperations);
-            socket = connectionSocket;
-            return true;
-        }
-    }
 
     internal bool QueueSend(byte[] data, out bool startSend, out bool queueOverflow)
     {
