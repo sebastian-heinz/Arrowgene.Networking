@@ -4,7 +4,7 @@
     <RootNamespace>Arrowgene.Networking</RootNamespace>
     <Title>Arrowgene.Networking</Title>
     <Company>Arrowgene</Company>
-    <Copyright>Copyright © 2017-2026 Arrowgene</Copyright>
+    <Copyright>Copyright © 2017-2026 Sebastian Heinz</Copyright>
     <Version>$(Version)</Version>
     <Authors>sebastian-heinz</Authors>
     <Description>Server Socket</Description>
