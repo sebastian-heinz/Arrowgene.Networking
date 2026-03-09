@@ -466,7 +466,6 @@ public sealed class Server : IDisposable
         if (socketError != SocketError.Success)
         {
             Log(LogLevel.Error, nameof(ProcessReceive), $"Socket error {socketError}.", client.Identity);
-            Disconnect(clientHandle);
             return false;
         }
 
@@ -479,7 +478,6 @@ public sealed class Server : IDisposable
                 "No bytes transferred, remote most likely closed",
                 client.Identity
             );
-            Disconnect(clientHandle);
             return false;
         }
 
@@ -488,7 +486,6 @@ public sealed class Server : IDisposable
         if (receiveBuffer is null)
         {
             Log(LogLevel.Error, nameof(ProcessReceive), "Receive buffer is null.", client.Identity);
-            Disconnect(clientHandle);
             return false;
         }
 
@@ -686,14 +683,8 @@ public sealed class Server : IDisposable
     {
         if (!clientHandle.TryGetClient(out Client client))
         {
-            Log(LogLevel.Error, nameof(Disconnect), "Client handle is stale.");
             return;
         }
-
-        string clientIdentity = client.Identity;
-        DateTime connectedAt = client.ConnectedAt;
-        ulong bytesReceived = client.BytesReceived;
-        ulong bytesSent = client.BytesSent;
 
         client.Close();
         if (!_clientRegistry.TryDeactivateClient(clientHandle, out ClientSnapshot snapshot))
@@ -701,19 +692,19 @@ public sealed class Server : IDisposable
             return;
         }
 
-        TimeSpan duration = connectedAt == DateTime.MinValue
+        TimeSpan duration = snapshot.ConnectedAt == DateTime.MinValue
             ? TimeSpan.Zero
-            : DateTime.UtcNow - connectedAt;
+            : DateTime.UtcNow - snapshot.ConnectedAt;
 
         Log(
             LogLevel.Info,
             nameof(Disconnect),
             $"Disconnected({reason}){Environment.NewLine}" +
             $"Total Seconds:{duration.TotalSeconds} ({Service.GetHumanReadableDuration(duration)}){Environment.NewLine}" +
-            $"Total Bytes Received:{bytesReceived} ({Service.GetHumanReadableSize(bytesReceived)}){Environment.NewLine}" +
-            $"Total Bytes Sent:{bytesSent} ({Service.GetHumanReadableSize(bytesSent)}){Environment.NewLine}" +
+            $"Total Bytes Received:{snapshot.BytesReceived} ({Service.GetHumanReadableSize(snapshot.BytesReceived)}){Environment.NewLine}" +
+            $"Total Bytes Sent:{snapshot.BytesSent} ({Service.GetHumanReadableSize(snapshot.BytesSent)}){Environment.NewLine}" +
             $"Current Connections:{_clientRegistry.GetAliveClientCount()}",
-            clientIdentity
+            snapshot.Identity
         );
 
         try

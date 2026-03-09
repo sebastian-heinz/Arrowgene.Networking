@@ -267,6 +267,7 @@ internal sealed class Client : IDisposable
     {
         lock (_sync)
         {
+            _generation = unchecked(_generation + 1);
             _socket = null;
             _isAlive = false;
             Identity = "[Unknown Client]";

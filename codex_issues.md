@@ -1,89 +1,279 @@
-# AsyncEventServer Review Findings
+# AsyncEventServer Technical Audit
 
-## High
+Scope: the implementation under review is [`Arrowgene.Networking/SAEAServer/Server.cs`](Arrowgene.Networking/SAEAServer/Server.cs), which appears to be the current replacement for the requested `AsyncEventServer.cs`.
 
-### 1. Small sends permanently shrink future send chunk size for the pooled client slot
+## Critical Issues
 
-- `AsyncEventServer.StartSend()` mutates `SendEventArgs.Count` to the current chunk length.
-- `AsyncEventClient.TryPrepareSendChunk()` then reuses that mutable `Count` as the maximum size for the next chunk.
-- `ResetForPool()` and `Activate()` never restore the original buffer length.
+### 1. Shutdown can stall on `_lifecycleLock` and block its own worker thread
 
-Affected code:
+References:
+- `Arrowgene.Networking/SAEAServer/Server.cs:134-161`
+- `Arrowgene.Networking/SAEAServer/Server.cs:166-189`
+- `Arrowgene.Networking/SAEAServer/Server.cs:192-209`
+- `Arrowgene.Networking/SAEAServer/Server.cs:212-263`
+- `Arrowgene.Networking/SAEAServer/Server.cs:784-810`
 
-- `/Users/shiba/dev/Arrowgene.Networking/Arrowgene.Networking/Server/AsyncEventServer.cs:561`
-- `/Users/shiba/dev/Arrowgene.Networking/Arrowgene.Networking/Server/AsyncEventClient.cs:199`
-- `/Users/shiba/dev/Arrowgene.Networking/Arrowgene.Networking/Server/AsyncEventClient.cs:235`
-- `/Users/shiba/dev/Arrowgene.Networking/Arrowgene.Networking/Server/AsyncEventBufferSlab.cs:49`
+Problem:
+- `ServerStart()` starts `_acceptThread` and `_timeoutThread` while still holding `_lifecycleLock`.
+- `Run()` immediately tries to reacquire the same lock before it can do any work.
+- `ServerStop()` also holds `_lifecycleLock` while calling `Shutdown()`, and `Shutdown()` performs the expensive parts of shutdown while that lock is still held by the outer caller.
+- `Run()` keeps `_lifecycleLock` around the entire `TrySocketListen()` retry loop, including the 1 second retry wait.
 
-Impact:
-
-- After a small payload is sent, all later sends on that pooled slot are capped to that smaller size, including future connections that reuse the slot.
-- This silently degrades throughput and increases syscall/completion overhead under load.
-
-### 2. `_lifecycleLock` is held across blocking startup and shutdown work
-
-- `Run()` enters `_lifecycleLock` and calls `TrySocketListen()` while still holding it.
-- `TrySocketListen()` performs bind/listen attempts and can sleep for one second between retries.
-- `ServerStop()` and `Dispose()` also hold `_lifecycleLock` while calling `Shutdown()`, and `Shutdown()` joins `_acceptThread`.
-
-Affected code:
-
-- `/Users/shiba/dev/Arrowgene.Networking/Arrowgene.Networking/Server/AsyncEventServer.cs:142`
-- `/Users/shiba/dev/Arrowgene.Networking/Arrowgene.Networking/Server/AsyncEventServer.cs:168`
-- `/Users/shiba/dev/Arrowgene.Networking/Arrowgene.Networking/Server/AsyncEventServer.cs:191`
-- `/Users/shiba/dev/Arrowgene.Networking/Arrowgene.Networking/Server/AsyncEventServer.cs:230`
-- `/Users/shiba/dev/Arrowgene.Networking/Arrowgene.Networking/Server/AsyncEventServer.cs:785`
-- `/Users/shiba/dev/Arrowgene.Networking/Arrowgene.Networking/Server/AsyncEventServer.cs:791`
+Failure mode:
+- If `ServerStop()` runs before `_acceptThread` reaches `Run()`, shutdown will call `JoinThread(_acceptThread, 10000)` while the accept thread is blocked waiting for `_lifecycleLock`. That produces an avoidable 10 second shutdown delay and a false join-timeout error.
+- If listener startup is retrying, stop/dispose cannot acquire `_lifecycleLock` to cancel the retry loop until all retries finish, so stop latency is bounded by retry count instead of intent.
+- Because `Shutdown()` also disconnects clients while the outer stop/dispose call still owns `_lifecycleLock`, user callbacks triggered by disconnect run while the global lifecycle lock is held. That amplifies the stall window and creates deadlock potential if user code waits on another thread that tries to enter a lifecycle API.
 
 Impact:
+- Stop/dispose can hang for the full join timeout.
+- Startup failure or bind retry paths become unresponsive to stop.
+- Lifecycle lock contention is much higher than necessary for a single-run server.
 
-- A stop/dispose request cannot interrupt listener retry sleeps because it cannot acquire the same lock needed to cancel shutdown.
-- If stop beats the accept thread to `_lifecycleLock`, shutdown can sit in `JoinThread()` until the full 10-second timeout because the accept thread is blocked trying to enter `Run()`.
+### 2. Dispose races in-flight SAEA completions and can throw `ObjectDisposedException`
 
-### 3. `Dispose()` can tear down pooled async state while completions are still in flight
+References:
+- `Arrowgene.Networking/SAEAServer/Server.cs:315-319`
+- `Arrowgene.Networking/SAEAServer/Server.cs:784-829`
+- `Arrowgene.Networking/SAEAServer/AcceptPool.cs:83-109`
+- `Arrowgene.Networking/SAEAServer/ClientRegistry.cs:104-160`
+- `Arrowgene.Networking/SAEAServer/Client.cs:191-205`
+- `Arrowgene.Networking/SAEAServer/Client.cs:320-324`
 
-- `Shutdown()` disconnects each active client once, but `TryDeactivateClient()` refuses to recycle a client while `PendingOperations > 0`.
-- `Dispose()` then disposes the accept pool, client registry, and cancellation source immediately after shutdown returns.
-- Receive/send/accept completions can still arrive on thread-pool callbacks after those shared objects have been disposed.
+Problem:
+- Shutdown closes the listener and joins the two dedicated threads, but it never waits for outstanding accept/send/receive completions running on I/O completion threads.
+- `Dispose()` immediately follows with `_acceptPool.Dispose()` and `_clientRegistry.Dispose()`.
+- `ProcessAccept()` always returns its `SocketAsyncEventArgs` to the pool first. A late accept completion after `_acceptPool.Dispose()` will execute `_acceptPool.Return()` and hit `_capacityGate.Release()` on a disposed semaphore.
+- `Disconnect()` only returns a client to the registry when `PendingOperations == 0`. During shutdown, clients with in-flight send/receive completions stay active. `Dispose()` still disposes every client's `SocketAsyncEventArgs`, so late `ReceiveCompleted` / `SendCompleted` callbacks can run against disposed args or disposed client state.
 
-Affected code:
-
-- `/Users/shiba/dev/Arrowgene.Networking/Arrowgene.Networking/Server/AsyncEventServer.cs:675`
-- `/Users/shiba/dev/Arrowgene.Networking/Arrowgene.Networking/Server/AsyncEventServer.cs:778`
-- `/Users/shiba/dev/Arrowgene.Networking/Arrowgene.Networking/Server/AsyncEventServer.cs:802`
-- `/Users/shiba/dev/Arrowgene.Networking/Arrowgene.Networking/Server/AsyncEventServer.cs:408`
-- `/Users/shiba/dev/Arrowgene.Networking/Arrowgene.Networking/Server/AsyncEventServer.cs:601`
-- `/Users/shiba/dev/Arrowgene.Networking/Arrowgene.Networking/Server/AsyncEventAcceptPool.cs:96`
-- `/Users/shiba/dev/Arrowgene.Networking/Arrowgene.Networking/Server/AsyncEventClientRegistry.cs:104`
-- `/Users/shiba/dev/Arrowgene.Networking/Arrowgene.Networking/Server/AsyncEventClient.cs:166`
-
-Impact:
-
-- Under load, callbacks can race disposed `SocketAsyncEventArgs`, semaphore state, or client objects during shutdown.
-
-## Medium
-
-### 4. Handles are not invalidated on disconnect, so they still resolve to a reset pooled client until reuse
-
-- `Disconnect()` deactivates and resets the pooled client before invoking `_consumer.OnClientDisconnected(clientHandle)`.
-- `ResetForPool()` clears identity, endpoint, timestamps, counters, and marks the slot as pooled.
-- `AsyncEventClientHandle.TryGetClient()` only checks generation, and generation is only advanced on the next `Activate()`.
-
-Affected code:
-
-- `/Users/shiba/dev/Arrowgene.Networking/Arrowgene.Networking/Server/AsyncEventServer.cs:661`
-- `/Users/shiba/dev/Arrowgene.Networking/Arrowgene.Networking/Server/AsyncEventServer.cs:697`
-- `/Users/shiba/dev/Arrowgene.Networking/Arrowgene.Networking/Server/AsyncEventClient.cs:139`
-- `/Users/shiba/dev/Arrowgene.Networking/Arrowgene.Networking/Server/AsyncEventClient.cs:235`
-- `/Users/shiba/dev/Arrowgene.Networking/Arrowgene.Networking/Server/AsyncEventClientHandle.cs:47`
-- `/Users/shiba/dev/Arrowgene.Networking/Arrowgene.Networking/Server/AsyncEventServer.cs:718`
+Failure mode:
+- Unhandled `ObjectDisposedException` from `AcceptPool.Return()` after dispose.
+- Unhandled exceptions from late `ReceiveCompleted` / `SendCompleted` callbacks touching disposed `SocketAsyncEventArgs`.
+- Lost or duplicated disconnect cleanup when shutdown races pending I/O.
 
 Impact:
+- This is the most likely crash path in a busy shutdown.
+- It also makes the accept pool and client registry unsafe to dispose under load, even though there is no steady-state pool leak while the server is running.
 
-- `OnClientDisconnected` can observe `[Unknown Client]`, zeroed counters, and cleared endpoint data instead of the disconnected client state.
-- Snapshot-based paths like the timeout scanner can still act on a handle that now points at an inactive pooled slot.
+### 3. Receive processing releases the client slot before user delivery completes
 
-## Test Coverage Note
+References:
+- `Arrowgene.Networking/SAEAServer/Server.cs:453-513`
+- `Arrowgene.Networking/SAEAServer/Server.cs:685-731`
+- `Arrowgene.Networking/SAEAServer/Client.cs:191-205`
+- `Arrowgene.Networking/SAEAServer/ClientRegistry.cs:104-132`
 
-- I did not find a test project in the repository during this review.
-- `dotnet test` at the repo root did not discover any tests.
+Problem:
+- `ProcessReceive()` decrements `PendingOperations` at line 461 before it copies the buffer and before it calls `_consumer.OnReceivedData(...)`.
+- Once the pending count hits zero, a concurrent `Disconnect()` can succeed, return the client to the pool, and make the slot immediately reusable.
+- The receive callback then continues executing with a handle that may already be disconnected or recycled for a new connection.
+
+Failure mode:
+- Data from the old connection can be delivered after the connection was closed.
+- If the slot is recycled quickly, the handle becomes stale during `_consumer.OnReceivedData(...)`. With the current `ThreadedBlockingQueueConsumer`, that can throw from `socket.UnitOfOrder` before the event is even queued.
+- Because the callback already copied the bytes, the race is a real correctness bug, not just a noisy log.
+
+Impact:
+- Cross-generation delivery and stale-handle exceptions under concurrent disconnect/timeout/close.
+- Ordering guarantees become unreliable exactly in the high-contention cases where they matter most.
+
+## Optimization Suggestions
+
+### Accept path
+
+- `StartAccept()` is efficient when accepts stay asynchronous, but synchronous accepts are processed inline on the accept thread. That means `ProcessAccept()`, `_consumer.OnClientConnected(...)`, and `StartReceive()` all run before the accept loop can re-arm more accepts. Under bursty connect traffic, that creates head-of-line blocking in the accept path.
+- Refactor goal: re-arm accept capacity first, then hand connection setup to a separate processing path, or at minimum keep the accept-thread work bounded and non-user-blocking.
+
+### Timeout scanning
+
+- `CheckSocketTimeout()` does a full snapshot and full sweep of all active handles every interval (`Server.cs:734-781`). For very large connection counts, that becomes an O(n) polling tax on a dedicated thread.
+- The current reuse of a pre-sized `List<ClientHandle>` keeps GC low, but the algorithm still scales poorly with 50k+ connections.
+- Better options are a sharded sweep, a coarse timing wheel, or checking only a fraction of the registry per tick.
+
+### Active handle bookkeeping and GC pressure
+
+References:
+- `Arrowgene.Networking/SAEAServer/ClientRegistry.cs:49-66`
+- `Arrowgene.Networking/SAEAServer/ClientRegistry.cs:129`
+- `Arrowgene.Networking/SAEAServer/Server.cs:708-716`
+
+- `Disconnect()` calls `GetAliveClientCount()`, which allocates a new `List<ClientHandle>` and scans all active clients on every disconnect.
+- `_activeHandles.Remove(clientHandle)` is O(n), so mass disconnects combine O(n) removal with another O(n) live-count pass.
+- Maintain an atomic `_aliveCount`, and switch active-client tracking to an O(1) removal strategy if disconnect throughput matters.
+
+### Completion robustness
+
+- `AcceptCompleted`, `ReceiveCompleted`, and `SendCompleted` have no outer exception guard. Any bug in pool return, queue accounting, or callback handling can escape an I/O completion callback and terminate the process.
+- Even after the disposal races are fixed, keeping a narrow top-level `try/catch` in the completion entrypoints is worthwhile for survivability and diagnostics.
+
+## Code Refactor
+
+### 1. Replace lock-based lifecycle transitions with an atomic state machine
+
+```csharp
+private enum ServerState
+{
+    Created = 0,
+    Starting = 1,
+    Running = 2,
+    Stopping = 3,
+    Stopped = 4,
+    Disposed = 5
+}
+
+private int _state = (int)ServerState.Created;
+
+public void ServerStart()
+{
+    if (Interlocked.CompareExchange(
+            ref _state,
+            (int)ServerState.Starting,
+            (int)ServerState.Created) != (int)ServerState.Created)
+    {
+        return;
+    }
+
+    try
+    {
+        if (_socketTimeout > TimeSpan.Zero)
+        {
+            _timeoutThread.Start();
+        }
+
+        _acceptThread.Start();
+        Volatile.Write(ref _state, (int)ServerState.Running);
+    }
+    catch
+    {
+        Volatile.Write(ref _state, (int)ServerState.Stopped);
+        throw;
+    }
+}
+
+public void ServerStop()
+{
+    int previous = Interlocked.Exchange(ref _state, (int)ServerState.Stopping);
+    if (previous is (int)ServerState.Stopped or (int)ServerState.Disposed)
+    {
+        return;
+    }
+
+    ShutdownCore();
+    Volatile.Write(ref _state, (int)ServerState.Stopped);
+}
+```
+
+Why:
+- State changes become single-step and non-blocking.
+- Threads are not joined while a lifecycle lock is held.
+- `Run()` no longer needs to keep a global lock across bind retries.
+
+### 2. Drain outstanding accepts before disposing the accept pool
+
+```csharp
+private int _acceptsInFlight;
+private readonly ManualResetEventSlim _acceptsDrained = new(initialState: true);
+
+private bool TryIssueAccept(Socket listenSocket, SocketAsyncEventArgs args)
+{
+    _acceptsDrained.Reset();
+    Interlocked.Increment(ref _acceptsInFlight);
+
+    try
+    {
+        if (!listenSocket.AcceptAsync(args))
+        {
+            ProcessAccept(args);
+        }
+
+        return true;
+    }
+    catch
+    {
+        if (Interlocked.Decrement(ref _acceptsInFlight) == 0)
+        {
+            _acceptsDrained.Set();
+        }
+
+        throw;
+    }
+}
+
+private void ProcessAccept(SocketAsyncEventArgs args)
+{
+    try
+    {
+        // Existing accept processing.
+    }
+    finally
+    {
+        _acceptPool.Return(args);
+
+        if (Interlocked.Decrement(ref _acceptsInFlight) == 0)
+        {
+            _acceptsDrained.Set();
+        }
+    }
+}
+
+private void ShutdownCore()
+{
+    Service.CloseSocket(_listenSocket);
+    _listenSocket = null;
+    _cancellation.Cancel();
+
+    _acceptsDrained.Wait(ThreadTimeoutMs);
+}
+```
+
+Why:
+- Pool disposal becomes safe because shutdown waits for accept completions to drain.
+- The same pattern should be mirrored for per-client send/receive operations before disposing client `SocketAsyncEventArgs`.
+
+### 3. Keep the receive operation leased until user delivery finishes
+
+```csharp
+private bool ProcessReceive(ClientHandle handle)
+{
+    if (!handle.TryGetClient(out Client client))
+    {
+        return false;
+    }
+
+    try
+    {
+        SocketAsyncEventArgs receiveArgs = client.ReceiveEventArgs;
+
+        if (receiveArgs.SocketError != SocketError.Success)
+        {
+            return false;
+        }
+
+        int count = receiveArgs.BytesTransferred;
+        if (count <= 0 || receiveArgs.Buffer is not byte[] buffer)
+        {
+            return false;
+        }
+
+        byte[] payload = GC.AllocateUninitializedArray<byte>(count);
+        Buffer.BlockCopy(buffer, receiveArgs.Offset, payload, 0, count);
+        client.RecordReceive(count);
+
+        _consumer.OnReceivedData(handle, payload);
+        return client.IsAlive;
+    }
+    finally
+    {
+        client.DecrementPendingOperations();
+    }
+}
+```
+
+Why:
+- `Disconnect()` cannot recycle the slot while the callback is still in progress.
+- The receive callback either finishes against the original client generation or the final disconnect happens after the callback unwinds.
+
+## Bottom Line
+
+- I did not find a normal steady-state leak in `AcceptPool` or `ClientRegistry` while the server remains running.
+- The real failures are lifecycle coordination bugs: shutdown lock contention, disposal before I/O completions drain, and releasing the client slot before `OnReceivedData` finishes.
+- Those three issues are enough to produce hangs, stale-handle faults, and shutdown-time crashes under real load.

@@ -1,190 +1,159 @@
-# AsyncEventServer Code Review — Issues
+# SAEAServer Audit — Issues & Fixes
 
-Review scope: `AsyncEventServer.cs` and all supporting types
-(`AsyncEventClient`, `AsyncEventClientHandle`, `AsyncEventClientRegistry`,
-`AsyncEventSendQueue`, `AsyncEventAcceptPool`, `AsyncEventBufferSlab`,
-`AsyncEventSettings`).
-
-Focus: locking, synchronization, and logic correctness.
+Audit scope: `Server.cs`, `Client.cs`, `ClientHandle.cs`, `ClientRegistry.cs`,
+`AcceptPool.cs`, `SendQueue.cs`, `BufferSlab.cs`
 
 ---
 
-## Issue 1 — Double Disconnect on Receive Error Paths (Logic Bug)
+## Fixed Issues
 
+### FIX-1: Race Condition — Reading Mutable Client Fields After Close
+**Severity:** Medium-High
+**File:** `Server.cs` — `Disconnect()`
+**Problem:**
+`Disconnect()` called `client.Close()` (setting `_isAlive = false`), then read
+`client.Identity`, `client.ConnectedAt`, `client.BytesReceived`, `client.BytesSent`
+*after* the client was logically dead. Between `Close()` and these reads, another
+thread could call `TryDeactivateClient` → `ResetForPool` → `Activate`, recycling
+the slot for a new connection. The logged/reported values would belong to the
+**new** connection, not the one that disconnected.
+**Fix:**
+Removed the mutable field reads. All disconnect telemetry now comes from the
+`ClientSnapshot` returned by `TryDeactivateClient`, which captures state atomically
+under the registry lock before the slot is returned to the pool.
+
+---
+
+### FIX-2: Stale Handle Valid After Pool Return
 **Severity:** Medium
-**File:** `AsyncEventServer.cs`
-
-`ProcessReceive` calls `Disconnect` on every error path **and** returns
-`false`:
-
-- Line 443: socket error → `Disconnect(); return false;`
-- Line 456: zero bytes → `Disconnect(); return false;`
-- Line 465: null buffer → `Disconnect(); return false;`
-
-Both callers then **also** call `Disconnect` when they see `false`:
-
-- `ReceiveCompleted` (line 424): `Disconnect(clientHandle);`
-- `StartReceive` (line 403): `Disconnect(clientHandle);`
-
-This produces a double `Disconnect` for every receive-side error.
-
-The `ProcessReceive` method has a mixed return contract: on the normal
-completion path (line 487 `return client.IsAlive;`), returning `false` means
-"the client died elsewhere, caller should disconnect." But on error paths,
-returning `false` means "I already disconnected." The caller cannot distinguish
-the two.
-
-**Impact:**
-Not a crash — `Close()` is idempotent (`_isAlive` guard), and
-`TryDeactivateClient` returns `false` on the redundant call (either
-`CanReturnToPool` fails because `_isInPool` is already `true`, or generation
-mismatch if the slot was re-activated).  However, every duplicate `Disconnect`
-call acquires multiple locks, performs identity/stats reads, and logs
-unnecessarily.
-
-**Note:** The **send path does not have this issue.** `SendCompleted` (line
-609-613) and `StartSend` (line 594-596) do **not** call `Disconnect` when
-`ProcessSend` returns `false` — they simply stop the send chain. `ProcessSend`
-is the sole owner of disconnect on the send side, which is the correct
-pattern.
-
-**Suggested fix:**
-Remove the `Disconnect` calls inside `ProcessReceive` (lines 443, 456, 465)
-and let the callers be the sole owners, consistent with how the send path
-works.  Alternatively, keep `Disconnect` inside `ProcessReceive` and change
-callers to not disconnect on `false` (matching the send path pattern).
+**File:** `Client.cs` — `ResetForPool()`
+**Problem:**
+`_generation` was only incremented in `Activate()`. After `TryDeactivateClient`
+called `ResetForPool` and pushed the client back into the available pool, handles
+captured before disconnect still passed `TryGetClient` because the generation
+had not changed. A consumer holding an old `ClientHandle` could call `Send()` on
+a slot that is now available (or re-activated for a different connection) and
+succeed, causing cross-connection data leaks.
+**Fix:**
+Added `_generation = unchecked(_generation + 1)` as the first operation inside
+`ResetForPool()` under `_sync`. All pre-existing handles are now immediately
+invalidated the moment the slot returns to the pool.
 
 ---
 
-## Issue 2 — `OnClientDisconnected` Consumer Callback Receives Wiped State (Logic Bug)
-
+### FIX-3: Double Disconnect from ProcessReceive Error Paths
 **Severity:** Medium
-**File:** `AsyncEventServer.cs` lines 674-697, `AsyncEventClientRegistry.cs`
-lines 117-125
-
-In `Disconnect`, the flow is:
-
-```
-client.Close();                              // line 674
-_clientRegistry.TryDeactivateClient(...)     // line 675
-    → client.CanReturnToPool()               //   sets _isInPool = true
-    → reads client.UnitOfOrder               //   reads correct value
-    → client.ResetForPool()                  //   wipes Identity, stats, UnitOfOrder, etc.
-    → pushes client back to available pool
-    → removes handle from active list
-// ... log disconnect stats using captured locals (correct) ...
-_consumer.OnClientDisconnected(clientHandle) // line 697
-```
-
-The handle passed to `OnClientDisconnected` still resolves (generation is only
-bumped in `Activate`, not `ResetForPool`).  But the consumer will see:
-
-- `clientHandle.Identity` → `"[Unknown Client]"`
-- `clientHandle.BytesReceived` → `0`
-- `clientHandle.BytesSent` → `0`
-- `clientHandle.ConnectedAt` → `DateTime.MinValue`
-
-The server captures the correct stats into locals (lines 669-672) for its own
-log message, but these are not forwarded to the consumer.
-
-**Acknowledged:** The TODO on line 697 notes this:
-`// TODO pass a new object, that is a client snapshot`
-
-**Impact:**
-Any consumer that reads session stats inside `OnClientDisconnected` gets
-zeroed-out values.
-
-**Suggested fix:**
-Create a snapshot struct/object from the captured locals and pass it to the
-consumer, or defer `ResetForPool` until after the callback.
+**File:** `Server.cs` — `ProcessReceive()`
+**Problem:**
+On socket error, zero-bytes, or null-buffer, `ProcessReceive` called
+`Disconnect(clientHandle)` and then returned `false`. Both callers
+(`StartReceive` and `ReceiveCompleted`) also call `Disconnect` when the return
+value is `false`. This resulted in two `Disconnect` calls for the same handle
+on every receive-side error, doubling the disconnect processing and log noise.
+**Fix:**
+Removed the three explicit `Disconnect(clientHandle)` calls inside
+`ProcessReceive` error branches. The method now only returns `false`;
+the callers are responsible for the disconnect.
 
 ---
 
-## Issue 3 — Shutdown Dispose Race With In-Flight IOCP Accept Callbacks (Concurrency Bug)
+### FIX-4: GetAliveClientCount O(n) Allocation on Every Disconnect
+**Severity:** Medium
+**File:** `ClientRegistry.cs` — `GetAliveClientCount()`
+**Problem:**
+Allocated a `List<ClientHandle>` of capacity `MaxConnections`, snapshot all
+active handles into it, then iterated to count alive clients — every single
+disconnect. At 10K connections under churn, this creates significant GC
+pressure and O(n) work on the hot path.
+**Fix:**
+Replaced with `return (uint)_activeHandles.Count` under `_sync`. The
+`_activeHandles` list is already precisely maintained (add on activate, remove
+on deactivate), so its count is the authoritative alive count with O(1) cost.
 
+---
+
+### FIX-5: NullReferenceException on Default ClientHandle
+**Severity:** Medium
+**File:** `ClientHandle.cs` — `TryGetClient()`, `Client` property
+**Problem:**
+`ClientHandle` is a `readonly struct`. A `default(ClientHandle)` has
+`_client == null`. Both `TryGetClient` and the `Client` property getter
+accessed `_client.Generation` without a null check, causing a
+`NullReferenceException` on any default-constructed handle.
+**Fix:**
+Added `Client? c = _client; if (c is null || ...)` guard to both accessors.
+Also added `[DoesNotReturn]` attribute to `ThrowStaleException` so the
+compiler recognizes the non-null flow after the guard, eliminating
+the CS8603 nullable warning.
+
+---
+
+## Unfixed Issues (Acknowledged, Low Severity)
+
+### OPEN-1: Double Shutdown on ServerStop + Dispose
 **Severity:** Low
-**File:** `AsyncEventServer.cs` lines 760-806, `AsyncEventAcceptPool.cs`
-
-During `Dispose()`, the sequence is:
-
-1. `Shutdown()` closes the listen socket (line 768) — this causes pending
-   `AcceptAsync` operations to complete with errors on IOCP thread pool threads
-2. `Shutdown()` joins the accept thread (line 785) — the accept thread exits
-3. `Dispose()` calls `_acceptPool.Dispose()` (line 802) — disposes
-   `_capacityGate` (SemaphoreSlim)
-
-The IOCP completion callbacks for pending accepts fire on thread pool threads,
-not the accept thread.  If a callback fires **after** step 3:
-
-- `AcceptCompleted` → `ProcessAccept` → `_acceptPool.Return(eventArgs)`
-- `Return` calls `_capacityGate.Release()` → `ObjectDisposedException`
-
-This is unhandled and would crash the process.
-
-**Impact:**
-Extremely narrow race window.  In practice, IOCP callbacks fire almost
-immediately after the listen socket is closed, and the thread joins in step 2
-provide an implicit delay.  Thread pool starvation could widen the window.
-
-**Suggested fix:**
-Add a disposed/shutdown check at the top of `ProcessAccept` or `Return`, or
-cancel and wait for all outstanding accept operations before disposing the
-pool.
+**File:** `Server.cs` — `Shutdown()`
+**Problem:**
+Calling `ServerStop()` then `Dispose()` executes `Shutdown()` twice. All
+operations inside are idempotent (close null socket, cancel already-cancelled
+token, join already-dead threads), so no functional bug occurs, but it does
+redundant work.
+**Recommendation:**
+Add a `_isShutdown` flag checked at the top of `Shutdown()`.
 
 ---
 
-## Issue 4 — Redundant Reentrant Lock Acquisition in `Shutdown` (Code Smell)
-
-**Severity:** Info
-**File:** `AsyncEventServer.cs` lines 760-787
-
-`Shutdown()` acquires `_lifecycleLock` at line 762.  It is only ever called
-from:
-
-- `ServerStop()` — which already holds `_lifecycleLock` (line 142)
-- `Dispose()` — which already holds `_lifecycleLock` (line 791)
-- `Run()` — which already holds `_lifecycleLock` (line 168)
-
-C# `Monitor` is reentrant, so this doesn't deadlock, but the inner lock
-is always a no-op.  More importantly, lines 768-786 (close listen socket,
-cancel CTS, disconnect clients, join threads) appear to be outside a lock
-block but are actually protected by the caller's lock scope — this is
-structurally misleading.
-
-**Suggested fix:**
-Remove the inner lock from `Shutdown` and add a comment that it must be called
-under `_lifecycleLock`, or pass the lock responsibility more explicitly.
+### OPEN-2: SendEventArgs Read Outside Lock After Potential Reset
+**Severity:** Low
+**File:** `Client.cs` — `CompleteSend()`
+**Problem:**
+`CompleteSend` delegates to `SendQueue.CompleteSend` (which has its own lock),
+but the caller `ProcessSend` reads `sendEventArgs.SocketError` and
+`sendEventArgs.BytesTransferred` without holding `client._sync`. If a
+concurrent `ResetForPool` fires between I/O completion and these reads, the
+SAEA state could be inconsistent.
+**Mitigation:**
+FIX-2 (generation increment in `ResetForPool`) makes this nearly impossible
+to reach — the `TryGetClient` check at the top of `ProcessSend` will fail
+once the slot is recycled. Residual risk is negligible.
 
 ---
 
-## Summary
+### OPEN-3: Timeout Check Precision Is 1x Interval
+**Severity:** Low
+**File:** `Server.cs` — `CheckSocketTimeout()`
+**Problem:**
+The check interval equals the timeout value (clamped 1–30s). A client that
+goes idle just after a check runs won't be detected until the next cycle,
+meaning actual idle time before disconnect can be up to 2x the configured
+timeout.
+**Recommendation:**
+Use `timeout / 2` as the check interval for tighter precision, or document
+the behavior as expected.
 
-| # | Issue | Severity | Type |
-|---|---|---|---|
-| 1 | Double `Disconnect` on receive error paths | Medium | Logic Bug |
-| 2 | `OnClientDisconnected` callback sees wiped client state | Medium | Logic Bug |
-| 3 | Dispose race with in-flight IOCP accept callbacks | Low | Concurrency Bug |
-| 4 | Redundant reentrant lock in `Shutdown` | Info | Code Smell |
+---
 
-### Items Verified As Correct
+### OPEN-4: Accept Loop Never Yields on Synchronous Burst
+**Severity:** Low
+**File:** `Server.cs` — `StartAccept()`
+**Problem:**
+When `AcceptAsync` completes synchronously (returns `false`), the loop
+processes inline and immediately re-issues. Under a SYN flood this thread
+never yields. Bounded by the `AcceptPool` semaphore, so it won't spin
+unbounded, but the accept thread can starve.
+**Recommendation:**
+Acceptable for current design. Could add a yield-after-N-synchronous counter
+if this becomes a measurable problem under load testing.
 
-- **Lane load tracking:** `TryDeactivateClient` reads `UnitOfOrder` (line 118)
-  **before** `ResetForPool` (line 123) — ordering is correct.
-- **Send path disconnect ownership:** `SendCompleted` and `StartSend` do not
-  call `Disconnect` when `ProcessSend` returns `false` — `ProcessSend` is the
-  sole owner. Clean design.
-- **Send queue serialization:** `_sendInProgress` flag correctly ensures only
-  one send chain is active per client.  `Enqueue`, `CopyNextChunk`, and
-  `CompleteSend` all acquire the queue's `_sync` lock.  No lost-wakeup or
-  double-chain races.
-- **Self-join guard:** `Service.JoinThread` checks `Thread.CurrentThread !=
-  thread` (line 25), preventing deadlock when `Run()` calls `Shutdown()`.
-- **Generation-based handle staleness:** `TryGetClient` generation check is
-  non-atomic with subsequent use, but safe because `CanReturnToPool` requires
-  `pendingOperations == 0` before recycling, and `Activate` bumps generation
-  atomically under lock.
-- **Buffer slab isolation:** Receive and send buffers occupy non-overlapping
-  regions (`clientId * 2 * bufferSize` and `(clientId * 2 + 1) * bufferSize`).
-- **Settings validation:** `OrderingLaneCount` correctly uses `<= 0` (line
-  135), consistent with the registry constructor.  `ListenSocketRetries` uses
-  `< 0` (line 152) with correct parameter name.
+---
+
+### OPEN-5: O(n) List.Remove in ClientRegistry
+**Severity:** Low-Medium
+**File:** `ClientRegistry.cs` — `TryDeactivateClient()`
+**Problem:**
+`_activeHandles.Remove(clientHandle)` is O(n) linear scan. At high connection
+counts (10K+) with frequent churn, this becomes a bottleneck under the
+`_sync` lock.
+**Recommendation:**
+Replace with a `Dictionary<int, int>` mapping `ClientId` to list index for
+O(1) swap-remove, or use `HashSet<ClientHandle>` if ordering is not required.

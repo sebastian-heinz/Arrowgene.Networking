@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Net;
 using System.Runtime.CompilerServices;
 
@@ -29,12 +30,13 @@ public readonly struct ClientHandle : IEquatable<ClientHandle>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         get
         {
-            if (_client.Generation != Generation)
+            Client? c = _client;
+            if (c is null || c.Generation != Generation)
             {
                 ThrowStaleException();
             }
 
-            return _client;
+            return c;
         }
     }
 
@@ -46,13 +48,14 @@ public readonly struct ClientHandle : IEquatable<ClientHandle>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool TryGetClient(out Client client)
     {
-        if (_client.Generation != Generation)
+        Client? c = _client;
+        if (c is null || c.Generation != Generation)
         {
             client = null!;
             return false;
         }
 
-        client = _client;
+        client = c;
         return true;
     }
 
@@ -137,6 +140,7 @@ public readonly struct ClientHandle : IEquatable<ClientHandle>
         return !left.Equals(right);
     }
 
+    [DoesNotReturn]
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static void ThrowStaleException()
     {

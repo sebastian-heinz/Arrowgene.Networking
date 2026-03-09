@@ -48,21 +48,10 @@ internal sealed class ClientRegistry : IDisposable
 
     internal uint GetAliveClientCount()
     {
-        uint liveConnections = 0;
-        List<ClientHandle> handles = new List<ClientHandle>(_maxConnections);
-        SnapshotActiveHandles(handles);
-        foreach (ClientHandle handle in handles)
+        lock (_sync)
         {
-            if (handle.TryGetClient(out Client client))
-            {
-                if (client.IsAlive)
-                {
-                    liveConnections++;
-                }
-            }
+            return (uint)_activeHandles.Count;
         }
-
-        return liveConnections;
     }
 
     internal bool TryActivateClient(
