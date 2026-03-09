@@ -3,10 +3,10 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 
-namespace Arrowgene.Networking.Server;
+namespace Arrowgene.Networking.SAEAServer;
 
 /// <summary>
-/// Represents one pooled client slot managed by <see cref="AsyncEventServer"/>.
+/// Represents one pooled client slot managed by <see cref="Server"/>.
 /// </summary>
 internal sealed class Client : IDisposable
 {

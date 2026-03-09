@@ -1,7 +1,7 @@
 using System;
 using System.Net;
 
-namespace Arrowgene.Networking.Server;
+namespace Arrowgene.Networking.SAEAServer;
 
 public readonly record struct ClientSnapshot(
     int ClientId,

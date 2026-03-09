@@ -2,7 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Threading;
 using Arrowgene.Logging;
-using Arrowgene.Networking.Server;
+using Arrowgene.Networking.SAEAServer;
 
 namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
 {

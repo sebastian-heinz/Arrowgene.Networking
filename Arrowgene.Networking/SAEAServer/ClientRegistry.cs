@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Net.Sockets;
 
-namespace Arrowgene.Networking.Server;
+namespace Arrowgene.Networking.SAEAServer;
 
 internal sealed class ClientRegistry : IDisposable
 {
@@ -66,7 +66,7 @@ internal sealed class ClientRegistry : IDisposable
     }
 
     internal bool TryActivateClient(
-        AsyncEventServer server,
+        Server server,
         Socket acceptedSocket,
         out ClientHandle handle
     )

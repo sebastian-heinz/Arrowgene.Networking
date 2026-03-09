@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Net.Sockets;
 using System.Threading;
 
-namespace Arrowgene.Networking.Server;
+namespace Arrowgene.Networking.SAEAServer;
 
 internal sealed class AcceptPool : IDisposable
 {

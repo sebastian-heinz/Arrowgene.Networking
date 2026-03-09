@@ -6,21 +6,21 @@ using System.Threading;
 using Arrowgene.Logging;
 using Arrowgene.Networking.Consumer;
 
-namespace Arrowgene.Networking.Server;
+namespace Arrowgene.Networking.SAEAServer;
 
 /// <summary>
 /// A pooled TCP server built on <see cref="SocketAsyncEventArgs"/>.
 /// </summary>
-public sealed class AsyncEventServer : IDisposable
+public sealed class Server : IDisposable
 {
     private const string UnknownIdentity = "[Unknown Client]";
-    private const string AcceptThreadName = "AsyncEventServer";
+    private const string AcceptThreadName = "Server";
     private const string TimeoutThreadName = "AsyncEventServer_Timeout";
     private const int ThreadTimeoutMs = 10000;
     private const int MinSocketTimeoutDelayMs = 1000;
     private const int MaxSocketTimeoutDelayMs = 30000;
 
-    private static readonly ILogger Logger = LogProvider.Logger(typeof(AsyncEventServer));
+    private static readonly ILogger Logger = LogProvider.Logger(typeof(Server));
 
     private readonly object _lifecycleLock;
     private readonly IConsumer _consumer;
@@ -49,7 +49,7 @@ public sealed class AsyncEventServer : IDisposable
     /// <param name="port">The TCP port to bind.</param>
     /// <param name="consumer">The consumer that receives callbacks.</param>
     /// <param name="settings">The server settings.</param>
-    public AsyncEventServer(IPAddress ipAddress, ushort port, IConsumer consumer, ServerSettings settings)
+    public Server(IPAddress ipAddress, ushort port, IConsumer consumer, ServerSettings settings)
     {
         if (ipAddress is null)
         {

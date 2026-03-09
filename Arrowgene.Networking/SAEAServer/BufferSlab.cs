@@ -1,7 +1,7 @@
 using System;
 using System.Net.Sockets;
 
-namespace Arrowgene.Networking.Server;
+namespace Arrowgene.Networking.SAEAServer;
 
 internal sealed class BufferSlab
 {

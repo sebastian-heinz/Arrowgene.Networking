@@ -1,10 +1,10 @@
 using System;
 using System.Runtime.Serialization;
 
-namespace Arrowgene.Networking.Server;
+namespace Arrowgene.Networking.SAEAServer;
 
 /// <summary>
-/// Configuration for <see cref="AsyncEventServer"/>.
+/// Configuration for <see cref="Server"/>.
 /// </summary>
 [DataContract]
 public sealed class ServerSettings : ICloneable

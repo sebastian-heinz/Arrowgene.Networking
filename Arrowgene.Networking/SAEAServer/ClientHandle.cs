@@ -2,7 +2,7 @@ using System;
 using System.Net;
 using System.Runtime.CompilerServices;
 
-namespace Arrowgene.Networking.Server;
+namespace Arrowgene.Networking.SAEAServer;
 
 /// <summary>
 /// A generation-checked handle for an <see cref="Server.Client"/>.
@@ -10,9 +10,9 @@ namespace Arrowgene.Networking.Server;
 public readonly struct ClientHandle : IEquatable<ClientHandle>
 {
     private readonly Client _client;
-    private readonly AsyncEventServer _server;
+    private readonly Server _server;
 
-    internal ClientHandle(AsyncEventServer server, Client client)
+    internal ClientHandle(Server server, Client client)
     {
         _server = server;
         _client = client;
