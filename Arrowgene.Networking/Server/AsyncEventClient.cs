@@ -15,11 +15,12 @@ internal sealed class AsyncEventClient : IDisposable
     private Socket? _socket;
     private bool _isAlive;
     private bool _isInPool;
-    private long _lastReadTicks;
-    private long _lastWriteTicks;
+    private long _lastReadMs;
+    private long _lastWriteMs;
     private long _bytesReceived;
     private long _bytesSent;
     private int _pendingOperations;
+    private uint _generation;
 
 
     internal AsyncEventClient(
@@ -40,6 +41,7 @@ internal sealed class AsyncEventClient : IDisposable
         Identity = "[Unknown Client]";
         RemoteIpAddress = IPAddress.None;
         ConnectedAt = DateTime.MinValue;
+        _generation = 0;
     }
 
     /// <summary>
@@ -55,10 +57,18 @@ internal sealed class AsyncEventClient : IDisposable
     /// <summary>
     /// Gets the client generation used by <see cref="AsyncEventClientHandle"/>.
     /// </summary>
-    internal uint Generation { get; private set; }
+    internal uint Generation
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _generation;
+            }
+        }
+    }
 
     internal IPAddress RemoteIpAddress { get; private set; }
-
     internal ushort Port { get; private set; }
 
     internal int UnitOfOrder { get; private set; }
@@ -66,12 +76,12 @@ internal sealed class AsyncEventClient : IDisposable
     /// <summary>
     /// Gets the last successful receive tick.
     /// </summary>
-    internal long LastReadTicks => Volatile.Read(ref _lastReadTicks);
+    internal long LastReadMs => Volatile.Read(ref _lastReadMs);
 
     /// <summary>
     /// Gets the last successful send tick.
     /// </summary>
-    internal long LastWriteTicks => Volatile.Read(ref _lastWriteTicks);
+    internal long LastWriteMs => Volatile.Read(ref _lastWriteMs);
 
     internal DateTime ConnectedAt { get; private set; }
 
@@ -120,13 +130,13 @@ internal sealed class AsyncEventClient : IDisposable
             UnitOfOrder = unitOfOrder;
 
             long now = Environment.TickCount64;
-            Volatile.Write(ref _lastReadTicks, now);
-            Volatile.Write(ref _lastWriteTicks, now);
+            Volatile.Write(ref _lastReadMs, now);
+            Volatile.Write(ref _lastWriteMs, now);
             Interlocked.Exchange(ref _bytesReceived, 0);
             Interlocked.Exchange(ref _bytesSent, 0);
             Interlocked.Exchange(ref _pendingOperations, 0);
 
-            Generation = unchecked(Generation + 1);
+            _generation = unchecked(_generation + 1);
             ConnectedAt = DateTime.UtcNow;
 
             RemoteIpAddress = remoteEndPoint.Address;
@@ -188,14 +198,17 @@ internal sealed class AsyncEventClient : IDisposable
 
     internal bool TryPrepareSendChunk(out int chunkSize)
     {
-        byte[]? sendBuffer = SendEventArgs.Buffer;
-        if (sendBuffer is null)
+        lock (_sync)
         {
-            chunkSize = 0;
-            return false;
-        }
+            byte[]? sendBuffer = SendEventArgs.Buffer;
+            if (sendBuffer is null)
+            {
+                chunkSize = 0;
+                return false;
+            }
 
-        return _sendQueue.CopyNextChunk(sendBuffer, SendEventArgs.Offset, SendEventArgs.Count, out chunkSize);
+            return _sendQueue.CopyNextChunk(sendBuffer, SendEventArgs.Offset, SendEventArgs.Count, out chunkSize);
+        }
     }
 
 
@@ -231,8 +244,8 @@ internal sealed class AsyncEventClient : IDisposable
             UnitOfOrder = 0;
             ConnectedAt = DateTime.MinValue;
 
-            Volatile.Write(ref _lastReadTicks, 0);
-            Volatile.Write(ref _lastWriteTicks, 0);
+            Volatile.Write(ref _lastReadMs, 0);
+            Volatile.Write(ref _lastWriteMs, 0);
             Interlocked.Exchange(ref _bytesReceived, 0);
             Interlocked.Exchange(ref _bytesSent, 0);
             Interlocked.Exchange(ref _pendingOperations, 0);
@@ -258,7 +271,7 @@ internal sealed class AsyncEventClient : IDisposable
             return;
         }
 
-        Volatile.Write(ref _lastReadTicks, Environment.TickCount64);
+        Volatile.Write(ref _lastReadMs, Environment.TickCount64);
         Interlocked.Add(ref _bytesReceived, transferredCount);
     }
 
@@ -269,7 +282,7 @@ internal sealed class AsyncEventClient : IDisposable
             return;
         }
 
-        Volatile.Write(ref _lastWriteTicks, Environment.TickCount64);
+        Volatile.Write(ref _lastWriteMs, Environment.TickCount64);
         Interlocked.Add(ref _bytesSent, transferredCount);
     }
 

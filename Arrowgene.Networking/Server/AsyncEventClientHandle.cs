@@ -76,9 +76,9 @@ public readonly struct AsyncEventClientHandle : IEquatable<AsyncEventClientHandl
 
     public int UnitOfOrder => Client.UnitOfOrder;
 
-    public long LastReadTicks => Client.LastReadTicks;
+    public long LastReadMs => Client.LastReadMs;
 
-    public long LastWriteTicks => Client.LastWriteTicks;
+    public long LastWriteMs => Client.LastWriteMs;
 
     public DateTime ConnectedAt => Client.ConnectedAt;
 

@@ -13,6 +13,7 @@ namespace Arrowgene.Networking.Server;
 /// </summary>
 public sealed class AsyncEventServer : IDisposable
 {
+    private const string UnknownIdentity = "[Unknown Client]";
     private const string AcceptThreadName = "AsyncEventServer";
     private const string TimeoutThreadName = "AsyncEventServer_Timeout";
     private const int ThreadTimeoutMs = 10000;
@@ -164,15 +165,18 @@ public sealed class AsyncEventServer : IDisposable
 
     private void Run()
     {
-        if (!_isRunning)
+        lock (_lifecycleLock)
         {
-            return;
-        }
+            if (!_isRunning)
+            {
+                return;
+            }
 
-        if (!TrySocketListen())
-        {
-            Log(LogLevel.Error, nameof(Run), "Stopping server due to startup failure.");
-            return;
+            if (!TrySocketListen())
+            {
+                Log(LogLevel.Error, nameof(Run), "Stopping server due to startup failure.");
+                return;
+            }
         }
 
         StartAccept();
@@ -299,7 +303,7 @@ public sealed class AsyncEventServer : IDisposable
 
         string clientIdentity = acceptedSocket.RemoteEndPoint is IPEndPoint endPoint
             ? $"[{endPoint.Address}:{endPoint.Port}]"
-            : "[Unknown Client]";
+            : UnknownIdentity;
 
         if (socketError != SocketError.Success)
         {
@@ -335,8 +339,12 @@ public sealed class AsyncEventServer : IDisposable
         }
         catch (Exception exception)
         {
-            Log(LogLevel.Error, nameof(ProcessAccept), "Error during OnClientConnected user code.", clientIdentity);
-            Logger.Exception(exception);
+            OnConsumerError(
+                clientHandle,
+                exception,
+                nameof(ProcessAccept),
+                "Error during consumer code."
+            );
         }
 
         StartReceive(clientHandle);
@@ -412,7 +420,7 @@ public sealed class AsyncEventServer : IDisposable
             return;
         }
 
-        _clientRegistry.TryDeactivateClient(clientHandle);
+        Disconnect(clientHandle);
     }
 
     private bool ProcessReceive(AsyncEventClientHandle clientHandle)
@@ -467,8 +475,12 @@ public sealed class AsyncEventServer : IDisposable
         }
         catch (Exception exception)
         {
-            Log(LogLevel.Error, nameof(ProcessReceive), "Error in OnReceivedData user code.", client.Identity);
-            Logger.Exception(exception);
+            OnConsumerError(
+                clientHandle,
+                exception,
+                nameof(ProcessReceive),
+                "Error during consumer code."
+            );
         }
 
         return client.IsAlive;
@@ -608,7 +620,7 @@ public sealed class AsyncEventServer : IDisposable
     {
         if (!clientHandle.TryGetClient(out AsyncEventClient client))
         {
-            Log(LogLevel.Error, nameof(StartSend), "Client handle is stale.");
+            Log(LogLevel.Error, nameof(ProcessSend), "Client handle is stale.");
             return false;
         }
 
@@ -685,12 +697,16 @@ public sealed class AsyncEventServer : IDisposable
 
         try
         {
-            _consumer.OnClientDisconnected(clientHandle);
+            _consumer.OnClientDisconnected(clientHandle); // TODO pass a new object, that is a client snapshot
         }
         catch (Exception exception)
         {
-            Log(LogLevel.Error, nameof(Disconnect), "Error during OnClientDisconnected user code.", clientIdentity);
-            Logger.Exception(exception);
+            OnConsumerError(
+                clientHandle,
+                exception,
+                nameof(Disconnect),
+                "Error during consumer code."
+            );
         }
     }
 
@@ -711,19 +727,19 @@ public sealed class AsyncEventServer : IDisposable
                     continue;
                 }
 
-                long lastActivityTicks = client.LastWriteTicks > client.LastReadTicks
-                    ? client.LastWriteTicks
-                    : client.LastReadTicks;
+                long lastActivityMs = client.LastWriteMs > client.LastReadMs
+                    ? client.LastWriteMs
+                    : client.LastReadMs;
 
-                long elapsedTicksSinceLastActivity = now - lastActivityTicks;
-                if (elapsedTicksSinceLastActivity < 0)
+                long elapsedMsSinceLastActivity = now - lastActivityMs;
+                if (elapsedMsSinceLastActivity < 0)
                 {
-                    elapsedTicksSinceLastActivity = 0;
+                    elapsedMsSinceLastActivity = 0;
                 }
 
-                if (elapsedTicksSinceLastActivity > _socketTimeout.TotalMilliseconds)
+                if (elapsedMsSinceLastActivity > _socketTimeout.TotalMilliseconds)
                 {
-                    TimeSpan elapsed = TimeSpan.FromMilliseconds(elapsedTicksSinceLastActivity);
+                    TimeSpan elapsed = TimeSpan.FromMilliseconds(elapsedMsSinceLastActivity);
                     DateTime lastActiveUtc = DateTime.UtcNow - elapsed;
                     Log(
                         LogLevel.Error,
@@ -790,6 +806,32 @@ public sealed class AsyncEventServer : IDisposable
         _clientRegistry.Dispose();
         _cancellation.Dispose();
         Log(LogLevel.Info, nameof(Dispose), "Server resources disposed.");
+    }
+
+    private void OnConsumerError(
+        AsyncEventClientHandle clientHandle,
+        Exception exception,
+        string function,
+        string message
+    )
+    {
+        string clientIdentity = UnknownIdentity;
+        if (clientHandle.TryGetClient(out AsyncEventClient client))
+        {
+            clientIdentity = client.Identity;
+        }
+
+        Log(LogLevel.Error, function, message, clientIdentity);
+        Logger.Exception(exception);
+        try
+        {
+            _consumer.OnError(clientHandle, exception, message);
+        }
+        catch (Exception e)
+        {
+            Log(LogLevel.Error, nameof(OnConsumerError), "Error during consumer 'OnError' handler.", clientIdentity);
+            Logger.Exception(e);
+        }
     }
 
     private void Log(LogLevel level, string function, string message, string clientIdentity = "")
