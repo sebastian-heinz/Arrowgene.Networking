@@ -6,11 +6,11 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
     {
         public ClientEventType ClientEventType { get; }
         public byte[] Data { get; }
-        public ClientHandle ClientHandle { get; }
+        public ClientHandle? ClientHandle { get; }
         public ClientSnapshot? ClientSnapshot { get; }
 
         public ClientEvent(
-            ClientHandle clientHandle,
+            ClientHandle? clientHandle,
             ClientSnapshot? clientSnapshot,
             ClientEventType clientEventType,
             byte[] data = null

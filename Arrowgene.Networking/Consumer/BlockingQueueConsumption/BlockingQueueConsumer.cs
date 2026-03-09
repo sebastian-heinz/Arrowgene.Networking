@@ -18,9 +18,9 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
             ClientEvents.Add(new ClientEvent(socket, null, ClientEventType.ReceivedData, data));
         }
 
-        public void OnClientDisconnected(ClientHandle clientHandle, ClientSnapshot clientSnapshot)
+        public void OnClientDisconnected(ClientSnapshot clientSnapshot)
         {
-            ClientEvents.Add(new ClientEvent(clientHandle, clientSnapshot, ClientEventType.Disconnected));
+            ClientEvents.Add(new ClientEvent(null, clientSnapshot, ClientEventType.Disconnected));
         }
 
         public void OnClientConnected(ClientHandle clientHandle)

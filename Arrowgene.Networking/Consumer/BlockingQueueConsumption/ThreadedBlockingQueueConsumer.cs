@@ -31,9 +31,9 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
             _threads = new Thread[_maxUnitOfOrder];
         }
 
-        protected abstract void HandleReceived(ClientHandle socket, byte[] data);
-        protected abstract void HandleDisconnected(ClientHandle clientHandle, ClientSnapshot? clientSnapshot);
-        protected abstract void HandleConnected(ClientHandle socket);
+        protected abstract void HandleReceived(ClientHandle? clientHandle, byte[] data);
+        protected abstract void HandleDisconnected(ClientSnapshot? clientSnapshot);
+        protected abstract void HandleConnected(ClientHandle? clientHandle);
 
         private void Consume(int unitOfOrder)
         {
@@ -64,7 +64,7 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
                         HandleConnected(clientEvent.ClientHandle);
                         break;
                     case ClientEventType.Disconnected:
-                        HandleDisconnected(clientEvent.ClientHandle, clientEvent.ClientSnapshot);
+                        HandleDisconnected(clientEvent.ClientSnapshot);
                         break;
                 }
             }
@@ -96,10 +96,10 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
             _queues[socket.UnitOfOrder].Add(new ClientEvent(socket, null, ClientEventType.ReceivedData, data));
         }
 
-        void IConsumer.OnClientDisconnected(ClientHandle clientHandle, ClientSnapshot clientSnapshot)
+        void IConsumer.OnClientDisconnected(ClientSnapshot clientSnapshot)
         {
             _queues[clientSnapshot.UnitOfOrder].Add(new ClientEvent(
-                    clientHandle,
+                    null,
                     clientSnapshot,
                     ClientEventType.Disconnected
                 )

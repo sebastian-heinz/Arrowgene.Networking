@@ -709,7 +709,7 @@ public sealed class Server : IDisposable
 
         try
         {
-            _consumer.OnClientDisconnected(clientHandle, snapshot);
+            _consumer.OnClientDisconnected(snapshot);
         }
         catch (Exception exception)
         {
