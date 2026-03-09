@@ -132,9 +132,9 @@ public sealed class AsyncEventSettings : ICloneable
             throw new ArgumentOutOfRangeException(nameof(BufferSize), "BufferSize must be greater than zero.");
         }
 
-        if (OrderingLaneCount < 0)
+        if (OrderingLaneCount <= 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(OrderingLaneCount), "OrderingLaneCount must be zero or greater.");
+            throw new ArgumentOutOfRangeException(nameof(OrderingLaneCount), "OrderingLaneCount must be greater than zero.");
         }
         
         if (ConcurrentAccepts <= 0)
@@ -149,9 +149,9 @@ public sealed class AsyncEventSettings : ICloneable
                 "MaxQueuedSendBytes must be greater than zero.");
         }
 
-        if (ListenSocketRetries <= 0)
+        if (ListenSocketRetries < 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(MaxQueuedSendBytes),
+            throw new ArgumentOutOfRangeException(nameof(ListenSocketRetries),
                 "ListenSocketRetries must be zero or greater.");
         }
 

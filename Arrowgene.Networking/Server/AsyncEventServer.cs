@@ -592,7 +592,6 @@ public sealed class AsyncEventServer : IDisposable
             bool continueSending = ProcessSend(clientHandle);
             if (!continueSending)
             {
-                Disconnect(clientHandle);
                 return;
             }
         }
@@ -610,10 +609,7 @@ public sealed class AsyncEventServer : IDisposable
         if (continueSending)
         {
             StartSend(clientHandle);
-            return;
         }
-
-        Disconnect(clientHandle);
     }
 
     private bool ProcessSend(AsyncEventClientHandle clientHandle)

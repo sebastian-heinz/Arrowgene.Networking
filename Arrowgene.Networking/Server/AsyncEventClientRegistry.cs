@@ -114,15 +114,15 @@ internal sealed class AsyncEventClientRegistry : IDisposable
             {
                 return false;
             }
-
-            client.ResetForPool();
-            _availableClients.Push(client);
-            _activeHandles.Remove(clientHandle);
+            
             int orderingLane = client.UnitOfOrder;
             if ((uint)orderingLane < (uint)_laneLoadByIndex.Length && _laneLoadByIndex[orderingLane] > 0)
             {
                 _laneLoadByIndex[orderingLane]--;
             }
+            client.ResetForPool();
+            _availableClients.Push(client);
+            _activeHandles.Remove(clientHandle);
         }
         return true;
     }
