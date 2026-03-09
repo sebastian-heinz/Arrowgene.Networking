@@ -53,6 +53,7 @@ public sealed class Server : IDisposable
     private readonly BufferSlab _bufferSlab;
     private readonly ClientRegistry _clientRegistry;
     private readonly TimeSpan _socketTimeout;
+    private readonly int _bufferSize;
     private readonly string _identity;
     private readonly CancellationTokenSource _cancellation;
     private readonly Thread _acceptThread;
@@ -96,12 +97,13 @@ public sealed class Server : IDisposable
         Port = port;
         _consumer = consumer;
         _settings = new ServerSettings(settings);
+        _bufferSize = settings.BufferSize;
 
         _lifecycleLock = new object();
         _socketTimeout = TimeSpan.FromSeconds(_settings.ClientSocketTimeoutSeconds);
         _identity = string.IsNullOrEmpty(_settings.Identity) ? string.Empty : $"[{_settings.Identity}] ";
         _cancellation = new CancellationTokenSource();
-        _bufferSlab = new BufferSlab(_settings.MaxConnections, _settings.BufferSize);
+        _bufferSlab = new BufferSlab(_settings.MaxConnections, _bufferSize);
         _clientRegistry = new ClientRegistry(
             _settings.MaxConnections,
             _settings.OrderingLaneCount,
@@ -570,7 +572,7 @@ public sealed class Server : IDisposable
                 return;
             }
 
-            if (!client.TryPrepareSendChunk(out int chunkSize))
+            if (!client.TryPrepareSendChunk(_bufferSize, out int chunkSize))
             {
                 return;
             }
@@ -582,8 +584,6 @@ public sealed class Server : IDisposable
             }
 
             SocketAsyncEventArgs sendEventArgs = client.SendEventArgs;
-            sendEventArgs.SetBuffer(sendEventArgs.Offset, chunkSize);
-
             bool willRaiseEvent;
             try
             {

@@ -221,7 +221,7 @@ internal sealed class Client : IDisposable
         }
     }
 
-    internal bool TryPrepareSendChunk(out int chunkSize)
+    internal bool TryPrepareSendChunk(int maxChunkSize, out int chunkSize)
     {
         lock (_sync)
         {
@@ -232,7 +232,13 @@ internal sealed class Client : IDisposable
                 return false;
             }
 
-            return _sendQueue.CopyNextChunk(sendBuffer, SendEventArgs.Offset, SendEventArgs.Count, out chunkSize);
+            bool send = _sendQueue.CopyNextChunk(sendBuffer, SendEventArgs.Offset, maxChunkSize, out chunkSize);
+            if (send)
+            {
+                SendEventArgs.SetBuffer(SendEventArgs.Offset, chunkSize);
+            }
+
+            return send;
         }
     }
 
