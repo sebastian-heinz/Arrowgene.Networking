@@ -8,10 +8,10 @@ namespace Arrowgene.Networking.Server;
 /// <summary>
 /// Represents one pooled client slot managed by <see cref="AsyncEventServer"/>.
 /// </summary>
-internal sealed class AsyncEventClient : IDisposable
+internal sealed class Client : IDisposable
 {
     private readonly object _sync;
-    private readonly AsyncEventSendQueue _sendQueue;
+    private readonly SendQueue _sendQueue;
     private Socket? _socket;
     private bool _isAlive;
     private bool _isInPool;
@@ -23,7 +23,7 @@ internal sealed class AsyncEventClient : IDisposable
     private uint _generation;
 
 
-    internal AsyncEventClient(
+    internal Client(
         int clientId,
         SocketAsyncEventArgs receiveEventArgs,
         SocketAsyncEventArgs sendEventArgs,
@@ -32,7 +32,7 @@ internal sealed class AsyncEventClient : IDisposable
     {
         ClientId = clientId;
         _sync = new object();
-        _sendQueue = new AsyncEventSendQueue(maxQueuedSendBytes);
+        _sendQueue = new SendQueue(maxQueuedSendBytes);
         ReceiveEventArgs = receiveEventArgs;
         SendEventArgs = sendEventArgs;
         ReceiveEventArgs.UserToken = null;
@@ -55,7 +55,7 @@ internal sealed class AsyncEventClient : IDisposable
     internal string Identity { get; private set; }
 
     /// <summary>
-    /// Gets the client generation used by <see cref="AsyncEventClientHandle"/>.
+    /// Gets the client generation used by <see cref="ClientHandle"/>.
     /// </summary>
     internal uint Generation
     {

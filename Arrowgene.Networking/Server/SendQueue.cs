@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace Arrowgene.Networking.Server;
 
-internal sealed class AsyncEventSendQueue
+internal sealed class SendQueue
 {
     private readonly object _sync;
     private readonly Queue<byte[]> _pendingMessages;
@@ -13,7 +13,7 @@ internal sealed class AsyncEventSendQueue
     private int _queuedBytes;
     private bool _sendInProgress;
 
-    internal AsyncEventSendQueue(int maxQueuedBytes)
+    internal SendQueue(int maxQueuedBytes)
     {
         if (maxQueuedBytes <= 0)
         {

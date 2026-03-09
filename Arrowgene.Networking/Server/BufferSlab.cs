@@ -3,12 +3,12 @@ using System.Net.Sockets;
 
 namespace Arrowgene.Networking.Server;
 
-internal sealed class AsyncEventBufferSlab
+internal sealed class BufferSlab
 {
     private readonly byte[] _buffer;
     private readonly int _bufferSize;
 
-    internal AsyncEventBufferSlab(int maxConnections, int bufferSize)
+    internal BufferSlab(int maxConnections, int bufferSize)
     {
         if (maxConnections <= 0)
         {

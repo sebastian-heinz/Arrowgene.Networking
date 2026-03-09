@@ -7,12 +7,12 @@ namespace Arrowgene.Networking.Server;
 /// Configuration for <see cref="AsyncEventServer"/>.
 /// </summary>
 [DataContract]
-public sealed class AsyncEventSettings : ICloneable
+public sealed class ServerSettings : ICloneable
 {
     /// <summary>
     /// Creates the default configuration.
     /// </summary>
-    public AsyncEventSettings()
+    public ServerSettings()
     {
         Identity = string.Empty;
         MaxConnections = 100;
@@ -31,7 +31,7 @@ public sealed class AsyncEventSettings : ICloneable
     /// Creates a deep copy of an existing configuration.
     /// </summary>
     /// <param name="settings">The configuration to copy.</param>
-    public AsyncEventSettings(AsyncEventSettings settings)
+    public ServerSettings(ServerSettings settings)
     {
         if (settings is null)
         {
@@ -169,6 +169,6 @@ public sealed class AsyncEventSettings : ICloneable
     /// <inheritdoc />
     public object Clone()
     {
-        return new AsyncEventSettings(this);
+        return new ServerSettings(this);
     }
 }

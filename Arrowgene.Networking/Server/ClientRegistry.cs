@@ -4,17 +4,17 @@ using System.Net.Sockets;
 
 namespace Arrowgene.Networking.Server;
 
-internal sealed class AsyncEventClientRegistry : IDisposable
+internal sealed class ClientRegistry : IDisposable
 {
     private readonly object _sync;
     private readonly int[] _laneLoadByIndex;
-    private readonly AsyncEventClient[] _allClients;
-    private readonly Stack<AsyncEventClient> _availableClients;
-    private readonly List<AsyncEventClientHandle> _activeHandles;
+    private readonly Client[] _allClients;
+    private readonly Stack<Client> _availableClients;
+    private readonly List<ClientHandle> _activeHandles;
     private readonly int _maxConnections;
 
-    internal AsyncEventClientRegistry(int maxConnections, int orderingLaneCount,
-        Func<int, AsyncEventClient> clientFactory)
+    internal ClientRegistry(int maxConnections, int orderingLaneCount,
+        Func<int, Client> clientFactory)
     {
         if (maxConnections <= 0)
         {
@@ -34,13 +34,13 @@ internal sealed class AsyncEventClientRegistry : IDisposable
         _maxConnections = maxConnections;
         _sync = new object();
         _laneLoadByIndex = new int[orderingLaneCount];
-        _allClients = new AsyncEventClient[_maxConnections];
-        _availableClients = new Stack<AsyncEventClient>(_maxConnections);
-        _activeHandles = new List<AsyncEventClientHandle>(_maxConnections);
+        _allClients = new Client[_maxConnections];
+        _availableClients = new Stack<Client>(_maxConnections);
+        _activeHandles = new List<ClientHandle>(_maxConnections);
 
         for (int clientId = _maxConnections - 1; clientId >= 0; clientId--)
         {
-            AsyncEventClient client = clientFactory(clientId);
+            Client client = clientFactory(clientId);
             _allClients[clientId] = client;
             _availableClients.Push(client);
         }
@@ -49,11 +49,11 @@ internal sealed class AsyncEventClientRegistry : IDisposable
     internal uint GetAliveClientCount()
     {
         uint liveConnections = 0;
-        List<AsyncEventClientHandle> handles = new List<AsyncEventClientHandle>(_maxConnections);
+        List<ClientHandle> handles = new List<ClientHandle>(_maxConnections);
         SnapshotActiveHandles(handles);
-        foreach (AsyncEventClientHandle handle in handles)
+        foreach (ClientHandle handle in handles)
         {
-            if (handle.TryGetClient(out AsyncEventClient client))
+            if (handle.TryGetClient(out Client client))
             {
                 if (client.IsAlive)
                 {
@@ -68,12 +68,12 @@ internal sealed class AsyncEventClientRegistry : IDisposable
     internal bool TryActivateClient(
         AsyncEventServer server,
         Socket acceptedSocket,
-        out AsyncEventClientHandle handle
+        out ClientHandle handle
     )
     {
         lock (_sync)
         {
-            if (!_availableClients.TryPop(out AsyncEventClient? pooledClient))
+            if (!_availableClients.TryPop(out Client? pooledClient))
             {
                 handle = default;
                 return false;
@@ -93,7 +93,7 @@ internal sealed class AsyncEventClientRegistry : IDisposable
                 throw;
             }
 
-            handle = new AsyncEventClientHandle(server, pooledClient);
+            handle = new ClientHandle(server, pooledClient);
             pooledClient.ReceiveEventArgs.UserToken = handle;
             pooledClient.SendEventArgs.UserToken = handle;
             _activeHandles.Add(handle);
@@ -101,11 +101,11 @@ internal sealed class AsyncEventClientRegistry : IDisposable
         }
     }
 
-    internal bool TryDeactivateClient(AsyncEventClientHandle clientHandle)
+    internal bool TryDeactivateClient(ClientHandle clientHandle)
     {
         lock (_sync)
         {
-            if (!clientHandle.TryGetClient(out AsyncEventClient client))
+            if (!clientHandle.TryGetClient(out Client client))
             {
                 return false;
             }
@@ -127,7 +127,7 @@ internal sealed class AsyncEventClientRegistry : IDisposable
         return true;
     }
 
-    internal void SnapshotActiveHandles(List<AsyncEventClientHandle> destination)
+    internal void SnapshotActiveHandles(List<ClientHandle> destination)
     {
         if (destination is null)
         {

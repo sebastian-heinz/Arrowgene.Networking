@@ -5,11 +5,11 @@ namespace Arrowgene.Networking.Consumer.EventConsumption
 {
     public class ConnectedEventArgs : EventArgs
     {
-        public ConnectedEventArgs(AsyncEventClientHandle socket)
+        public ConnectedEventArgs(ClientHandle socket)
         {
             Socket = socket;
         }
 
-        public AsyncEventClientHandle Socket { get; }
+        public ClientHandle Socket { get; }
     }
 }

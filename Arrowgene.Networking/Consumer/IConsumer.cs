@@ -30,9 +30,9 @@ namespace Arrowgene.Networking.Consumer
 {
     public interface IConsumer
     {
-        void OnReceivedData(AsyncEventClientHandle clientHandle, byte[] data);
-        void OnClientDisconnected(AsyncEventClientHandle clientHandle);
-        void OnClientConnected(AsyncEventClientHandle clientHandle);
-        void OnError(AsyncEventClientHandle clientHandle, Exception exception, string message);
+        void OnReceivedData(ClientHandle clientHandle, byte[] data);
+        void OnClientDisconnected(ClientHandle clientHandle);
+        void OnClientConnected(ClientHandle clientHandle);
+        void OnError(ClientHandle clientHandle, Exception exception, string message);
     }
 }

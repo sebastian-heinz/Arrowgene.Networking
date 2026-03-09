@@ -5,7 +5,7 @@ using System.Threading;
 
 namespace Arrowgene.Networking.Server;
 
-internal sealed class AsyncEventAcceptPool : IDisposable
+internal sealed class AcceptPool : IDisposable
 {
     private readonly object _sync;
     private readonly Stack<SocketAsyncEventArgs> _availableEventArgs;
@@ -13,7 +13,7 @@ internal sealed class AsyncEventAcceptPool : IDisposable
     private readonly SemaphoreSlim _capacityGate;
     private readonly EventHandler<SocketAsyncEventArgs> _completedHandler;
 
-    internal AsyncEventAcceptPool(int acceptConcurrency, EventHandler<SocketAsyncEventArgs> completedHandler)
+    internal AcceptPool(int acceptConcurrency, EventHandler<SocketAsyncEventArgs> completedHandler)
     {
         if (acceptConcurrency <= 0)
         {

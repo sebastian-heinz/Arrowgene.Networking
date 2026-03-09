@@ -7,7 +7,7 @@ using Arrowgene.Networking.Server;
 namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
 {
     /**
-     * Consumer creates number of threads based on `AsyncEventSettings.MaxUnitOfOrder`.
+     * Consumer creates number of threads based on `ServerSettings.MaxUnitOfOrder`.
      * Handle*-methods will be called from various threads with order of packets preserved.
      */
     public abstract class ThreadedBlockingQueueConsumer : IConsumer
@@ -31,9 +31,9 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
             _threads = new Thread[_maxUnitOfOrder];
         }
 
-        protected abstract void HandleReceived(AsyncEventClientHandle socket, byte[] data);
-        protected abstract void HandleDisconnected(AsyncEventClientHandle socket);
-        protected abstract void HandleConnected(AsyncEventClientHandle socket);
+        protected abstract void HandleReceived(ClientHandle socket, byte[] data);
+        protected abstract void HandleDisconnected(ClientHandle socket);
+        protected abstract void HandleConnected(ClientHandle socket);
 
         private void Consume(int unitOfOrder)
         {
@@ -91,22 +91,22 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
             }
         }
 
-        void IConsumer.OnReceivedData(AsyncEventClientHandle socket, byte[] data)
+        void IConsumer.OnReceivedData(ClientHandle socket, byte[] data)
         {
             _queues[socket.UnitOfOrder].Add(new ClientEvent(socket, ClientEventType.ReceivedData, data));
         }
 
-        void IConsumer.OnClientDisconnected(AsyncEventClientHandle socket)
+        void IConsumer.OnClientDisconnected(ClientHandle socket)
         {
             _queues[socket.UnitOfOrder].Add(new ClientEvent(socket, ClientEventType.Disconnected));
         }
 
-        void IConsumer.OnClientConnected(AsyncEventClientHandle socket)
+        void IConsumer.OnClientConnected(ClientHandle socket)
         {
             _queues[socket.UnitOfOrder].Add(new ClientEvent(socket, ClientEventType.Connected));
         }
 
-        void IConsumer.OnError(AsyncEventClientHandle clientHandle, Exception exception, string message)
+        void IConsumer.OnError(ClientHandle clientHandle, Exception exception, string message)
         {
             throw exception;
         }

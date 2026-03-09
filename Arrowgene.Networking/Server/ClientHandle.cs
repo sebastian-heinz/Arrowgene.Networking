@@ -5,14 +5,14 @@ using System.Runtime.CompilerServices;
 namespace Arrowgene.Networking.Server;
 
 /// <summary>
-/// A generation-checked handle for an <see cref="AsyncEventClient"/>.
+/// A generation-checked handle for an <see cref="Server.Client"/>.
 /// </summary>
-public readonly struct AsyncEventClientHandle : IEquatable<AsyncEventClientHandle>
+public readonly struct ClientHandle : IEquatable<ClientHandle>
 {
-    private readonly AsyncEventClient _client;
+    private readonly Client _client;
     private readonly AsyncEventServer _server;
 
-    internal AsyncEventClientHandle(AsyncEventServer server, AsyncEventClient client)
+    internal ClientHandle(AsyncEventServer server, Client client)
     {
         _server = server;
         _client = client;
@@ -24,7 +24,7 @@ public readonly struct AsyncEventClientHandle : IEquatable<AsyncEventClientHandl
     /// </summary>
     public uint Generation { get; }
 
-    private AsyncEventClient Client
+    private Client Client
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         get
@@ -44,7 +44,7 @@ public readonly struct AsyncEventClientHandle : IEquatable<AsyncEventClientHandl
     /// <param name="client">The active client instance.</param>
     /// <returns><c>true</c> if the handle is still valid.</returns>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal bool TryGetClient(out AsyncEventClient client)
+    internal bool TryGetClient(out Client client)
     {
         if (_client.Generation != Generation)
         {
@@ -57,13 +57,13 @@ public readonly struct AsyncEventClientHandle : IEquatable<AsyncEventClientHandl
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal bool EqualsClient(AsyncEventClient other)
+    internal bool EqualsClient(Client other)
     {
         return other == _client;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal bool EqualsClientGeneration(AsyncEventClient client, uint generation)
+    internal bool EqualsClientGeneration(Client client, uint generation)
     {
         return _client == client && Generation == generation;
     }
@@ -105,14 +105,14 @@ public readonly struct AsyncEventClientHandle : IEquatable<AsyncEventClientHandl
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool Equals(AsyncEventClientHandle other)
+    public bool Equals(ClientHandle other)
     {
         return _client == other._client && Generation == other.Generation;
     }
 
     public override bool Equals(object? obj)
     {
-        return obj is AsyncEventClientHandle other && Equals(other);
+        return obj is ClientHandle other && Equals(other);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -124,7 +124,7 @@ public readonly struct AsyncEventClientHandle : IEquatable<AsyncEventClientHandl
     /// <summary>
     /// Compares two handles.
     /// </summary>
-    public static bool operator ==(AsyncEventClientHandle left, AsyncEventClientHandle right)
+    public static bool operator ==(ClientHandle left, ClientHandle right)
     {
         return left.Equals(right);
     }
@@ -132,7 +132,7 @@ public readonly struct AsyncEventClientHandle : IEquatable<AsyncEventClientHandl
     /// <summary>
     /// Compares two handles.
     /// </summary>
-    public static bool operator !=(AsyncEventClientHandle left, AsyncEventClientHandle right)
+    public static bool operator !=(ClientHandle left, ClientHandle right)
     {
         return !left.Equals(right);
     }
@@ -140,7 +140,7 @@ public readonly struct AsyncEventClientHandle : IEquatable<AsyncEventClientHandl
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static void ThrowStaleException()
     {
-        throw new ObjectDisposedException(nameof(AsyncEventClientHandle),
+        throw new ObjectDisposedException(nameof(ClientHandle),
             "Handle is stale because the client has been recycled.");
     }
 }

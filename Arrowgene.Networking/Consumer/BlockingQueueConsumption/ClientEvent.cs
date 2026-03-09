@@ -31,9 +31,9 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
     {
         public ClientEventType ClientEventType { get; }
         public byte[] Data { get; }
-        public AsyncEventClientHandle Socket { get; }
+        public ClientHandle Socket { get; }
 
-        public ClientEvent(AsyncEventClientHandle socket, ClientEventType clientEventType, byte[] data = null)
+        public ClientEvent(ClientHandle socket, ClientEventType clientEventType, byte[] data = null)
         {
             Socket = socket;
             ClientEventType = clientEventType;
