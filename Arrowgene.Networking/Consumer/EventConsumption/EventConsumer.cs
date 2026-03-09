@@ -19,7 +19,7 @@ namespace Arrowgene.Networking.Consumer.EventConsumption
         /// Occures when a packet is received.
         /// </summary>
         public event EventHandler<ReceivedPacketEventArgs> ReceivedPacket;
-        
+
         public void OnReceivedData(AsyncEventClientHandle socket, byte[] data)
         {
             EventHandler<ReceivedPacketEventArgs> receivedPacket = ReceivedPacket;
@@ -49,6 +49,10 @@ namespace Arrowgene.Networking.Consumer.EventConsumption
                 clientConnected(this, clientConnectedEventArgs);
             }
         }
-        
+
+        public void OnError(AsyncEventClientHandle clientHandle, Exception exception, string message)
+        {
+            throw exception;
+        }
     }
 }

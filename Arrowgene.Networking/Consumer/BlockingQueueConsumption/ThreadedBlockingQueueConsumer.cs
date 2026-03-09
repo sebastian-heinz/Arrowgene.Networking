@@ -106,6 +106,11 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
             _queues[socket.UnitOfOrder].Add(new ClientEvent(socket, ClientEventType.Connected));
         }
 
+        void IConsumer.OnError(AsyncEventClientHandle clientHandle, Exception exception, string message)
+        {
+            throw exception;
+        }
+
         private void Stop()
         {
             if (!_isRunning)
