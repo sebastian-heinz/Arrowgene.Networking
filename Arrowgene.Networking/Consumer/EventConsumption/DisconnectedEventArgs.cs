@@ -5,11 +5,13 @@ namespace Arrowgene.Networking.Consumer.EventConsumption
 {
     public class DisconnectedEventArgs : EventArgs
     {
-        public DisconnectedEventArgs(ClientHandle socket)
+        public DisconnectedEventArgs(ClientHandle clientHandle, ClientSnapshot clientSnapshot)
         {
-            Socket = socket;
+            ClientHandle = clientHandle;
+            ClientSnapshot = clientSnapshot;
         }
 
-        public ClientHandle Socket { get; }
+        public ClientHandle ClientHandle { get; }
+        public ClientSnapshot ClientSnapshot { get; }
     }
 }

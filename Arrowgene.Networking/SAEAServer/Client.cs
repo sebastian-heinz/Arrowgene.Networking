@@ -110,6 +110,31 @@ internal sealed class Client : IDisposable
 
     internal int PendingOperations => Volatile.Read(ref _pendingOperations);
 
+    public ClientSnapshot Snapshot()
+    {
+        ClientSnapshot snapshot;
+        lock (_sync)
+        {
+            snapshot = new ClientSnapshot(
+                ClientId,
+                Generation,
+                Identity,
+                RemoteIpAddress,
+                Port,
+                IsAlive,
+                ConnectedAt,
+                LastReadMs,
+                LastWriteMs,
+                BytesReceived,
+                BytesSent,
+                PendingOperations,
+                UnitOfOrder
+            );
+        }
+
+        return snapshot;
+    }
+
     internal void Activate(Socket socket, int unitOfOrder)
     {
         lock (_sync)

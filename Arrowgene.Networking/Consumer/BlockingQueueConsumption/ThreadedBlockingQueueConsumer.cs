@@ -32,7 +32,7 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
         }
 
         protected abstract void HandleReceived(ClientHandle socket, byte[] data);
-        protected abstract void HandleDisconnected(ClientHandle socket);
+        protected abstract void HandleDisconnected(ClientHandle clientHandle, ClientSnapshot? clientSnapshot);
         protected abstract void HandleConnected(ClientHandle socket);
 
         private void Consume(int unitOfOrder)
@@ -58,13 +58,13 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
                 switch (clientEvent.ClientEventType)
                 {
                     case ClientEventType.ReceivedData:
-                        HandleReceived(clientEvent.Socket, clientEvent.Data);
+                        HandleReceived(clientEvent.ClientHandle, clientEvent.Data);
                         break;
                     case ClientEventType.Connected:
-                        HandleConnected(clientEvent.Socket);
+                        HandleConnected(clientEvent.ClientHandle);
                         break;
                     case ClientEventType.Disconnected:
-                        HandleDisconnected(clientEvent.Socket);
+                        HandleDisconnected(clientEvent.ClientHandle, clientEvent.ClientSnapshot);
                         break;
                 }
             }
@@ -93,17 +93,22 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
 
         void IConsumer.OnReceivedData(ClientHandle socket, byte[] data)
         {
-            _queues[socket.UnitOfOrder].Add(new ClientEvent(socket, ClientEventType.ReceivedData, data));
+            _queues[socket.UnitOfOrder].Add(new ClientEvent(socket, null, ClientEventType.ReceivedData, data));
         }
 
-        void IConsumer.OnClientDisconnected(ClientHandle socket)
+        void IConsumer.OnClientDisconnected(ClientHandle clientHandle, ClientSnapshot clientSnapshot)
         {
-            _queues[socket.UnitOfOrder].Add(new ClientEvent(socket, ClientEventType.Disconnected));
+            _queues[clientSnapshot.UnitOfOrder].Add(new ClientEvent(
+                    clientHandle,
+                    clientSnapshot,
+                    ClientEventType.Disconnected
+                )
+            );
         }
 
         void IConsumer.OnClientConnected(ClientHandle socket)
         {
-            _queues[socket.UnitOfOrder].Add(new ClientEvent(socket, ClientEventType.Connected));
+            _queues[socket.UnitOfOrder].Add(new ClientEvent(socket, null, ClientEventType.Connected));
         }
 
         void IConsumer.OnError(ClientHandle clientHandle, Exception exception, string message)

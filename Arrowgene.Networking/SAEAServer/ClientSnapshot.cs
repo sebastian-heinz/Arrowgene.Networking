@@ -15,5 +15,6 @@ public readonly record struct ClientSnapshot(
     long LastWriteMs,
     ulong BytesReceived,
     ulong BytesSent,
-    int PendingOperations
+    int PendingOperations,
+    int UnitOfOrder
 );

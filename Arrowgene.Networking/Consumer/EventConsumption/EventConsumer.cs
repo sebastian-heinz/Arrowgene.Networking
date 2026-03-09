@@ -30,12 +30,13 @@ namespace Arrowgene.Networking.Consumer.EventConsumption
             }
         }
 
-        public void OnClientDisconnected(ClientHandle socket)
+        public void OnClientDisconnected(ClientHandle clientHandle, ClientSnapshot clientSnapshot)
         {
             EventHandler<DisconnectedEventArgs> clientDisconnected = ClientDisconnected;
             if (clientDisconnected != null)
             {
-                DisconnectedEventArgs clientDisconnectedEventArgs = new DisconnectedEventArgs(socket);
+                DisconnectedEventArgs clientDisconnectedEventArgs =
+                    new DisconnectedEventArgs(clientHandle, clientSnapshot);
                 clientDisconnected(this, clientDisconnectedEventArgs);
             }
         }

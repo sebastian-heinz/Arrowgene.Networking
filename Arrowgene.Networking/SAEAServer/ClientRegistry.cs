@@ -101,29 +101,34 @@ internal sealed class ClientRegistry : IDisposable
         }
     }
 
-    internal bool TryDeactivateClient(ClientHandle clientHandle)
+    internal bool TryDeactivateClient(ClientHandle clientHandle, out ClientSnapshot snapshot)
     {
         lock (_sync)
         {
             if (!clientHandle.TryGetClient(out Client client))
             {
+                snapshot = default;
                 return false;
             }
 
             if (!client.CanReturnToPool())
             {
+                snapshot = default;
                 return false;
             }
-            
+
+            snapshot = client.Snapshot();
             int orderingLane = client.UnitOfOrder;
             if ((uint)orderingLane < (uint)_laneLoadByIndex.Length && _laneLoadByIndex[orderingLane] > 0)
             {
                 _laneLoadByIndex[orderingLane]--;
             }
+
             client.ResetForPool();
             _availableClients.Push(client);
             _activeHandles.Remove(clientHandle);
         }
+
         return true;
     }
 

@@ -696,7 +696,7 @@ public sealed class Server : IDisposable
         ulong bytesSent = client.BytesSent;
 
         client.Close();
-        if (!_clientRegistry.TryDeactivateClient(clientHandle))
+        if (!_clientRegistry.TryDeactivateClient(clientHandle, out ClientSnapshot snapshot))
         {
             return;
         }
@@ -718,7 +718,7 @@ public sealed class Server : IDisposable
 
         try
         {
-            _consumer.OnClientDisconnected(clientHandle); // TODO pass a new object, that is a client snapshot
+            _consumer.OnClientDisconnected(clientHandle, snapshot);
         }
         catch (Exception exception)
         {

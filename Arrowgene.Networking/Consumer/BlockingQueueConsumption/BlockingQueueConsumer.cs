@@ -15,17 +15,17 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
 
         public void OnReceivedData(ClientHandle socket, byte[] data)
         {
-            ClientEvents.Add(new ClientEvent(socket, ClientEventType.ReceivedData, data));
+            ClientEvents.Add(new ClientEvent(socket, null, ClientEventType.ReceivedData, data));
         }
 
-        public void OnClientDisconnected(ClientHandle socket)
+        public void OnClientDisconnected(ClientHandle clientHandle, ClientSnapshot clientSnapshot)
         {
-            ClientEvents.Add(new ClientEvent(socket, ClientEventType.Disconnected));
+            ClientEvents.Add(new ClientEvent(clientHandle, clientSnapshot, ClientEventType.Disconnected));
         }
 
-        public void OnClientConnected(ClientHandle socket)
+        public void OnClientConnected(ClientHandle clientHandle)
         {
-            ClientEvents.Add(new ClientEvent(socket, ClientEventType.Connected));
+            ClientEvents.Add(new ClientEvent(clientHandle, null, ClientEventType.Connected));
         }
 
         public void OnError(ClientHandle clientHandle, Exception exception, string message)
