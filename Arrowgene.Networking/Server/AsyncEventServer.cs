@@ -391,7 +391,7 @@ public sealed class AsyncEventServer : IDisposable
             bool continueReceiving = ProcessReceive(clientHandle);
             if (!continueReceiving)
             {
-                TryRecycleClient(client);
+                Disconnect(clientHandle);
                 return;
             }
         }
@@ -412,7 +412,7 @@ public sealed class AsyncEventServer : IDisposable
             return;
         }
 
-        TryRecycleClient(client);
+        _clientRegistry.TryDeactivateClient(clientHandle);
     }
 
     private bool ProcessReceive(AsyncEventClientHandle clientHandle)
@@ -529,7 +529,7 @@ public sealed class AsyncEventServer : IDisposable
         {
             if (!client.IsAlive)
             {
-                TryRecycleClient(client);
+                Disconnect(clientHandle);
                 return;
             }
 
@@ -541,7 +541,6 @@ public sealed class AsyncEventServer : IDisposable
             if (!client.TryBeginSocketOperation(out Socket socket))
             {
                 Disconnect(clientHandle);
-                TryRecycleClient(client);
                 return;
             }
 
@@ -581,7 +580,7 @@ public sealed class AsyncEventServer : IDisposable
             bool continueSending = ProcessSend(clientHandle);
             if (!continueSending)
             {
-                TryRecycleClient(client);
+                Disconnect(clientHandle);
                 return;
             }
         }
@@ -602,7 +601,7 @@ public sealed class AsyncEventServer : IDisposable
             return;
         }
 
-        TryRecycleClient(client);
+        Disconnect(clientHandle);
     }
 
     private bool ProcessSend(AsyncEventClientHandle clientHandle)
@@ -617,7 +616,7 @@ public sealed class AsyncEventServer : IDisposable
 
         if (!client.IsAlive)
         {
-            TryFinalizeDispose(nameof(ProcessSend));
+            Disconnect(clientHandle);
             return false;
         }
 
@@ -664,12 +663,9 @@ public sealed class AsyncEventServer : IDisposable
         ulong bytesSent = client.BytesSent;
 
         client.Close();
-
-        bool removed = _clientRegistry.TryRemoveActiveClient(client, out int currentConnections);
-        if (!removed)
+        if (!_clientRegistry.TryDeactivateClient(clientHandle))
         {
-            Log(LogLevel.Error, nameof(Disconnect), "Could not remove client from the active registry.",
-                clientIdentity);
+            return;
         }
 
         TimeSpan duration = connectedAt == DateTime.MinValue
@@ -677,13 +673,15 @@ public sealed class AsyncEventServer : IDisposable
             : DateTime.UtcNow - connectedAt;
 
         Log(
-            LogLevel.Debug,
+            LogLevel.Info,
             nameof(Disconnect),
+            $"Disconnected({reason}){Environment.NewLine}" +
             $"Total Seconds:{duration.TotalSeconds} ({Service.GetHumanReadableDuration(duration)}){Environment.NewLine}" +
             $"Total Bytes Received:{bytesReceived} ({Service.GetHumanReadableSize(bytesReceived)}){Environment.NewLine}" +
             $"Total Bytes Sent:{bytesSent} ({Service.GetHumanReadableSize(bytesSent)}){Environment.NewLine}" +
-            $"Current Connections:{currentConnections}",
-            clientIdentity);
+            $"Current Connections:{_clientRegistry.GetAliveClientCount()}",
+            clientIdentity
+        );
 
         try
         {
@@ -694,8 +692,6 @@ public sealed class AsyncEventServer : IDisposable
             Log(LogLevel.Error, nameof(Disconnect), "Error during OnClientDisconnected user code.", clientIdentity);
             Logger.Exception(exception);
         }
-
-        TryRecycleClient(client);
     }
 
     private void CheckSocketTimeout()

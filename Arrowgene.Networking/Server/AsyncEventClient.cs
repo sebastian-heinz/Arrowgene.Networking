@@ -153,15 +153,13 @@ internal sealed class AsyncEventClient : IDisposable
         Service.CloseSocket(_socket);
     }
 
-    internal bool CanReturnToPool(out bool isInPool, out bool isAlive, out bool pendingOperations)
+    internal bool CanReturnToPool()
     {
         lock (_sync)
         {
-            isInPool = _isInPool;
-            isAlive = _isAlive;
-            pendingOperations = Volatile.Read(ref _pendingOperations) > 0;
+            bool hasPendingOperations = Volatile.Read(ref _pendingOperations) > 0;
 
-            if (isInPool || isAlive || pendingOperations)
+            if (_isInPool || _isAlive || hasPendingOperations)
             {
                 return false;
             }

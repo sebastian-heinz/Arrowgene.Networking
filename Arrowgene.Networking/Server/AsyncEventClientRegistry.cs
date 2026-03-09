@@ -11,6 +11,7 @@ internal sealed class AsyncEventClientRegistry : IDisposable
     private readonly AsyncEventClient[] _allClients;
     private readonly Stack<AsyncEventClient> _availableClients;
     private readonly List<AsyncEventClientHandle> _activeHandles;
+    private readonly int _maxConnections;
 
     internal AsyncEventClientRegistry(int maxConnections, int orderingLaneCount,
         Func<int, AsyncEventClient> clientFactory)
@@ -30,13 +31,14 @@ internal sealed class AsyncEventClientRegistry : IDisposable
             throw new ArgumentNullException(nameof(clientFactory));
         }
 
+        _maxConnections = maxConnections;
         _sync = new object();
         _laneLoadByIndex = new int[orderingLaneCount];
-        _allClients = new AsyncEventClient[maxConnections];
-        _availableClients = new Stack<AsyncEventClient>(maxConnections);
-        _activeHandles = new List<AsyncEventClientHandle>(maxConnections);
+        _allClients = new AsyncEventClient[_maxConnections];
+        _availableClients = new Stack<AsyncEventClient>(_maxConnections);
+        _activeHandles = new List<AsyncEventClientHandle>(_maxConnections);
 
-        for (int clientId = maxConnections - 1; clientId >= 0; clientId--)
+        for (int clientId = _maxConnections - 1; clientId >= 0; clientId--)
         {
             AsyncEventClient client = clientFactory(clientId);
             _allClients[clientId] = client;
@@ -44,28 +46,23 @@ internal sealed class AsyncEventClientRegistry : IDisposable
         }
     }
 
-    internal IReadOnlyList<AsyncEventClient> AllClients => _allClients;
-
-    internal int ActiveCount
+    internal uint GetAliveClientCount()
     {
-        get
+        uint liveConnections = 0;
+        List<AsyncEventClientHandle> handles = new List<AsyncEventClientHandle>(_maxConnections);
+        SnapshotActiveHandles(handles);
+        foreach (AsyncEventClientHandle handle in handles)
         {
-            lock (_sync)
+            if (handle.TryGetClient(out AsyncEventClient client))
             {
-                return _activeHandles.Count;
+                if (client.IsAlive)
+                {
+                    liveConnections++;
+                }
             }
         }
-    }
 
-    internal int AvailableCount
-    {
-        get
-        {
-            lock (_sync)
-            {
-                return _availableClients.Count;
-            }
-        }
+        return liveConnections;
     }
 
     internal bool TryActivateClient(
@@ -104,76 +101,30 @@ internal sealed class AsyncEventClientRegistry : IDisposable
         }
     }
 
-    internal bool TryRemoveActiveClient(AsyncEventClient client, out int activeConnections)
+    internal bool TryDeactivateClient(AsyncEventClientHandle clientHandle)
     {
         lock (_sync)
         {
-            if (!TryGetActiveHandle(client, out AsyncEventClientHandle clientHandle))
+            if (!clientHandle.TryGetClient(out AsyncEventClient client))
             {
                 return false;
             }
 
-            bool removed = _activeHandles.Remove(handle);
-            if (removed)
+            if (!client.CanReturnToPool())
             {
-                int orderingLane = client.UnitOfOrder;
-                if ((uint)orderingLane < (uint)_laneLoadByIndex.Length && _laneLoadByIndex[orderingLane] > 0)
-                {
-                    _laneLoadByIndex[orderingLane]--;
-                }
+                return false;
             }
 
-            activeConnections = _activeHandles.Count;
-            return removed;
-        }
-    }
-
-    /// <summary>
-    /// Only Compares Client Reference, not generation
-    /// </summary>
-    /// <param name="client"></param>
-    /// <param name="clientHandle"></param>
-    /// <returns></returns>
-    internal bool TryGetClientHandle(AsyncEventClient client, out AsyncEventClientHandle clientHandle)
-    {
-        lock (_sync)
-        {
-            foreach (AsyncEventClientHandle handle in _activeHandles)
+            client.ResetForPool();
+            _availableClients.Push(client);
+            _activeHandles.Remove(clientHandle);
+            int orderingLane = client.UnitOfOrder;
+            if ((uint)orderingLane < (uint)_laneLoadByIndex.Length && _laneLoadByIndex[orderingLane] > 0)
             {
-                if (handle.EqualsClient(client))
-                {
-                    clientHandle = handle;
-                    return true;
-                }
+                _laneLoadByIndex[orderingLane]--;
             }
         }
-
-        clientHandle = default;
-        return false;
-    }
-
-    /// <summary>
-    /// Only Compares Client Reference, not generation
-    /// </summary>
-    /// <param name="client"></param>
-    /// <param name="clientHandle"></param>
-    /// <returns></returns>
-    internal bool TryGetClientHandleGeneration(AsyncEventClient client, out AsyncEventClientHandle clientHandle)
-    {
-        lock (_sync)
-        {
-            foreach (AsyncEventClientHandle handle in _activeHandles)
-            {
-                if (handle.EqualsClient(client))
-                {
-                    clientHandle = handle;
-                    return true;
-                }
-            }
-        }
-
-        clientHandle = default;
-        return false;
+        return true;
     }
 
     internal void SnapshotActiveHandles(List<AsyncEventClientHandle> destination)
@@ -187,21 +138,6 @@ internal sealed class AsyncEventClientRegistry : IDisposable
         {
             destination.Clear();
             destination.AddRange(_activeHandles);
-        }
-    }
-
-    internal bool TryRecycle(AsyncEventClient client)
-    {
-        lock (_sync)
-        {
-            if (!client.CanReturnToPool(out _, out _, out _))
-            {
-                return false;
-            }
-
-            client.ResetForPool();
-            _availableClients.Push(client);
-            return true;
         }
     }
 
