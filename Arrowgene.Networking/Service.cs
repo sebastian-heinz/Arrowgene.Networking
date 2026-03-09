@@ -8,14 +8,17 @@ namespace Arrowgene.Networking
 {
     internal static class Service
     {
-        public static void JoinThread(Thread? thread, int timeoutMs, ILogger logger)
+        private static readonly ILogger Logger = LogProvider.Logger(typeof(Service));
+
+
+        public static void JoinThread(Thread? thread, int timeoutMs)
         {
             if (thread != null)
             {
-                logger.Info($"{thread.Name} - Thread: Shutting down...");
+                Logger.Info($"{thread.Name} - Thread: Shutting down...");
                 if (!thread.IsAlive)
                 {
-                    logger.Info($"{thread.Name} - Thread: ended (not alive).");
+                    Logger.Info($"{thread.Name} - Thread: ended (not alive).");
                     return;
                 }
 
@@ -23,17 +26,17 @@ namespace Arrowgene.Networking
                 {
                     if (thread.Join(timeoutMs))
                     {
-                        logger.Info($"{thread.Name} - Thread: ended.");
+                        Logger.Info($"{thread.Name} - Thread: ended.");
                     }
                     else
                     {
-                        logger.Error(
+                        Logger.Error(
                             $"{thread.Name} - Thread: Exceeded join timeout of {timeoutMs}MS, could not join.");
                     }
                 }
                 else
                 {
-                    logger.Debug(
+                    Logger.Debug(
                         $"{thread.Name} - Thread: Tried to join thread from within thread, already joined.");
                 }
             }
@@ -45,7 +48,7 @@ namespace Arrowgene.Networking
             {
                 return;
             }
-            
+
             try
             {
                 socket.Shutdown(SocketShutdown.Both);
@@ -54,7 +57,7 @@ namespace Arrowgene.Networking
             {
                 // ignored
             }
-            
+
             try
             {
                 socket.Close();
@@ -64,7 +67,7 @@ namespace Arrowgene.Networking
                 // ignored
             }
         }
-        
+
         //739461 days, 14 hours, 32 minutes, 24 seconds
         public static string GetHumanReadableDuration(TimeSpan timeSpan)
         {
@@ -81,8 +84,8 @@ namespace Arrowgene.Networking
                 return "0 seconds";
             return string.Join(", ", parts);
         }
-        
-        private static readonly string[] SizeSuffixes = 
+
+        private static readonly string[] SizeSuffixes =
             { "bytes", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB" };
 
         /// <summary>

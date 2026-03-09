@@ -138,13 +138,12 @@ internal sealed class AsyncEventClient : IDisposable
         }
     }
 
-    internal void TryDisconnect(out bool wasAlive)
+    internal void Close()
     {
         lock (_sync)
         {
             if (!_isAlive)
             {
-                wasAlive = false;
                 return;
             }
 
@@ -152,7 +151,6 @@ internal sealed class AsyncEventClient : IDisposable
         }
 
         Service.CloseSocket(_socket);
-        wasAlive = true;
     }
 
     internal bool CanReturnToPool(out bool isInPool, out bool isAlive, out bool pendingOperations)

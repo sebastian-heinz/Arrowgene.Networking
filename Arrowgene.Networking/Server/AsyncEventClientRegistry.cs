@@ -107,11 +107,14 @@ internal sealed class AsyncEventClientRegistry : IDisposable
         }
     }
 
-    internal bool TryRemoveActiveClient(AsyncEventClient client, AsyncEventClientHandle handle,
-        out int activeConnections)
+    internal bool TryRemoveActiveClient(AsyncEventClient client, out int activeConnections)
     {
         lock (_sync)
         {
+            if(!TryGetActiveHandle(client, out AsyncEventClientHandle clientHandle))
+            {
+                return false;
+            }
             bool removed = _activeHandles.Remove(handle);
             if (removed)
             {
@@ -125,6 +128,30 @@ internal sealed class AsyncEventClientRegistry : IDisposable
             activeConnections = _activeHandles.Count;
             return removed;
         }
+    }
+
+    /// <summary>
+    /// Only Compares Client Reference, not generation
+    /// </summary>
+    /// <param name="client"></param>
+    /// <param name="clientHandle"></param>
+    /// <returns></returns>
+    internal bool TryGetActiveHandle(AsyncEventClient client, out AsyncEventClientHandle clientHandle)
+    {
+        lock (_sync)
+        {
+            foreach (AsyncEventClientHandle handle in _activeHandles)
+            {
+                if (handle.EqualsClient(client))
+                {
+                    clientHandle = handle;
+                    return true;
+                }
+            }
+        }
+
+        clientHandle = default;
+        return false;
     }
 
     internal void SnapshotActiveHandles(List<AsyncEventClientHandle> destination)

@@ -34,7 +34,7 @@ public readonly struct AsyncEventClientHandle : IEquatable<AsyncEventClientHandl
                 ThrowStaleException();
             }
 
-            return _client!;
+            return _client;
         }
     }
 
@@ -54,6 +54,11 @@ public readonly struct AsyncEventClientHandle : IEquatable<AsyncEventClientHandl
 
         client = _client;
         return true;
+    }
+
+    internal bool EqualsClient(AsyncEventClient other)
+    {
+        return other == _client;
     }
 
     public string Identity => Client.Identity;
@@ -89,7 +94,7 @@ public readonly struct AsyncEventClientHandle : IEquatable<AsyncEventClientHandl
 
     public void Close()
     {
-        _server.CloseClientHandle(this);
+        _server.Disconnect(this);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

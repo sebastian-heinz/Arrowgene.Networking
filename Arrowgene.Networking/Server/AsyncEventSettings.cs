@@ -17,13 +17,14 @@ public sealed class AsyncEventSettings : ICloneable
         Identity = string.Empty;
         MaxConnections = 100;
         BufferSize = 2000;
-        Retries = 10;
-        MaxUnitOfOrder = 1;
-        SocketTimeoutSeconds = -1;
-        SocketSettings = new SocketSettings();
-        DebugMode = false;
+        OrderingLaneCount = 4;
         ConcurrentAccepts = 10;
         MaxQueuedSendBytes = 16 * 1024 * 1024;
+        ListenSocketRetries = 5;
+        ListenSocketSettings = new SocketSettings();
+        ClientSocketTimeoutSeconds = -1;
+        ClientSocketSettings = new SocketSettings();
+        DebugMode = false;
     }
 
     /// <summary>
@@ -40,13 +41,14 @@ public sealed class AsyncEventSettings : ICloneable
         Identity = settings.Identity;
         MaxConnections = settings.MaxConnections;
         BufferSize = settings.BufferSize;
-        Retries = settings.Retries;
-        MaxUnitOfOrder = settings.MaxUnitOfOrder;
-        SocketTimeoutSeconds = settings.SocketTimeoutSeconds;
-        SocketSettings = new SocketSettings(settings.SocketSettings);
-        DebugMode = settings.DebugMode;
+        OrderingLaneCount = settings.OrderingLaneCount;
         ConcurrentAccepts = settings.ConcurrentAccepts;
         MaxQueuedSendBytes = settings.MaxQueuedSendBytes;
+        ListenSocketRetries = settings.ListenSocketRetries;
+        ListenSocketSettings = new SocketSettings(settings.ListenSocketSettings);
+        ClientSocketTimeoutSeconds = settings.ClientSocketTimeoutSeconds;
+        ClientSocketSettings = new SocketSettings(settings.ClientSocketSettings);
+        DebugMode = settings.DebugMode;
     }
 
     /// <summary>
@@ -64,86 +66,56 @@ public sealed class AsyncEventSettings : ICloneable
     /// <summary>
     /// Gets or sets the pinned receive and send buffer size per direction.
     /// </summary>
-    [DataMember(Order = 3)]
+    [DataMember(Order = 2)]
     public int BufferSize { get; set; }
-
-    /// <summary>
-    /// Gets or sets the number of listener bind retries.
-    /// </summary>
-    [DataMember(Order = 4)]
-    public int Retries { get; set; }
 
     /// <summary>
     /// Gets or sets the number of ordering lanes used for connected clients.
     /// </summary>
-    [DataMember(Order = 5)]
-    public int MaxUnitOfOrder { get; set; }
-
-    /// <summary>
-    /// Gets or sets the idle socket timeout in seconds. Use -1 to disable it.
-    /// </summary>
-    [DataMember(Order = 9)]
-    public int SocketTimeoutSeconds { get; set; }
-
-    /// <summary>
-    /// Gets or sets the socket configuration applied to listener and accepted sockets.
-    /// </summary>
-    [DataMember(Order = 10)]
-    public SocketSettings SocketSettings { get; set; }
-
-    /// <summary>
-    /// Gets or sets whether debug logging is enabled.
-    /// </summary>
-    [DataMember(Order = 11)]
-    public bool DebugMode { get; set; }
+    [DataMember(Order = 3)]
+    public int OrderingLaneCount { get; set; }
 
     /// <summary>
     /// Gets or sets the maximum number of concurrent accept operations.
     /// </summary>
-    [DataMember(Order = 12)]
+    [DataMember(Order = 4)]
     public int ConcurrentAccepts { get; set; }
 
     /// <summary>
     /// Gets or sets the maximum queued outbound bytes per client.
     /// </summary>
-    [DataMember(Order = 13)]
+    [DataMember(Order = 5)]
     public int MaxQueuedSendBytes { get; set; }
 
     /// <summary>
     /// Gets or sets the number of listener bind retries.
     /// </summary>
-    public int BindRetryCount
-    {
-        get => Retries;
-        set => Retries = value;
-    }
+    [DataMember(Order = 20)]
+    public int ListenSocketRetries { get; set; }
 
     /// <summary>
-    /// Gets or sets the number of ordering lanes used for connected clients.
+    /// Gets or sets the socket configuration applied to listener and accepted sockets.
     /// </summary>
-    public int OrderingLaneCount
-    {
-        get => MaxUnitOfOrder;
-        set => MaxUnitOfOrder = value;
-    }
+    [DataMember(Order = 21)]
+    public SocketSettings ListenSocketSettings { get; set; }
 
     /// <summary>
     /// Gets or sets the idle socket timeout in seconds. Use -1 to disable it.
     /// </summary>
-    public int IdleSocketTimeoutSeconds
-    {
-        get => SocketTimeoutSeconds;
-        set => SocketTimeoutSeconds = value;
-    }
+    [DataMember(Order = 40)]
+    public int ClientSocketTimeoutSeconds { get; set; }
 
     /// <summary>
-    /// Gets or sets the maximum number of concurrent accept operations.
+    /// Gets or sets the socket configuration applied to listener and accepted sockets.
     /// </summary>
-    public int AcceptConcurrency
-    {
-        get => ConcurrentAccepts;
-        set => ConcurrentAccepts = value;
-    }
+    [DataMember(Order = 41)]
+    public SocketSettings ClientSocketSettings { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether debug logging is enabled.
+    /// </summary>
+    [DataMember(Order = 90)]
+    public bool DebugMode { get; set; }
 
     /// <summary>
     /// Validates the configuration values.
@@ -160,29 +132,31 @@ public sealed class AsyncEventSettings : ICloneable
             throw new ArgumentOutOfRangeException(nameof(BufferSize), "BufferSize must be greater than zero.");
         }
 
-        if (Retries < 0)
+        if (OrderingLaneCount < 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(Retries), "Retries must be zero or greater.");
+            throw new ArgumentOutOfRangeException(nameof(OrderingLaneCount), "Retries must be zero or greater.");
         }
-
-        if (MaxUnitOfOrder <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(MaxUnitOfOrder), "MaxUnitOfOrder must be greater than zero.");
-        }
-
+        
         if (ConcurrentAccepts <= 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(ConcurrentAccepts), "ConcurrentAccepts must be greater than zero.");
+            throw new ArgumentOutOfRangeException(nameof(ConcurrentAccepts),
+                "ConcurrentAccepts must be greater than zero.");
         }
 
         if (MaxQueuedSendBytes <= 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(MaxQueuedSendBytes), "MaxQueuedSendBytes must be greater than zero.");
+            throw new ArgumentOutOfRangeException(nameof(MaxQueuedSendBytes),
+                "MaxQueuedSendBytes must be greater than zero.");
         }
 
-        if (SocketSettings is null)
+        if (ListenSocketSettings is null)
         {
-            throw new ArgumentNullException(nameof(SocketSettings));
+            throw new ArgumentNullException(nameof(ListenSocketSettings));
+        }
+
+        if (ClientSocketSettings is null)
+        {
+            throw new ArgumentNullException(nameof(ClientSocketSettings));
         }
     }
 
