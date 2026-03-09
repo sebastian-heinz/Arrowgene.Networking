@@ -175,6 +175,7 @@ public sealed class AsyncEventServer : IDisposable
             if (!TrySocketListen())
             {
                 Log(LogLevel.Error, nameof(Run), "Stopping server due to startup failure.");
+                Shutdown();
                 return;
             }
         }
