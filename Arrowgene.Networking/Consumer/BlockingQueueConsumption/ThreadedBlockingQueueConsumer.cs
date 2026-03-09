@@ -90,7 +90,7 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
                 _threads[i].Start();
             }
         }
-        
+
         void IConsumer.OnReceivedData(AsyncEventClientHandle socket, byte[] data)
         {
             _queues[socket.UnitOfOrder].Add(new ClientEvent(socket, ClientEventType.ReceivedData, data));
@@ -120,7 +120,7 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
             {
                 Thread consumerThread = _threads[i];
                 Logger.Info($"[{_identity}] Shutting Consumer: {i} down...");
-                Service.JoinThread(consumerThread, 10000, Logger);
+                Service.JoinThread(consumerThread, 10000);
                 Logger.Info($"[{_identity}] Consumer: {i} ended.");
                 _threads[i] = null;
             }
