@@ -1092,15 +1092,13 @@ public sealed class Server : IDisposable
 
     private void EnterAsyncCallback()
     {
-        if (Interlocked.Increment(ref _inFlightAsyncCallbacks) == 1)
-        {
-            _asyncCallbacksDrained.Reset();
-        }
+        Interlocked.Increment(ref _inFlightAsyncCallbacks);
+        _asyncCallbacksDrained.Reset();
     }
 
     private void ExitAsyncCallback()
     {
-        if (Interlocked.Decrement(ref _inFlightAsyncCallbacks) == 0)
+        if (Interlocked.Decrement(ref _inFlightAsyncCallbacks) <= 0)
         {
             _asyncCallbacksDrained.Set();
         }

@@ -177,6 +177,7 @@ internal sealed class Client : IDisposable
 
     internal void Close()
     {
+        Socket? socketToClose;
         lock (_sync)
         {
             if (!_isAlive)
@@ -185,9 +186,11 @@ internal sealed class Client : IDisposable
             }
 
             _isAlive = false;
+            socketToClose = _socket;
+            _socket = null;
         }
 
-        Service.CloseSocket(_socket);
+        Service.CloseSocket(socketToClose);
     }
 
     internal bool CanReturnToPool()

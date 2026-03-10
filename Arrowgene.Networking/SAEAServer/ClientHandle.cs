@@ -40,6 +40,11 @@ public readonly struct ClientHandle : IEquatable<ClientHandle>
         }
     }
 
+    public ClientSnapshot Snapshot()
+    {
+        return Client.Snapshot();
+    }
+
     /// <summary>
     /// Tries to retrieve the underlying client if the handle is still valid.
     /// </summary>
