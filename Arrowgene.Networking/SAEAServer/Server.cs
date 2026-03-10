@@ -174,7 +174,7 @@ public sealed class Server : IDisposable
                 Log(LogLevel.Error, nameof(ServerStart), "Server already started.");
                 return;
             }
-            
+
             _state = ServerState.Running;
             _disconnectCleanupThread.Start();
             if (_socketTimeout > TimeSpan.Zero)
@@ -231,7 +231,6 @@ public sealed class Server : IDisposable
             bool shouldShutdown = false;
             lock (_lifecycleLock)
             {
-                
                 if (_state == ServerState.Running)
                 {
                     _state = ServerState.Stopping;
@@ -549,7 +548,7 @@ public sealed class Server : IDisposable
 
         client.RecordReceive(bytesTransferred);
 
-        byte[] data = new byte[bytesTransferred];
+        byte[] data = GC.AllocateUninitializedArray<byte>(bytesTransferred);
         Buffer.BlockCopy(receiveBuffer, receiveOffset, data, 0, bytesTransferred);
         try
         {
