@@ -2,9 +2,8 @@ using System;
 using System.Collections.Concurrent;
 using System.Threading;
 using Arrowgene.Logging;
-using Arrowgene.Networking.SAEAServer;
 
-namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
+namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
 {
     /// <summary>
     /// Dispatches consumer callbacks onto one worker thread per ordering lane while preserving lane order.
@@ -13,25 +12,24 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
     {
         private static readonly ILogger Logger = LogProvider.Logger(typeof(ThreadedBlockingQueueConsumer));
 
-        private readonly BlockingCollection<ClientEvent>[] _queues;
+        private readonly BlockingCollection<IClientEvent>[] _queues;
         private readonly Thread[] _threads;
         private readonly int _maxUnitOfOrder;
         private volatile bool _isRunning;
         private readonly string _identity;
 
-        private CancellationTokenSource _cancellationTokenSource;
+        private CancellationTokenSource? _cancellationTokenSource;
 
         /// <summary>
         /// Initializes a threaded queue consumer.
         /// </summary>
         /// <param name="maxUnitOfOrder">The number of ordering lanes to process in parallel.</param>
         /// <param name="identity">The log identity used for worker threads.</param>
-        public ThreadedBlockingQueueConsumer(int maxUnitOfOrder,
-            string identity = "ThreadedBlockingQueueConsumer")
+        public ThreadedBlockingQueueConsumer(int maxUnitOfOrder, string identity = "ThreadedBlockingQueueConsumer")
         {
             _maxUnitOfOrder = maxUnitOfOrder;
             _identity = identity;
-            _queues = new BlockingCollection<ClientEvent>[_maxUnitOfOrder];
+            _queues = new BlockingCollection<IClientEvent>[_maxUnitOfOrder];
             _threads = new Thread[_maxUnitOfOrder];
         }
 
@@ -40,25 +38,27 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
         /// </summary>
         /// <param name="clientHandle">The client that produced the payload.</param>
         /// <param name="data">The copied payload buffer.</param>
-        protected abstract void HandleReceived(ClientHandle? clientHandle, byte[] data);
+        protected abstract void HandleReceived(ClientHandle clientHandle, byte[] data);
 
         /// <summary>
         /// Handles a client disconnection on the worker thread assigned to the client's ordering lane.
         /// </summary>
         /// <param name="clientSnapshot">The final snapshot of the disconnected client.</param>
-        protected abstract void HandleDisconnected(ClientSnapshot? clientSnapshot);
+        protected abstract void HandleDisconnected(ClientSnapshot clientSnapshot);
 
         /// <summary>
         /// Handles a client connection on the worker thread assigned to the client's ordering lane.
         /// </summary>
         /// <param name="clientHandle">The connected client.</param>
-        protected abstract void HandleConnected(ClientHandle? clientHandle);
+        protected abstract void HandleConnected(ClientHandle clientHandle);
+
+        protected abstract void HandleError(ClientHandle clientHandle, Exception exception, string message);
 
         private void Consume(int unitOfOrder)
         {
             while (_isRunning)
             {
-                ClientEvent clientEvent;
+                IClientEvent clientEvent;
                 try
                 {
                     clientEvent = _queues[unitOfOrder].Take(_cancellationTokenSource.Token);
@@ -74,17 +74,33 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
                     return;
                 }
 
-                switch (clientEvent.ClientEventType)
+                switch (clientEvent)
                 {
-                    case ClientEventType.ReceivedData:
-                        HandleReceived(clientEvent.ClientHandle, clientEvent.Data);
+                    case ClientDataEvent dataEvent:
+                    {
+                        HandleReceived(dataEvent.ClientHandle, dataEvent.Data);
                         break;
-                    case ClientEventType.Connected:
-                        HandleConnected(clientEvent.ClientHandle);
+                    }
+                    case ClientConnectedEvent connectedEvent:
+                    {
+                        HandleConnected(connectedEvent.ClientHandle);
                         break;
-                    case ClientEventType.Disconnected:
-                        HandleDisconnected(clientEvent.ClientSnapshot);
+                    }
+                    case ClientDisconnectedEvent disconnectedEvent:
+                    {
+                        HandleDisconnected(disconnectedEvent.ClientSnapshot);
                         break;
+                    }
+                    case ClientErrorEvent errorEvent:
+                    {
+                        HandleError(errorEvent.ClientHandle, errorEvent.Exception, errorEvent.Message);
+                        break;
+                    }
+                    default:
+                    {
+                        throw new InvalidOperationException(
+                            $"Unsupported client event type: {clientEvent.GetType().FullName}");
+                    }
                 }
             }
         }
@@ -105,7 +121,7 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
             for (int i = 0; i < _maxUnitOfOrder; i++)
             {
                 int uuo = i;
-                _queues[i] = new BlockingCollection<ClientEvent>();
+                _queues[i] = new BlockingCollection<IClientEvent>();
                 _threads[i] = new Thread(() => Consume(uuo));
                 _threads[i].Name = $"[{_identity}] Consumer: {i}";
                 Logger.Info($"[{_identity}] Starting Consumer: {i}");
@@ -113,29 +129,24 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
             }
         }
 
-        void IConsumer.OnReceivedData(ClientHandle socket, byte[] data)
+        void IConsumer.OnReceivedData(ClientHandle clientHandle, byte[] data)
         {
-            _queues[socket.UnitOfOrder].Add(new ClientEvent(socket, null, ClientEventType.ReceivedData, data));
+            _queues[clientHandle.UnitOfOrder].Add(new ClientDataEvent(clientHandle, data));
         }
 
         void IConsumer.OnClientDisconnected(ClientSnapshot clientSnapshot)
         {
-            _queues[clientSnapshot.UnitOfOrder].Add(new ClientEvent(
-                    null,
-                    clientSnapshot,
-                    ClientEventType.Disconnected
-                )
-            );
+            _queues[clientSnapshot.UnitOfOrder].Add(new ClientDisconnectedEvent(clientSnapshot));
         }
 
-        void IConsumer.OnClientConnected(ClientHandle socket)
+        void IConsumer.OnClientConnected(ClientHandle clientHandle)
         {
-            _queues[socket.UnitOfOrder].Add(new ClientEvent(socket, null, ClientEventType.Connected));
+            _queues[clientHandle.UnitOfOrder].Add(new ClientConnectedEvent(clientHandle));
         }
 
         void IConsumer.OnError(ClientHandle clientHandle, Exception exception, string message)
         {
-            throw exception;
+            _queues[clientHandle.UnitOfOrder].Add(new ClientErrorEvent(clientHandle, exception, message));
         }
 
         private void Stop()

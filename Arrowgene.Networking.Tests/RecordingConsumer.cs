@@ -2,8 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Arrowgene.Networking.Consumer;
 using Arrowgene.Networking.SAEAServer;
+using Arrowgene.Networking.SAEAServer.Consumer;
 
 namespace Arrowgene.Networking.Tests;
 

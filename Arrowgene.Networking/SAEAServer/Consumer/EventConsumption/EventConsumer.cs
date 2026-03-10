@@ -1,7 +1,6 @@
 ﻿using System;
-using Arrowgene.Networking.SAEAServer;
 
-namespace Arrowgene.Networking.Consumer.EventConsumption
+namespace Arrowgene.Networking.SAEAServer.Consumer.EventConsumption
 {
     /// <summary>
     /// Adapts <see cref="IConsumer"/> callbacks into .NET events.
@@ -11,21 +10,27 @@ namespace Arrowgene.Networking.Consumer.EventConsumption
         /// <summary>
         /// Occurs when a client disconnects.
         /// </summary>
-        public event EventHandler<DisconnectedEventArgs> ClientDisconnected;
+        public event EventHandler<DisconnectedEventArgs>? ClientDisconnected;
 
         /// <summary>
         /// Occurs when a client connects.
         /// </summary>
-        public event EventHandler<ConnectedEventArgs> ClientConnected;
+        public event EventHandler<ConnectedEventArgs>? ClientConnected;
 
         /// <summary>
         /// Occurs when a packet is received.
         /// </summary>
-        public event EventHandler<ReceivedPacketEventArgs> ReceivedPacket;
+        public event EventHandler<ReceivedPacketEventArgs>? ReceivedPacket;
+
+        /// <summary>
+        /// Occurs when a packet is received.
+        /// </summary>
+        public event EventHandler<ErrorEventArgs>? OnError;
+
 
         void IConsumer.OnReceivedData(ClientHandle socket, byte[] data)
         {
-            EventHandler<ReceivedPacketEventArgs> receivedPacket = ReceivedPacket;
+            EventHandler<ReceivedPacketEventArgs>? receivedPacket = ReceivedPacket;
             if (receivedPacket != null)
             {
                 ReceivedPacketEventArgs receivedPacketEventArgs = new ReceivedPacketEventArgs(socket, data);
@@ -35,7 +40,7 @@ namespace Arrowgene.Networking.Consumer.EventConsumption
 
         void IConsumer.OnClientDisconnected(ClientSnapshot clientSnapshot)
         {
-            EventHandler<DisconnectedEventArgs> clientDisconnected = ClientDisconnected;
+            EventHandler<DisconnectedEventArgs>? clientDisconnected = ClientDisconnected;
             if (clientDisconnected != null)
             {
                 DisconnectedEventArgs clientDisconnectedEventArgs =
@@ -46,7 +51,7 @@ namespace Arrowgene.Networking.Consumer.EventConsumption
 
         void IConsumer.OnClientConnected(ClientHandle socket)
         {
-            EventHandler<ConnectedEventArgs> clientConnected = ClientConnected;
+            EventHandler<ConnectedEventArgs>? clientConnected = ClientConnected;
             if (clientConnected != null)
             {
                 ConnectedEventArgs clientConnectedEventArgs = new ConnectedEventArgs(socket);
@@ -56,7 +61,12 @@ namespace Arrowgene.Networking.Consumer.EventConsumption
 
         void IConsumer.OnError(ClientHandle clientHandle, Exception exception, string message)
         {
-            throw exception;
+            EventHandler<ErrorEventArgs>? onError = OnError;
+            if (onError != null)
+            {
+                ErrorEventArgs errorEventArgs = new ErrorEventArgs(clientHandle, exception, message);
+                onError(this, errorEventArgs);
+            }
         }
     }
 }

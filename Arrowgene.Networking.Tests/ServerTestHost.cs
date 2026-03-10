@@ -41,13 +41,13 @@ internal sealed class ServerTestHost : IDisposable
         _sync = new object();
         _trackedClients = new List<TcpClient>();
         Port = PortAllocator.GetFreeTcpPort();
-        Server = new Server(IPAddress.Loopback, Port, Consumer, settings);
-        Server.Start();
+        TcpServer = new TcpServer(IPAddress.Loopback, Port, Consumer, settings);
+        TcpServer.Start();
     }
 
     internal RecordingConsumer Consumer { get; }
 
-    internal Server Server { get; }
+    internal TcpServer TcpServer { get; }
 
     internal ushort Port { get; }
 
@@ -181,14 +181,14 @@ internal sealed class ServerTestHost : IDisposable
 
         try
         {
-            Server.Stop();
+            TcpServer.Stop();
         }
         catch
         {
         }
 
         Thread.Sleep(100);
-        Server.Dispose();
+        TcpServer.Dispose();
         _disposed = true;
     }
 

@@ -1,8 +1,7 @@
 ﻿using System;
 using System.Collections.Concurrent;
-using Arrowgene.Networking.SAEAServer;
 
-namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
+namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
 {
     /// <summary>
     /// Queues consumer callbacks into a single blocking collection for external processing.
@@ -12,34 +11,34 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
         /// <summary>
         /// Gets the queue that receives client events in callback order.
         /// </summary>
-        public readonly BlockingCollection<ClientEvent> ClientEvents;
+        public readonly BlockingCollection<IClientEvent> ClientEvents;
 
         /// <summary>
         /// Initializes an empty blocking queue consumer.
         /// </summary>
         public BlockingQueueConsumer()
         {
-            ClientEvents = new BlockingCollection<ClientEvent>();
+            ClientEvents = new BlockingCollection<IClientEvent>();
         }
 
-        void IConsumer.OnReceivedData(ClientHandle socket, byte[] data)
+        void IConsumer.OnReceivedData(ClientHandle clientHandle, byte[] data)
         {
-            ClientEvents.Add(new ClientEvent(socket, null, ClientEventType.ReceivedData, data));
+            ClientEvents.Add(new ClientDataEvent(clientHandle, data));
         }
 
         void IConsumer.OnClientDisconnected(ClientSnapshot clientSnapshot)
         {
-            ClientEvents.Add(new ClientEvent(null, clientSnapshot, ClientEventType.Disconnected));
+            ClientEvents.Add(new ClientDisconnectedEvent(clientSnapshot));
         }
 
         void IConsumer.OnClientConnected(ClientHandle clientHandle)
         {
-            ClientEvents.Add(new ClientEvent(clientHandle, null, ClientEventType.Connected));
+            ClientEvents.Add(new ClientConnectedEvent(clientHandle));
         }
 
         void IConsumer.OnError(ClientHandle clientHandle, Exception exception, string message)
         {
-            throw exception;
+            ClientEvents.Add(new ClientErrorEvent(clientHandle, exception, message));
         }
     }
 }

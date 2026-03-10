@@ -10,7 +10,7 @@ using Xunit;
 namespace Arrowgene.Networking.Tests;
 
 /// <summary>
-/// Integration coverage for the SAEA server lifecycle, transfer, and pooling behavior.
+/// Integration coverage for the SAEA tcpServer lifecycle, transfer, and pooling behavior.
 /// </summary>
 public sealed class ServerIntegrationTests
 {
@@ -19,7 +19,7 @@ public sealed class ServerIntegrationTests
     private static readonly TimeSpan LongTimeout = TimeSpan.FromSeconds(20);
 
     /// <summary>
-    /// Verifies the server never activates more clients than the configured connection cap.
+    /// Verifies the tcpServer never activates more clients than the configured connection cap.
     /// </summary>
     [Fact]
     public async Task ConnectionCap_PreventsMoreThanMaxConnectionsFromActivating()
@@ -46,7 +46,7 @@ public sealed class ServerIntegrationTests
             }
 
             await consumer.WaitForConnectedCountAsync(2, MediumTimeout);
-            await Task.Delay(300);
+            await Task.Delay(300, TestContext.Current.CancellationToken);
 
             Assert.Equal(2, consumer.ConnectedCount);
             Assert.Empty(consumer.Errors);
@@ -215,7 +215,7 @@ public sealed class ServerIntegrationTests
     }
 
     /// <summary>
-    /// Verifies a large payload is echoed back intact even when the server must split it into multiple buffer-sized chunks.
+    /// Verifies a large payload is echoed back intact even when the tcpServer must split it into multiple buffer-sized chunks.
     /// </summary>
     [Fact]
     public async Task BigDataTransfer_EchoesEntirePayloadAcrossMultipleChunks()
@@ -254,7 +254,7 @@ public sealed class ServerIntegrationTests
     }
 
     /// <summary>
-    /// Verifies the server can accept and round-trip a larger simultaneous client set.
+    /// Verifies the tcpServer can accept and round-trip a larger simultaneous client set.
     /// </summary>
     [Fact]
     public async Task ManyClients_CanConnectAndExchangeDataSimultaneously()
@@ -380,14 +380,14 @@ public sealed class ServerIntegrationTests
             await host.WriteAsync(client, CreatePayload(128, 600), MediumTimeout);
             await consumer.WaitForBlockedReceiveAsync(ShortTimeout);
 
-            Task stopTask = Task.Run(() => host.Server.Stop());
+            Task stopTask = Task.Run(() => host.TcpServer.Stop(), TestContext.Current.CancellationToken);
 
-            await Task.Delay(200);
+            await Task.Delay(200, TestContext.Current.CancellationToken);
             Assert.False(stopTask.IsCompleted);
 
             consumer.ReleaseBlockedReceive();
 
-            await stopTask.WaitAsync(MediumTimeout);
+            await stopTask.WaitAsync(MediumTimeout, TestContext.Current.CancellationToken);
             await consumer.WaitForDisconnectedCountAsync(1, MediumTimeout);
             Assert.Empty(consumer.Errors);
         }
@@ -398,7 +398,7 @@ public sealed class ServerIntegrationTests
     }
 
     /// <summary>
-    /// Verifies the same server instance can be stopped and started multiple times.
+    /// Verifies the same tcpServer instance can be stopped and started multiple times.
     /// </summary>
     [Fact]
     public async Task Restart_CanStartAndStopSameInstanceMultipleTimes()
@@ -430,12 +430,12 @@ public sealed class ServerIntegrationTests
                 host.DisposeClient(client);
             }
 
-            host.Server.Stop();
+            host.TcpServer.Stop();
             await consumer.WaitForDisconnectedCountAsync(cycle + 1, MediumTimeout);
 
             if (cycle < 2)
             {
-                host.Server.Start();
+                host.TcpServer.Start();
             }
         }
 
@@ -531,18 +531,18 @@ public sealed class ServerIntegrationTests
             await host.WriteAsync(client, CreatePayload(128, 601), MediumTimeout);
             await consumer.WaitForBlockedReceiveAsync(ShortTimeout);
 
-            Task stopTask = Task.Run(() => host.Server.Stop());
-            await Task.Delay(50);
-            Task disposeTask = Task.Run(() => host.Server.Dispose());
+            Task stopTask = Task.Run(() => host.TcpServer.Stop(), TestContext.Current.CancellationToken);
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+            Task disposeTask = Task.Run(() => host.TcpServer.Dispose(), TestContext.Current.CancellationToken);
 
-            await Task.Delay(200);
+            await Task.Delay(200, TestContext.Current.CancellationToken);
             Assert.False(stopTask.IsCompleted);
             Assert.False(disposeTask.IsCompleted);
 
             consumer.ReleaseBlockedReceive();
 
-            await stopTask.WaitAsync(MediumTimeout);
-            await disposeTask.WaitAsync(MediumTimeout);
+            await stopTask.WaitAsync(MediumTimeout, TestContext.Current.CancellationToken);
+            await disposeTask.WaitAsync(MediumTimeout, TestContext.Current.CancellationToken);
             await consumer.WaitForDisconnectedCountAsync(1, MediumTimeout);
 
             Assert.True(stopTask.IsCompletedSuccessfully);
@@ -556,7 +556,7 @@ public sealed class ServerIntegrationTests
     }
 
     /// <summary>
-    /// Verifies the server sustains repeated parallel round-trips across multiple clients under mixed payload sizes.
+    /// Verifies the tcpServer sustains repeated parallel round-trips across multiple clients under mixed payload sizes.
     /// </summary>
     [Fact]
     public async Task StressLoad_SustainsRepeatedParallelRoundTrips()

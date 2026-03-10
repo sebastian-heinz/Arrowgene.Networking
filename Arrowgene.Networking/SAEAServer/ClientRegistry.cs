@@ -55,7 +55,7 @@ internal sealed class ClientRegistry : IDisposable
     }
 
     internal bool TryActivateClient(
-        Server server,
+        TcpServer tcpServer,
         Socket acceptedSocket,
         out ClientHandle handle
     )
@@ -82,7 +82,7 @@ internal sealed class ClientRegistry : IDisposable
                 throw;
             }
 
-            handle = new ClientHandle(server, pooledClient);
+            handle = new ClientHandle(tcpServer, pooledClient);
             pooledClient.ReceiveEventArgs.UserToken = handle;
             pooledClient.SendEventArgs.UserToken = handle;
             _activeHandles.Add(handle);

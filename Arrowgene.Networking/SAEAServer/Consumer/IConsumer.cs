@@ -1,7 +1,6 @@
 ﻿using System;
-using Arrowgene.Networking.SAEAServer;
 
-namespace Arrowgene.Networking.Consumer
+namespace Arrowgene.Networking.SAEAServer.Consumer
 {
     /// <summary>
     /// Receives server lifecycle and payload callbacks for connected clients.

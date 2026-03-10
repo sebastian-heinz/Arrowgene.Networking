@@ -28,14 +28,14 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using Arrowgene.Logging;
-using Arrowgene.Networking.Consumer;
+using Arrowgene.Networking.SAEAServer.Consumer;
 
 namespace Arrowgene.Networking.SAEAServer;
 
 /// <summary>
 /// A pooled TCP server built on <see cref="SocketAsyncEventArgs"/>.
 /// </summary>
-public sealed class Server : IDisposable
+public sealed class TcpServer : IDisposable
 {
     private enum ServerState : int
     {
@@ -47,7 +47,7 @@ public sealed class Server : IDisposable
     }
 
     private const string UnknownIdentity = "[Unknown Client]";
-    private const string AcceptThreadName = "Server";
+    private const string AcceptThreadName = "TcpServer";
     private const string TimeoutThreadName = "AsyncEventServer_Timeout";
     private const string DisconnectCleanupThreadName = "AsyncEventServer_DisconnectCleanup";
     private const int ThreadTimeoutMs = 10000;
@@ -55,7 +55,7 @@ public sealed class Server : IDisposable
     private const int MaxSocketTimeoutDelayMs = 30000;
     private const int DisconnectCleanupDelayMs = 500;
 
-    private static readonly ILogger Logger = LogProvider.Logger(typeof(Server));
+    private static readonly ILogger Logger = LogProvider.Logger(typeof(TcpServer));
 
     private readonly object _lifecycleLock;
     private readonly IConsumer _consumer;
@@ -96,7 +96,7 @@ public sealed class Server : IDisposable
     /// <param name="port">The TCP port to bind.</param>
     /// <param name="consumer">The consumer that receives callbacks.</param>
     /// <param name="settings">The server settings.</param>
-    public Server(IPAddress ipAddress, ushort port, IConsumer consumer, ServerSettings settings)
+    public TcpServer(IPAddress ipAddress, ushort port, IConsumer consumer, ServerSettings settings)
     {
         if (ipAddress is null)
         {
@@ -156,19 +156,19 @@ public sealed class Server : IDisposable
             ServerState state = _state;
             if (state == ServerState.Disposed)
             {
-                Log(LogLevel.Error, nameof(Start), "Server is disposed.");
+                Log(LogLevel.Error, nameof(Start), "TcpServer is disposed.");
                 return;
             }
 
             if (state == ServerState.Stopping)
             {
-                Log(LogLevel.Error, nameof(Start), "Server is stopping.");
+                Log(LogLevel.Error, nameof(Start), "TcpServer is stopping.");
                 return;
             }
 
             if (state == ServerState.Running)
             {
-                Log(LogLevel.Error, nameof(Start), "Server already started.");
+                Log(LogLevel.Error, nameof(Start), "TcpServer already started.");
                 return;
             }
 
@@ -203,12 +203,12 @@ public sealed class Server : IDisposable
                 }
             }
 
-            Log(LogLevel.Error, nameof(Start), "Server startup failed, shutting down.");
+            Log(LogLevel.Error, nameof(Start), "TcpServer startup failed, shutting down.");
             Shutdown();
             return;
         }
 
-        Log(LogLevel.Info, nameof(Start), "Server start initiated.");
+        Log(LogLevel.Info, nameof(Start), "TcpServer start initiated.");
     }
 
     /// <summary>
@@ -221,19 +221,19 @@ public sealed class Server : IDisposable
             ServerState state = _state;
             if (state == ServerState.Disposed)
             {
-                Log(LogLevel.Error, nameof(Stop), "Server is disposed.");
+                Log(LogLevel.Error, nameof(Stop), "TcpServer is disposed.");
                 return;
             }
 
             if (state == ServerState.Stopped)
             {
-                Log(LogLevel.Error, nameof(Stop), "Server already stopped.");
+                Log(LogLevel.Error, nameof(Stop), "TcpServer already stopped.");
                 return;
             }
 
             if (state == ServerState.Stopping)
             {
-                Log(LogLevel.Error, nameof(Stop), "Server stop is already in progress.");
+                Log(LogLevel.Error, nameof(Stop), "TcpServer stop is already in progress.");
                 return;
             }
 
@@ -242,7 +242,7 @@ public sealed class Server : IDisposable
 
         Log(LogLevel.Info, nameof(Stop), "Stopping server...");
         Shutdown();
-        Log(LogLevel.Info, nameof(Stop), "Server stopped.");
+        Log(LogLevel.Info, nameof(Stop), "TcpServer stopped.");
     }
 
     private void Run()
@@ -444,7 +444,7 @@ public sealed class Server : IDisposable
                 Log(
                     LogLevel.Debug,
                     nameof(ProcessAccept),
-                    "Server is not running, rejecting accepted socket.",
+                    "TcpServer is not running, rejecting accepted socket.",
                     clientIdentity
                 );
                 Service.CloseSocket(acceptedSocket);
@@ -658,7 +658,7 @@ public sealed class Server : IDisposable
     {
         if (!IsRunningState())
         {
-            Log(LogLevel.Error, nameof(Send), "Server is not running.");
+            Log(LogLevel.Error, nameof(Send), "TcpServer is not running.");
             return;
         }
 
@@ -1045,7 +1045,7 @@ public sealed class Server : IDisposable
         _cancellation.Dispose();
         _shutdownCompleted.Dispose();
         _asyncCallbacksDrained.Dispose();
-        Log(LogLevel.Info, nameof(Dispose), "Server resources disposed.");
+        Log(LogLevel.Info, nameof(Dispose), "TcpServer resources disposed.");
     }
 
     private bool IsRunningState()
