@@ -6,10 +6,9 @@ using Arrowgene.Networking.SAEAServer;
 
 namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
 {
-    /**
-     * Consumer creates number of threads based on `ServerSettings.MaxUnitOfOrder`.
-     * Handle*-methods will be called from various threads with order of packets preserved.
-     */
+    /// <summary>
+    /// Dispatches consumer callbacks onto one worker thread per ordering lane while preserving lane order.
+    /// </summary>
     public abstract class ThreadedBlockingQueueConsumer : IConsumer
     {
         private static readonly ILogger Logger = LogProvider.Logger(typeof(ThreadedBlockingQueueConsumer));
@@ -22,6 +21,11 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
 
         private CancellationTokenSource _cancellationTokenSource;
 
+        /// <summary>
+        /// Initializes a threaded queue consumer.
+        /// </summary>
+        /// <param name="maxUnitOfOrder">The number of ordering lanes to process in parallel.</param>
+        /// <param name="identity">The log identity used for worker threads.</param>
         public ThreadedBlockingQueueConsumer(int maxUnitOfOrder,
             string identity = "ThreadedBlockingQueueConsumer")
         {
@@ -31,8 +35,23 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
             _threads = new Thread[_maxUnitOfOrder];
         }
 
+        /// <summary>
+        /// Handles a received payload on the worker thread assigned to the client's ordering lane.
+        /// </summary>
+        /// <param name="clientHandle">The client that produced the payload.</param>
+        /// <param name="data">The copied payload buffer.</param>
         protected abstract void HandleReceived(ClientHandle? clientHandle, byte[] data);
+
+        /// <summary>
+        /// Handles a client disconnection on the worker thread assigned to the client's ordering lane.
+        /// </summary>
+        /// <param name="clientSnapshot">The final snapshot of the disconnected client.</param>
         protected abstract void HandleDisconnected(ClientSnapshot? clientSnapshot);
+
+        /// <summary>
+        /// Handles a client connection on the worker thread assigned to the client's ordering lane.
+        /// </summary>
+        /// <param name="clientHandle">The connected client.</param>
         protected abstract void HandleConnected(ClientHandle? clientHandle);
 
         private void Consume(int unitOfOrder)
@@ -70,6 +89,9 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
             }
         }
 
+        /// <summary>
+        /// Starts the worker threads for all configured ordering lanes.
+        /// </summary>
         public virtual void Start()
         {
             if (_isRunning)

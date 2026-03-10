@@ -6,7 +6,7 @@ using System.Runtime.CompilerServices;
 namespace Arrowgene.Networking.SAEAServer;
 
 /// <summary>
-/// A generation-checked handle for an <see cref="Server.Client"/>.
+/// A generation-checked handle for a pooled client connection.
 /// </summary>
 public readonly struct ClientHandle : IEquatable<ClientHandle>
 {
@@ -59,53 +59,98 @@ public readonly struct ClientHandle : IEquatable<ClientHandle>
         return true;
     }
 
+    /// <summary>
+    /// Gets the client identity used in logs.
+    /// </summary>
     public string Identity => Client.Identity;
 
+    /// <summary>
+    /// Gets the remote IP address of the client.
+    /// </summary>
     public IPAddress RemoteIpAddress => Client.RemoteIpAddress;
 
+    /// <summary>
+    /// Gets the remote TCP port of the client.
+    /// </summary>
     public ushort Port => Client.Port;
 
+    /// <summary>
+    /// Gets the ordering lane assigned to the client.
+    /// </summary>
     public int UnitOfOrder => Client.UnitOfOrder;
 
+    /// <summary>
+    /// Gets the tick count of the last successful receive operation.
+    /// </summary>
     public long LastReadMs => Client.LastReadMs;
 
+    /// <summary>
+    /// Gets the tick count of the last successful send operation.
+    /// </summary>
     public long LastWriteMs => Client.LastWriteMs;
 
+    /// <summary>
+    /// Gets the UTC timestamp when the client connected.
+    /// </summary>
     public DateTime ConnectedAt => Client.ConnectedAt;
 
+    /// <summary>
+    /// Gets the total bytes received from the client.
+    /// </summary>
     public ulong BytesReceived => Client.BytesReceived;
 
     /// <summary>
-    /// Gets the total bytes sent by the client.
+    /// Gets the total bytes sent to the client.
     /// </summary>
     public ulong BytesSent => Client.BytesSent;
 
+    /// <summary>
+    /// Gets the total bytes sent to the client.
+    /// </summary>
+    /// <remarks>This property is retained as a compatibility alias for <see cref="BytesSent"/>.</remarks>
     public ulong BytesSend => Client.BytesSent;
 
+    /// <summary>
+    /// Gets a value indicating whether the client is still connected and active.
+    /// </summary>
     public bool IsAlive => Client.IsAlive;
 
+    /// <summary>
+    /// Queues a payload to be sent to the client.
+    /// </summary>
+    /// <param name="data">The payload to send.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Send(byte[] data)
     {
         _server.Send(this, data);
     }
 
+    /// <summary>
+    /// Disconnects the client.
+    /// </summary>
     public void Close()
     {
         _server.Disconnect(this);
     }
 
+    /// <summary>
+    /// Compares this handle with another handle.
+    /// </summary>
+    /// <param name="other">The handle to compare.</param>
+    /// <returns><c>true</c> if both handles refer to the same client generation.</returns>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool Equals(ClientHandle other)
     {
         return _client == other._client && Generation == other.Generation;
     }
 
+    /// <inheritdoc />
     public override bool Equals(object? obj)
     {
         return obj is ClientHandle other && Equals(other);
     }
 
+    /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public override int GetHashCode()
     {

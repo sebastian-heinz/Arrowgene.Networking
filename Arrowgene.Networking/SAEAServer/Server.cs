@@ -79,8 +79,14 @@ public sealed class Server : IDisposable
     private int _shutdownStarted;
     private int _inFlightAsyncCallbacks;
 
+    /// <summary>
+    /// Gets the local IP address the server binds to.
+    /// </summary>
     public IPAddress IpAddress { get; }
 
+    /// <summary>
+    /// Gets the local TCP port the server binds to.
+    /// </summary>
     public ushort Port { get; }
 
     /// <summary>
@@ -608,6 +614,11 @@ public sealed class Server : IDisposable
         }
     }
 
+    /// <summary>
+    /// Queues a payload to be sent to the specified client.
+    /// </summary>
+    /// <param name="clientHandle">The target client.</param>
+    /// <param name="data">The payload to send.</param>
     public void Send(ClientHandle clientHandle, byte[] data)
     {
         if (!IsRunningState())
@@ -978,6 +989,7 @@ public sealed class Server : IDisposable
         }
     }
 
+    /// <inheritdoc />
     public void Dispose()
     {
         lock (_lifecycleLock)

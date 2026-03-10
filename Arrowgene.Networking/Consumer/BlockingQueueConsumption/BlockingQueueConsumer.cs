@@ -4,10 +4,19 @@ using Arrowgene.Networking.SAEAServer;
 
 namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
 {
+    /// <summary>
+    /// Queues consumer callbacks into a single blocking collection for external processing.
+    /// </summary>
     public class BlockingQueueConsumer : IConsumer
     {
+        /// <summary>
+        /// Gets the queue that receives client events in callback order.
+        /// </summary>
         public readonly BlockingCollection<ClientEvent> ClientEvents;
 
+        /// <summary>
+        /// Initializes an empty blocking queue consumer.
+        /// </summary>
         public BlockingQueueConsumer()
         {
             ClientEvents = new BlockingCollection<ClientEvent>();

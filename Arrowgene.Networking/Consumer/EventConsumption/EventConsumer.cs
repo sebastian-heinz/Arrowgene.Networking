@@ -3,20 +3,23 @@ using Arrowgene.Networking.SAEAServer;
 
 namespace Arrowgene.Networking.Consumer.EventConsumption
 {
+    /// <summary>
+    /// Adapts <see cref="IConsumer"/> callbacks into .NET events.
+    /// </summary>
     public class EventConsumer : IConsumer
     {
         /// <summary>
-        /// Occures when a client disconnected.
+        /// Occurs when a client disconnects.
         /// </summary>
         public event EventHandler<DisconnectedEventArgs> ClientDisconnected;
 
         /// <summary>
-        /// Occures when a client connected.
+        /// Occurs when a client connects.
         /// </summary>
         public event EventHandler<ConnectedEventArgs> ClientConnected;
 
         /// <summary>
-        /// Occures when a packet is received.
+        /// Occurs when a packet is received.
         /// </summary>
         public event EventHandler<ReceivedPacketEventArgs> ReceivedPacket;
 
