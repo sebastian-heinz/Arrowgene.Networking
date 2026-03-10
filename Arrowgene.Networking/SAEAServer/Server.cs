@@ -49,9 +49,11 @@ public sealed class Server : IDisposable
     private const string UnknownIdentity = "[Unknown Client]";
     private const string AcceptThreadName = "Server";
     private const string TimeoutThreadName = "AsyncEventServer_Timeout";
+    private const string DisconnectCleanupThreadName = "AsyncEventServer_DisconnectCleanup";
     private const int ThreadTimeoutMs = 10000;
     private const int MinSocketTimeoutDelayMs = 1000;
     private const int MaxSocketTimeoutDelayMs = 30000;
+    private const int DisconnectCleanupDelayMs = 500;
 
     private static readonly ILogger Logger = LogProvider.Logger(typeof(Server));
 
@@ -65,8 +67,11 @@ public sealed class Server : IDisposable
     private readonly int _bufferSize;
     private readonly string _identity;
     private readonly CancellationTokenSource _cancellation;
+    private readonly object _disconnectCleanupSync;
+    private readonly Queue<ClientHandle> _disconnectCleanupQueue;
     private readonly Thread _acceptThread;
     private readonly Thread _timeoutThread;
+    private readonly Thread _disconnectCleanupThread;
     private Socket? _listenSocket;
     private ServerState _state;
 
@@ -110,6 +115,8 @@ public sealed class Server : IDisposable
         _socketTimeout = TimeSpan.FromSeconds(_settings.ClientSocketTimeoutSeconds);
         _identity = string.IsNullOrEmpty(_settings.Identity) ? string.Empty : $"[{_settings.Identity}] ";
         _cancellation = new CancellationTokenSource();
+        _disconnectCleanupSync = new object();
+        _disconnectCleanupQueue = new Queue<ClientHandle>(_settings.MaxConnections);
         _bufferSlab = new BufferSlab(_settings.MaxConnections, _bufferSize);
         _clientRegistry = new ClientRegistry(
             _settings.MaxConnections,
@@ -123,6 +130,11 @@ public sealed class Server : IDisposable
         _timeoutThread = new Thread(CheckSocketTimeout)
         {
             Name = $"{_identity}{TimeoutThreadName}",
+            IsBackground = true
+        };
+        _disconnectCleanupThread = new Thread(CleanupDisconnectedClients)
+        {
+            Name = $"{_identity}{DisconnectCleanupThreadName}",
             IsBackground = true
         };
         _acceptThread = new Thread(Run)
@@ -164,6 +176,7 @@ public sealed class Server : IDisposable
             }
             
             _state = ServerState.Running;
+            _disconnectCleanupThread.Start();
             if (_socketTimeout > TimeSpan.Zero)
             {
                 _timeoutThread.Start();
@@ -732,9 +745,20 @@ public sealed class Server : IDisposable
         }
 
         client.Close();
+        if (!TryFinalizeDisconnect(clientHandle, reason) && client.TryMarkDisconnectCleanupQueued())
+        {
+            lock (_disconnectCleanupSync)
+            {
+                _disconnectCleanupQueue.Enqueue(clientHandle);
+            }
+        }
+    }
+
+    private bool TryFinalizeDisconnect(ClientHandle clientHandle, string reason)
+    {
         if (!_clientRegistry.TryDeactivateClient(clientHandle, out ClientSnapshot snapshot))
         {
-            return;
+            return false;
         }
 
         TimeSpan duration = snapshot.ConnectedAt == DateTime.MinValue
@@ -764,6 +788,44 @@ public sealed class Server : IDisposable
                 nameof(Disconnect),
                 "Error during consumer code."
             );
+        }
+
+        return true;
+    }
+
+    private void CleanupDisconnectedClients()
+    {
+        CancellationToken cancellationToken = _cancellation.Token;
+        List<ClientHandle> handles = new List<ClientHandle>(_settings.MaxConnections);
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            handles.Clear();
+            lock (_disconnectCleanupSync)
+            {
+                while (_disconnectCleanupQueue.Count > 0)
+                {
+                    handles.Add(_disconnectCleanupQueue.Dequeue());
+                }
+            }
+
+            foreach (ClientHandle clientHandle in handles)
+            {
+                if (!clientHandle.TryGetClient(out Client client))
+                {
+                    continue;
+                }
+
+                if (!TryFinalizeDisconnect(clientHandle, "DeferredCleanup"))
+                {
+                    lock (_disconnectCleanupSync)
+                    {
+                        _disconnectCleanupQueue.Enqueue(clientHandle);
+                    }
+                }
+            }
+
+            cancellationToken.WaitHandle.WaitOne(DisconnectCleanupDelayMs);
         }
     }
 
@@ -849,6 +911,7 @@ public sealed class Server : IDisposable
 
         Service.JoinThread(_acceptThread, ThreadTimeoutMs);
         Service.JoinThread(_timeoutThread, ThreadTimeoutMs);
+        Service.JoinThread(_disconnectCleanupThread, ThreadTimeoutMs);
 
         lock (_lifecycleLock)
         {

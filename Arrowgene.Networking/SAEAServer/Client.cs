@@ -21,6 +21,7 @@ internal sealed class Client : IDisposable
     private long _bytesSent;
     private int _pendingOperations;
     private uint _generation;
+    private bool _disconnectCleanupQueued;
 
 
     internal Client(
@@ -170,6 +171,7 @@ internal sealed class Client : IDisposable
 
             _isInPool = false;
             _isAlive = true;
+            _disconnectCleanupQueued = false;
         }
     }
 
@@ -200,6 +202,20 @@ internal sealed class Client : IDisposable
             }
 
             _isInPool = true;
+            return true;
+        }
+    }
+
+    internal bool TryMarkDisconnectCleanupQueued()
+    {
+        lock (_sync)
+        {
+            if (_disconnectCleanupQueued || _isInPool || _isAlive)
+            {
+                return false;
+            }
+
+            _disconnectCleanupQueued = true;
             return true;
         }
     }
@@ -281,6 +297,7 @@ internal sealed class Client : IDisposable
             Interlocked.Exchange(ref _bytesReceived, 0);
             Interlocked.Exchange(ref _bytesSent, 0);
             Interlocked.Exchange(ref _pendingOperations, 0);
+            _disconnectCleanupQueued = false;
             _sendQueue.Reset();
         }
     }
