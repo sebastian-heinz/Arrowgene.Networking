@@ -72,8 +72,12 @@ public sealed class Server : IDisposable
     private readonly Thread _acceptThread;
     private readonly Thread _timeoutThread;
     private readonly Thread _disconnectCleanupThread;
+    private readonly ManualResetEventSlim _shutdownCompleted;
+    private readonly ManualResetEventSlim _asyncCallbacksDrained;
     private Socket? _listenSocket;
     private ServerState _state;
+    private int _shutdownStarted;
+    private int _inFlightAsyncCallbacks;
 
     public IPAddress IpAddress { get; }
 
@@ -126,6 +130,8 @@ public sealed class Server : IDisposable
         _acceptPool = new AcceptPool(_settings.ConcurrentAccepts, AcceptCompleted);
 
         _state = ServerState.Created;
+        _shutdownCompleted = new ManualResetEventSlim(false);
+        _asyncCallbacksDrained = new ManualResetEventSlim(true);
 
         _timeoutThread = new Thread(CheckSocketTimeout)
         {
@@ -144,79 +150,107 @@ public sealed class Server : IDisposable
         };
     }
 
-    public void ServerStart()
+    /// <summary>
+    /// Starts the server. The server can only be started once.
+    /// </summary>
+    public void Start()
     {
-        Log(LogLevel.Info, nameof(ServerStart), "Starting server...");
+        Log(LogLevel.Info, nameof(Start), "Starting server...");
 
+        bool startTimeoutThread;
         lock (_lifecycleLock)
         {
             ServerState state = _state;
             if (state == ServerState.Disposed)
             {
-                Log(LogLevel.Error, nameof(ServerStart), "Server is disposed.");
+                Log(LogLevel.Error, nameof(Start), "Server is disposed.");
                 return;
             }
 
             if (state == ServerState.Stopped)
             {
-                Log(LogLevel.Error, nameof(ServerStart), "Server has been stopped. Restart is not supported.");
+                Log(LogLevel.Error, nameof(Start), "Server has been stopped. Restart is not supported.");
                 return;
             }
 
             if (state == ServerState.Stopping)
             {
-                Log(LogLevel.Error, nameof(ServerStart), "Server is stopping.");
+                Log(LogLevel.Error, nameof(Start), "Server is stopping.");
                 return;
             }
 
             if (state == ServerState.Running)
             {
-                Log(LogLevel.Error, nameof(ServerStart), "Server already started.");
+                Log(LogLevel.Error, nameof(Start), "Server already started.");
                 return;
             }
 
             _state = ServerState.Running;
+            startTimeoutThread = _socketTimeout > TimeSpan.Zero;
+        }
+
+        try
+        {
             _disconnectCleanupThread.Start();
-            if (_socketTimeout > TimeSpan.Zero)
+            if (startTimeoutThread)
             {
                 _timeoutThread.Start();
             }
 
             _acceptThread.Start();
         }
+        catch (Exception exception)
+        {
+            Logger.Exception(exception);
 
-        Log(LogLevel.Info, nameof(ServerStart), "Server start initiated.");
+            lock (_lifecycleLock)
+            {
+                if (_state == ServerState.Running)
+                {
+                    _state = ServerState.Stopping;
+                }
+            }
+
+            Log(LogLevel.Error, nameof(Start), "Server startup failed, shutting down.");
+            Shutdown();
+            return;
+        }
+
+        Log(LogLevel.Info, nameof(Start), "Server start initiated.");
     }
 
-    public void ServerStop()
+    /// <summary>
+    /// Stops the server and waits for in-flight socket completions to drain.
+    /// </summary>
+    public void Stop()
     {
         lock (_lifecycleLock)
         {
             ServerState state = _state;
             if (state == ServerState.Disposed)
             {
-                Log(LogLevel.Error, nameof(ServerStop), "Server is disposed.");
+                Log(LogLevel.Error, nameof(Stop), "Server is disposed.");
                 return;
             }
 
             if (state == ServerState.Stopped)
             {
-                Log(LogLevel.Error, nameof(ServerStop), "Server already stopped.");
+                Log(LogLevel.Error, nameof(Stop), "Server already stopped.");
                 return;
             }
 
             if (state == ServerState.Stopping)
             {
-                Log(LogLevel.Error, nameof(ServerStop), "Server stop is already in progress.");
+                Log(LogLevel.Error, nameof(Stop), "Server stop is already in progress.");
                 return;
             }
 
             _state = ServerState.Stopping;
         }
 
-        Log(LogLevel.Info, nameof(ServerStop), "Stopping server...");
+        Log(LogLevel.Info, nameof(Stop), "Stopping server...");
         Shutdown();
-        Log(LogLevel.Info, nameof(ServerStop), "Server stopped.");
+        Log(LogLevel.Info, nameof(Stop), "Server stopped.");
     }
 
     private void Run()
@@ -366,7 +400,15 @@ public sealed class Server : IDisposable
 
     private void AcceptCompleted(object? sender, SocketAsyncEventArgs acceptEventArgs)
     {
-        ProcessAccept(acceptEventArgs);
+        EnterAsyncCallback();
+        try
+        {
+            ProcessAccept(acceptEventArgs);
+        }
+        finally
+        {
+            ExitAsyncCallback();
+        }
     }
 
     private void ProcessAccept(SocketAsyncEventArgs acceptEventArgs)
@@ -491,20 +533,28 @@ public sealed class Server : IDisposable
 
     private void ReceiveCompleted(object? sender, SocketAsyncEventArgs eventArgs)
     {
-        if (eventArgs.UserToken is not ClientHandle clientHandle)
+        EnterAsyncCallback();
+        try
         {
-            Log(LogLevel.Error, nameof(ReceiveCompleted), "Unexpected user token.");
-            return;
-        }
+            if (eventArgs.UserToken is not ClientHandle clientHandle)
+            {
+                Log(LogLevel.Error, nameof(ReceiveCompleted), "Unexpected user token.");
+                return;
+            }
 
-        bool continueReceiving = ProcessReceive(clientHandle);
-        if (continueReceiving)
+            bool continueReceiving = ProcessReceive(clientHandle);
+            if (continueReceiving)
+            {
+                StartReceive(clientHandle);
+                return;
+            }
+
+            Disconnect(clientHandle);
+        }
+        finally
         {
-            StartReceive(clientHandle);
-            return;
+            ExitAsyncCallback();
         }
-
-        Disconnect(clientHandle);
     }
 
     private bool ProcessReceive(ClientHandle clientHandle)
@@ -683,16 +733,24 @@ public sealed class Server : IDisposable
 
     private void SendCompleted(object? sender, SocketAsyncEventArgs eventArgs)
     {
-        if (eventArgs.UserToken is not ClientHandle clientHandle)
+        EnterAsyncCallback();
+        try
         {
-            Log(LogLevel.Error, nameof(SendCompleted), "Unexpected user token.");
-            return;
-        }
+            if (eventArgs.UserToken is not ClientHandle clientHandle)
+            {
+                Log(LogLevel.Error, nameof(SendCompleted), "Unexpected user token.");
+                return;
+            }
 
-        bool continueSending = ProcessSend(clientHandle);
-        if (continueSending)
+            bool continueSending = ProcessSend(clientHandle);
+            if (continueSending)
+            {
+                StartSend(clientHandle);
+            }
+        }
+        finally
         {
-            StartSend(clientHandle);
+            ExitAsyncCallback();
         }
     }
 
@@ -811,31 +869,13 @@ public sealed class Server : IDisposable
         CancellationToken cancellationToken = _cancellation.Token;
         List<ClientHandle> handles = new List<ClientHandle>(_settings.MaxConnections);
 
-        while (!cancellationToken.IsCancellationRequested)
+        while (true)
         {
-            handles.Clear();
-            lock (_disconnectCleanupSync)
-            {
-                while (_disconnectCleanupQueue.Count > 0)
-                {
-                    handles.Add(_disconnectCleanupQueue.Dequeue());
-                }
-            }
+            ProcessDisconnectCleanupQueue(handles, "DeferredCleanup");
 
-            foreach (ClientHandle clientHandle in handles)
+            if (cancellationToken.IsCancellationRequested && IsDisconnectCleanupQueueEmpty())
             {
-                if (!clientHandle.TryGetClient(out Client client))
-                {
-                    continue;
-                }
-
-                if (!TryFinalizeDisconnect(clientHandle, "DeferredCleanup"))
-                {
-                    lock (_disconnectCleanupSync)
-                    {
-                        _disconnectCleanupQueue.Enqueue(clientHandle);
-                    }
-                }
+                return;
             }
 
             cancellationToken.WaitHandle.WaitOne(DisconnectCleanupDelayMs);
@@ -894,44 +934,53 @@ public sealed class Server : IDisposable
 
     private void Shutdown()
     {
-        Socket? listenSocket;
-        lock (_lifecycleLock)
+        if (Interlocked.CompareExchange(ref _shutdownStarted, 1, 0) != 0)
         {
-            if (_state == ServerState.Running || _state == ServerState.Created)
-            {
-                _state = ServerState.Stopping;
-            }
-
-            listenSocket = _listenSocket;
-            _listenSocket = null;
+            _shutdownCompleted.Wait();
+            return;
         }
 
-        Service.CloseSocket(listenSocket);
         try
         {
-            _cancellation.Cancel();
-        }
-        catch (ObjectDisposedException)
-        {
-        }
-
-        List<ClientHandle> handles = new List<ClientHandle>(_settings.MaxConnections);
-        _clientRegistry.SnapshotActiveHandles(handles);
-        foreach (ClientHandle clientHandle in handles)
-        {
-            Disconnect(clientHandle);
-        }
-
-        Service.JoinThread(_acceptThread, ThreadTimeoutMs);
-        Service.JoinThread(_timeoutThread, ThreadTimeoutMs);
-        Service.JoinThread(_disconnectCleanupThread, ThreadTimeoutMs);
-
-        lock (_lifecycleLock)
-        {
-            if (_state == ServerState.Stopping)
+            Socket? listenSocket;
+            lock (_lifecycleLock)
             {
-                _state = ServerState.Stopped;
+                if (_state == ServerState.Running || _state == ServerState.Created)
+                {
+                    _state = ServerState.Stopping;
+                }
+
+                listenSocket = _listenSocket;
+                _listenSocket = null;
             }
+
+            Service.CloseSocket(listenSocket);
+            try
+            {
+                _cancellation.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+
+            DisconnectActiveClients();
+            Service.JoinThread(_acceptThread, ThreadTimeoutMs);
+            WaitForShutdownQuiescence();
+            Service.JoinThread(_timeoutThread, ThreadTimeoutMs);
+            Service.JoinThread(_disconnectCleanupThread, ThreadTimeoutMs);
+            WaitForShutdownQuiescence();
+
+            lock (_lifecycleLock)
+            {
+                if (_state == ServerState.Stopping)
+                {
+                    _state = ServerState.Stopped;
+                }
+            }
+        }
+        finally
+        {
+            _shutdownCompleted.Set();
         }
     }
 
@@ -951,6 +1000,8 @@ public sealed class Server : IDisposable
         _acceptPool.Dispose();
         _clientRegistry.Dispose();
         _cancellation.Dispose();
+        _shutdownCompleted.Dispose();
+        _asyncCallbacksDrained.Dispose();
         Log(LogLevel.Info, nameof(Dispose), "Server resources disposed.");
     }
 
@@ -994,5 +1045,107 @@ public sealed class Server : IDisposable
             ? $"{_identity}{clientIdentity} "
             : string.Empty;
         Logger.Write(level, $"{prefix}{function} - {message}", null);
+    }
+
+    private void EnterAsyncCallback()
+    {
+        if (Interlocked.Increment(ref _inFlightAsyncCallbacks) == 1)
+        {
+            _asyncCallbacksDrained.Reset();
+        }
+    }
+
+    private void ExitAsyncCallback()
+    {
+        if (Interlocked.Decrement(ref _inFlightAsyncCallbacks) == 0)
+        {
+            _asyncCallbacksDrained.Set();
+        }
+    }
+
+    private void DisconnectActiveClients()
+    {
+        List<ClientHandle> handles = new List<ClientHandle>(_settings.MaxConnections);
+        _clientRegistry.SnapshotActiveHandles(handles);
+
+        foreach (ClientHandle clientHandle in handles)
+        {
+            Disconnect(clientHandle);
+        }
+    }
+
+    private void WaitForShutdownQuiescence()
+    {
+        List<ClientHandle> handles = new List<ClientHandle>(_settings.MaxConnections);
+
+        while (true)
+        {
+            DisconnectActiveClients();
+            ProcessDisconnectCleanupQueue(handles, "DeferredCleanup");
+
+            if (IsShutdownQuiescent(handles))
+            {
+                return;
+            }
+
+            _asyncCallbacksDrained.Wait(DisconnectCleanupDelayMs);
+        }
+    }
+
+    private bool IsShutdownQuiescent(List<ClientHandle> handles)
+    {
+        _clientRegistry.SnapshotActiveHandles(handles);
+        if (handles.Count > 0)
+        {
+            return false;
+        }
+
+        if (Volatile.Read(ref _inFlightAsyncCallbacks) != 0)
+        {
+            return false;
+        }
+
+        if (_acceptPool.CurrentCount != _acceptPool.Capacity)
+        {
+            return false;
+        }
+
+        return IsDisconnectCleanupQueueEmpty();
+    }
+
+    private bool IsDisconnectCleanupQueueEmpty()
+    {
+        lock (_disconnectCleanupSync)
+        {
+            return _disconnectCleanupQueue.Count == 0;
+        }
+    }
+
+    private void ProcessDisconnectCleanupQueue(List<ClientHandle> handles, string reason)
+    {
+        handles.Clear();
+        lock (_disconnectCleanupSync)
+        {
+            while (_disconnectCleanupQueue.Count > 0)
+            {
+                handles.Add(_disconnectCleanupQueue.Dequeue());
+            }
+        }
+
+        foreach (ClientHandle clientHandle in handles)
+        {
+            if (!clientHandle.TryGetClient(out Client client))
+            {
+                continue;
+            }
+
+            if (!TryFinalizeDisconnect(clientHandle, reason))
+            {
+                lock (_disconnectCleanupSync)
+                {
+                    _disconnectCleanupQueue.Enqueue(clientHandle);
+                }
+            }
+        }
     }
 }

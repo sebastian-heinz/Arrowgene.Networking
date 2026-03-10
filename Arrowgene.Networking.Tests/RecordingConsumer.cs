@@ -16,11 +16,19 @@ internal sealed class RecordingConsumer : IConsumer
     private readonly Dictionary<ClientKey, long> _receivedBytesByClient;
     private readonly bool _echoReceivedData;
     private readonly int _receiveDelayMs;
+    private readonly bool _blockFirstReceive;
+    private readonly ManualResetEventSlim _blockedReceiveEntered;
+    private readonly ManualResetEventSlim _blockedReceiveRelease;
     private long _totalReceivedBytes;
     private int _activeReceiveCallbacks;
     private int _maxConcurrentReceiveCallbacks;
+    private int _blockedReceiveConsumed;
 
-    internal RecordingConsumer(bool echoReceivedData = false, int receiveDelayMs = 0)
+    internal RecordingConsumer(
+        bool echoReceivedData = false,
+        int receiveDelayMs = 0,
+        bool blockFirstReceive = false
+    )
     {
         _sync = new object();
         _connectedClients = new List<ConnectedClientRecord>();
@@ -29,6 +37,9 @@ internal sealed class RecordingConsumer : IConsumer
         _receivedBytesByClient = new Dictionary<ClientKey, long>();
         _echoReceivedData = echoReceivedData;
         _receiveDelayMs = receiveDelayMs;
+        _blockFirstReceive = blockFirstReceive;
+        _blockedReceiveEntered = new ManualResetEventSlim(false);
+        _blockedReceiveRelease = new ManualResetEventSlim(!blockFirstReceive);
     }
 
     internal int ConnectedCount
@@ -111,6 +122,12 @@ internal sealed class RecordingConsumer : IConsumer
 
             Interlocked.Add(ref _totalReceivedBytes, data.Length);
 
+            if (_blockFirstReceive && Interlocked.CompareExchange(ref _blockedReceiveConsumed, 1, 0) == 0)
+            {
+                _blockedReceiveEntered.Set();
+                _blockedReceiveRelease.Wait();
+            }
+
             if (_echoReceivedData)
             {
                 clientHandle.Send(data);
@@ -190,6 +207,20 @@ internal sealed class RecordingConsumer : IConsumer
             timeout,
             $"Timed out waiting for {expected} received bytes. Current total: {TotalReceivedBytes}."
         ).ConfigureAwait(false);
+    }
+
+    internal async Task WaitForBlockedReceiveAsync(TimeSpan timeout)
+    {
+        await TestWait.UntilAsync(
+            () => _blockedReceiveEntered.IsSet,
+            timeout,
+            "Timed out waiting for the blocked receive callback to start."
+        ).ConfigureAwait(false);
+    }
+
+    internal void ReleaseBlockedReceive()
+    {
+        _blockedReceiveRelease.Set();
     }
 
     private void UpdateMaxConcurrentCallbacks(int activeCallbacks)

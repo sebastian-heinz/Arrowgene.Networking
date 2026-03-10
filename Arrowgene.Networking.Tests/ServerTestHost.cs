@@ -41,7 +41,7 @@ internal sealed class ServerTestHost : IDisposable
         _trackedClients = new List<TcpClient>();
         Port = PortAllocator.GetFreeTcpPort();
         Server = new Server(IPAddress.Loopback, Port, Consumer, settings);
-        Server.ServerStart();
+        Server.Start();
     }
 
     internal RecordingConsumer Consumer { get; }
@@ -180,7 +180,7 @@ internal sealed class ServerTestHost : IDisposable
 
         try
         {
-            Server.ServerStop();
+            Server.Stop();
         }
         catch
         {

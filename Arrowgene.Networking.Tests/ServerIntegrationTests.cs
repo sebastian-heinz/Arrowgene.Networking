@@ -298,6 +298,48 @@ public sealed class ServerIntegrationTests
     }
 
     /// <summary>
+    /// Verifies stop blocks until an in-flight receive callback has completed.
+    /// </summary>
+    [Fact]
+    public async Task Stop_WaitsForInFlightReceiveCallbackToFinish()
+    {
+        RecordingConsumer consumer = new RecordingConsumer(blockFirstReceive: true);
+
+        using ServerTestHost host = new ServerTestHost(
+            consumer,
+            settings =>
+            {
+                settings.MaxConnections = 1;
+                settings.BufferSize = 256;
+            }
+        );
+
+        TcpClient client = await host.ConnectClientAsync();
+
+        try
+        {
+            await consumer.WaitForConnectedCountAsync(1, ShortTimeout);
+            await host.WriteAsync(client, CreatePayload(128, 600), MediumTimeout);
+            await consumer.WaitForBlockedReceiveAsync(ShortTimeout);
+
+            Task stopTask = Task.Run(() => host.Server.Stop());
+
+            await Task.Delay(200);
+            Assert.False(stopTask.IsCompleted);
+
+            consumer.ReleaseBlockedReceive();
+
+            await stopTask.WaitAsync(MediumTimeout);
+            await consumer.WaitForDisconnectedCountAsync(1, MediumTimeout);
+            Assert.Empty(consumer.Errors);
+        }
+        finally
+        {
+            host.DisposeClient(client);
+        }
+    }
+
+    /// <summary>
     /// Verifies repeated connect-send-disconnect waves recycle pooled client slots without losing callbacks.
     /// </summary>
     [Fact]
@@ -357,6 +399,55 @@ public sealed class ServerIntegrationTests
         Assert.Equal(clientsPerWave * waveCount, consumer.ConnectedCount);
         Assert.Equal(clientsPerWave * waveCount, consumer.DisconnectedCount);
         Assert.Empty(consumer.Errors);
+    }
+
+    /// <summary>
+    /// Verifies dispose can join an already-running stop without tearing down pooled resources early.
+    /// </summary>
+    [Fact]
+    public async Task Dispose_CanJoinConcurrentStopDuringBusyReceive()
+    {
+        RecordingConsumer consumer = new RecordingConsumer(blockFirstReceive: true);
+
+        using ServerTestHost host = new ServerTestHost(
+            consumer,
+            settings =>
+            {
+                settings.MaxConnections = 1;
+                settings.BufferSize = 256;
+            }
+        );
+
+        TcpClient client = await host.ConnectClientAsync();
+
+        try
+        {
+            await consumer.WaitForConnectedCountAsync(1, ShortTimeout);
+            await host.WriteAsync(client, CreatePayload(128, 601), MediumTimeout);
+            await consumer.WaitForBlockedReceiveAsync(ShortTimeout);
+
+            Task stopTask = Task.Run(() => host.Server.Stop());
+            await Task.Delay(50);
+            Task disposeTask = Task.Run(() => host.Server.Dispose());
+
+            await Task.Delay(200);
+            Assert.False(stopTask.IsCompleted);
+            Assert.False(disposeTask.IsCompleted);
+
+            consumer.ReleaseBlockedReceive();
+
+            await stopTask.WaitAsync(MediumTimeout);
+            await disposeTask.WaitAsync(MediumTimeout);
+            await consumer.WaitForDisconnectedCountAsync(1, MediumTimeout);
+
+            Assert.True(stopTask.IsCompletedSuccessfully);
+            Assert.True(disposeTask.IsCompletedSuccessfully);
+            Assert.Empty(consumer.Errors);
+        }
+        finally
+        {
+            host.DisposeClient(client);
+        }
     }
 
     /// <summary>
