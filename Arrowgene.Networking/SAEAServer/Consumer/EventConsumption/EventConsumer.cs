@@ -23,7 +23,7 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.EventConsumption
         public event EventHandler<ReceivedPacketEventArgs>? ReceivedPacket;
 
         /// <summary>
-        /// Occurs when a packet is received.
+        /// Occurs when a consumer error is raised.
         /// </summary>
         public event EventHandler<ErrorEventArgs>? OnError;
 

@@ -40,9 +40,20 @@ public readonly struct ClientHandle : IEquatable<ClientHandle>
         }
     }
 
-    public ClientSnapshot Snapshot()
+    /// <summary>
+    /// Captures an immutable snapshot of the current client state.
+    /// </summary>
+    /// <returns>A <see cref="ClientSnapshot"/> representing the client's state at this moment.</returns>
+    public bool TrySnapshot(out ClientSnapshot snapshot)
     {
-        return Client.Snapshot();
+        if (!TryGetClient(out Client client))
+        {
+            snapshot = default;
+            return false;
+        }
+
+        snapshot = client.Snapshot();
+        return false;
     }
 
     /// <summary>

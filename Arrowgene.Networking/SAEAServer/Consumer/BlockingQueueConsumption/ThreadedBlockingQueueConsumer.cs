@@ -52,6 +52,12 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
         /// <param name="clientHandle">The connected client.</param>
         protected abstract void HandleConnected(ClientHandle clientHandle);
 
+        /// <summary>
+        /// Handles a consumer error on the worker thread assigned to the client's ordering lane.
+        /// </summary>
+        /// <param name="clientHandle">The client associated with the error.</param>
+        /// <param name="exception">The exception that was thrown.</param>
+        /// <param name="message">Additional context about where the error occurred.</param>
         protected abstract void HandleError(ClientHandle clientHandle, Exception exception, string message);
 
         private void Consume(int unitOfOrder)

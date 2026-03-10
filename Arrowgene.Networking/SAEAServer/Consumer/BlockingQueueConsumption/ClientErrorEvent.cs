@@ -17,8 +17,14 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
         /// </summary>
         public ClientHandle ClientHandle { get; }
 
+        /// <summary>
+        /// Gets the exception that was thrown.
+        /// </summary>
         public Exception Exception { get; }
 
+        /// <summary>
+        /// Gets additional context about where the error occurred.
+        /// </summary>
         public string Message { get; }
 
         internal ClientErrorEvent(ClientHandle clientHandle, Exception exception, string message)
