@@ -66,14 +66,14 @@ public sealed class Server : IDisposable
     private readonly TimeSpan _socketTimeout;
     private readonly int _bufferSize;
     private readonly string _identity;
-    private readonly CancellationTokenSource _cancellation;
     private readonly object _disconnectCleanupSync;
     private readonly Queue<ClientHandle> _disconnectCleanupQueue;
-    private readonly Thread _acceptThread;
-    private readonly Thread _timeoutThread;
-    private readonly Thread _disconnectCleanupThread;
     private readonly ManualResetEventSlim _shutdownCompleted;
     private readonly ManualResetEventSlim _asyncCallbacksDrained;
+    private CancellationTokenSource _cancellation;
+    private Thread _acceptThread;
+    private Thread _timeoutThread;
+    private Thread _disconnectCleanupThread;
     private Socket? _listenSocket;
     private ServerState _state;
     private int _shutdownStarted;
@@ -118,7 +118,6 @@ public sealed class Server : IDisposable
         _lifecycleLock = new object();
         _socketTimeout = TimeSpan.FromSeconds(_settings.ClientSocketTimeoutSeconds);
         _identity = string.IsNullOrEmpty(_settings.Identity) ? string.Empty : $"[{_settings.Identity}] ";
-        _cancellation = new CancellationTokenSource();
         _disconnectCleanupSync = new object();
         _disconnectCleanupQueue = new Queue<ClientHandle>(_settings.MaxConnections);
         _bufferSlab = new BufferSlab(_settings.MaxConnections, _bufferSize);
@@ -132,26 +131,14 @@ public sealed class Server : IDisposable
         _state = ServerState.Created;
         _shutdownCompleted = new ManualResetEventSlim(false);
         _asyncCallbacksDrained = new ManualResetEventSlim(true);
-
-        _timeoutThread = new Thread(CheckSocketTimeout)
-        {
-            Name = $"{_identity}{TimeoutThreadName}",
-            IsBackground = true
-        };
-        _disconnectCleanupThread = new Thread(CleanupDisconnectedClients)
-        {
-            Name = $"{_identity}{DisconnectCleanupThreadName}",
-            IsBackground = true
-        };
-        _acceptThread = new Thread(Run)
-        {
-            Name = $"{_identity}{AcceptThreadName}",
-            IsBackground = true
-        };
+        _cancellation = new CancellationTokenSource();
+        _acceptThread = CreateBackgroundThread(Run, AcceptThreadName);
+        _timeoutThread = CreateBackgroundThread(CheckSocketTimeout, TimeoutThreadName);
+        _disconnectCleanupThread = CreateBackgroundThread(CleanupDisconnectedClients, DisconnectCleanupThreadName);
     }
 
     /// <summary>
-    /// Starts the server. The server can only be started once.
+    /// Starts the server. The server can be started again after it has been stopped.
     /// </summary>
     public void Start()
     {
@@ -167,12 +154,6 @@ public sealed class Server : IDisposable
                 return;
             }
 
-            if (state == ServerState.Stopped)
-            {
-                Log(LogLevel.Error, nameof(Start), "Server has been stopped. Restart is not supported.");
-                return;
-            }
-
             if (state == ServerState.Stopping)
             {
                 Log(LogLevel.Error, nameof(Start), "Server is stopping.");
@@ -183,6 +164,11 @@ public sealed class Server : IDisposable
             {
                 Log(LogLevel.Error, nameof(Start), "Server already started.");
                 return;
+            }
+
+            if (state == ServerState.Stopped)
+            {
+                RecreateRunResources();
             }
 
             _state = ServerState.Running;
@@ -977,6 +963,14 @@ public sealed class Server : IDisposable
                     _state = ServerState.Stopped;
                 }
             }
+
+            try
+            {
+                _cancellation.Dispose();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
         }
         finally
         {
@@ -1147,5 +1141,26 @@ public sealed class Server : IDisposable
                 }
             }
         }
+    }
+
+    private void RecreateRunResources()
+    {
+        _cancellation = new CancellationTokenSource();
+        _shutdownCompleted.Reset();
+        _asyncCallbacksDrained.Set();
+        _shutdownStarted = 0;
+        _inFlightAsyncCallbacks = 0;
+        _acceptThread = CreateBackgroundThread(Run, AcceptThreadName);
+        _timeoutThread = CreateBackgroundThread(CheckSocketTimeout, TimeoutThreadName);
+        _disconnectCleanupThread = CreateBackgroundThread(CleanupDisconnectedClients, DisconnectCleanupThreadName);
+    }
+
+    private Thread CreateBackgroundThread(ThreadStart threadStart, string name)
+    {
+        return new Thread(threadStart)
+        {
+            Name = $"{_identity}{name}",
+            IsBackground = true
+        };
     }
 }

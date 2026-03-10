@@ -340,6 +340,53 @@ public sealed class ServerIntegrationTests
     }
 
     /// <summary>
+    /// Verifies the same server instance can be stopped and started multiple times.
+    /// </summary>
+    [Fact]
+    public async Task Restart_CanStartAndStopSameInstanceMultipleTimes()
+    {
+        RecordingConsumer consumer = new RecordingConsumer(echoReceivedData: true);
+
+        using ServerTestHost host = new ServerTestHost(
+            consumer,
+            settings =>
+            {
+                settings.MaxConnections = 2;
+                settings.BufferSize = 256;
+            }
+        );
+
+        for (int cycle = 0; cycle < 3; cycle++)
+        {
+            TcpClient client = await host.ConnectClientAsync();
+
+            try
+            {
+                await consumer.WaitForConnectedCountAsync(cycle + 1, MediumTimeout);
+                byte[] payload = CreatePayload(128 + cycle, 700 + cycle);
+                byte[] echoed = await host.RoundTripAsync(client, payload, MediumTimeout);
+                Assert.Equal(payload, echoed);
+            }
+            finally
+            {
+                host.DisposeClient(client);
+            }
+
+            host.Server.Stop();
+            await consumer.WaitForDisconnectedCountAsync(cycle + 1, MediumTimeout);
+
+            if (cycle < 2)
+            {
+                host.Server.Start();
+            }
+        }
+
+        Assert.Equal(3, consumer.ConnectedCount);
+        Assert.Equal(3, consumer.DisconnectedCount);
+        Assert.Empty(consumer.Errors);
+    }
+
+    /// <summary>
     /// Verifies repeated connect-send-disconnect waves recycle pooled client slots without losing callbacks.
     /// </summary>
     [Fact]
