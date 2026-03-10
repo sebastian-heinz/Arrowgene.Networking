@@ -6,16 +6,23 @@ using Arrowgene.Logging;
 
 namespace Arrowgene.Networking
 {
+    /// <summary>
+    /// Defines socket configuration applied to listener or client sockets.
+    /// </summary>
     [DataContract]
     public class SocketSettings : ICloneable
     {
+        private static readonly ILogger Logger = LogProvider.Logger(typeof(SocketSettings));
+
+        /// <summary>
+        /// Initializes the default socket settings.
+        /// </summary>
         public SocketSettings()
         {
-            Backlog = 5;
+            Backlog = 128;
             DualMode = false;
             ExclusiveAddressUse = false;
             NoDelay = false;
-            UseOnlyOverlappedIo = false;
             ReceiveBufferSize = 8192;
             ReceiveTimeout = 0;
             SendBufferSize = 8192;
@@ -28,13 +35,16 @@ namespace Arrowgene.Networking
             AddSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, false);
         }
 
+        /// <summary>
+        /// Initializes a deep copy of an existing socket settings instance.
+        /// </summary>
+        /// <param name="socketSettings">The settings to copy.</param>
         public SocketSettings(SocketSettings socketSettings)
         {
             Backlog = socketSettings.Backlog;
             DualMode = socketSettings.DualMode;
             ExclusiveAddressUse = socketSettings.ExclusiveAddressUse;
             NoDelay = socketSettings.NoDelay;
-            UseOnlyOverlappedIo = socketSettings.UseOnlyOverlappedIo;
             ReceiveBufferSize = socketSettings.ReceiveBufferSize;
             ReceiveTimeout = socketSettings.ReceiveTimeout;
             SendBufferSize = socketSettings.SendBufferSize;
@@ -75,19 +85,13 @@ namespace Arrowgene.Networking
         [DataMember(Order = 5)]
         public bool NoDelay { get; set; }
 
-        /// <summary>Specifies whether the socket should only use Overlapped I/O mode.</summary>
-        /// <returns>true if the <see cref="T:System.Net.Sockets.Socket"></see> uses only overlapped I/O; otherwise, false. The default is false.</returns>
-        /// <exception cref="T:System.InvalidOperationException">The socket has been bound to a completion port.</exception>
-        [DataMember(Order = 6)]
-        public bool UseOnlyOverlappedIo { get; set; }
-
         /// <summary>Gets or sets a value that specifies the size of the receive buffer of the <see cref="T:System.Net.Sockets.Socket"></see>.</summary>
         /// <returns>An <see cref="T:System.Int32"></see> that contains the size, in bytes, of the receive buffer. The default is 8192.</returns>
         /// <exception cref="T:System.ArgumentOutOfRangeException">The value specified for a set operation is less than 0.</exception>
         [DataMember(Order = 7)]
         public int ReceiveBufferSize { get; set; }
 
-        /// <summary>Gets or sets a value that specifies the amount of time after which a synchronous <see cref="Socket.Receive"></see> call will time out.</summary>
+        /// <summary>Gets or sets a value that specifies the amount of time after which a synchronous <see cref="Socket.Receive(byte[])"></see> call will time out.</summary>
         /// <returns>The time-out value, in milliseconds. The default value is 0, which indicates an infinite time-out period. Specifying -1 also indicates an infinite time-out period.</returns>
         /// <exception cref="T:System.ArgumentOutOfRangeException">The value specified for a set operation is less than -1.</exception>
         [DataMember(Order = 8)]
@@ -99,7 +103,7 @@ namespace Arrowgene.Networking
         [DataMember(Order = 9)]
         public int SendBufferSize { get; set; }
 
-        /// <summary>Gets or sets a value that specifies the amount of time after which a synchronous <see cref="Socket.Send"></see> call will time out.</summary>
+        /// <summary>Gets or sets a value that specifies the amount of time after which a synchronous <see cref="Socket.Send(byte[])"></see> call will time out.</summary>
         /// <returns>The time-out value, in milliseconds. If you set the property with a value between 1 and 499, the value will be changed to 500. The default value is 0, which indicates an infinite time-out period. Specifying -1 also indicates an infinite time-out period.</returns>
         /// <exception cref="T:System.ArgumentOutOfRangeException">The value specified for a set operation is less than -1.</exception>
         [DataMember(Order = 10)]
@@ -113,32 +117,41 @@ namespace Arrowgene.Networking
         [DataMember(Order = 11)]
         public short Ttl { get; set; }
 
-        /// <summary>Gets or sets a value that specifies whether the <see cref="T:System.Net.Sockets.Socket"></see> will delay closing a socket in an attempt to send all pending data.</summary>
-        /// <summary>Gets or sets a value that indicates whether to linger after the <see cref="T:System.Net.Sockets.Socket"></see> is closed.</summary>
-        /// <returns>true if the <see cref="T:System.Net.Sockets.Socket"></see> should linger after <see cref="M:System.Net.Sockets.Socket.Close"></see> is called; otherwise, false.</returns>
+        /// <summary>Gets or sets a value that indicates whether the socket should linger after it is closed.</summary>
         [DataMember(Order = 12)]
         public bool LingerEnabled { get; set; }
 
-        /// <summary>Gets or sets a value that specifies whether the <see cref="T:System.Net.Sockets.Socket"></see> will delay closing a socket in an attempt to send all pending data.</summary>
-        /// <summary>Gets or sets the amount of time to remain connected after calling the <see cref="M:System.Net.Sockets.Socket.Close"></see> method if data remains to be sent.</summary>
-        /// <returns>The amount of time, in seconds, to remain connected after calling <see cref="M:System.Net.Sockets.Socket.Close"></see>.</returns>
+        /// <summary>Gets or sets the linger duration in seconds when <see cref="LingerEnabled"/> is enabled.</summary>
         [DataMember(Order = 13)]
         public int LingerTime { get; set; }
 
+        /// <summary>
+        /// Gets or sets additional raw socket options applied after the strongly typed settings.
+        /// </summary>
         [DataMember(Order = 14)]
         public List<SocketOption> SocketOptions { get; set; }
 
+        /// <summary>
+        /// Adds a raw socket option definition.
+        /// </summary>
+        /// <param name="optionLevel">The socket option level.</param>
+        /// <param name="optionName">The socket option name.</param>
+        /// <param name="optionValue">The socket option value.</param>
         public void AddSocketOption(SocketOptionLevel optionLevel, SocketOptionName optionName, object optionValue)
         {
             AddSocketOption(new SocketOption(optionLevel, optionName, optionValue));
         }
 
+        /// <summary>
+        /// Adds a raw socket option definition.
+        /// </summary>
+        /// <param name="socketOption">The socket option to add.</param>
         public void AddSocketOption(SocketOption socketOption)
         {
             SocketOptions.Add(socketOption);
         }
 
-        public void SetSocketOptions(Socket socket, ILogger logger = null)
+        private void SetSocketOptions(Socket socket)
         {
             foreach (SocketOption option in SocketOptions)
             {
@@ -148,13 +161,17 @@ namespace Arrowgene.Networking
                 }
                 catch (Exception)
                 {
-                    logger?.Debug(
+                    Logger.Debug(
                         $"Ignoring Socket Option: (Level:{option?.Level} Name:{option?.Name} Value:{option?.Value})");
                 }
             }
         }
 
-        public void ConfigureSocket(Socket socket, ILogger logger = null)
+        /// <summary>
+        /// Applies the configured settings and raw socket options to a socket.
+        /// </summary>
+        /// <param name="socket">The socket to configure.</param>
+        public void ConfigureSocket(Socket socket)
         {
             if (socket.SocketType == SocketType.Dgram)
             {
@@ -164,7 +181,7 @@ namespace Arrowgene.Networking
                 }
                 catch (Exception)
                 {
-                    logger?.Debug("Ignoring Socket Setting: DontFragment");
+                    Logger.Debug("Ignoring Socket Setting: DontFragment");
                 }
             }
 
@@ -176,7 +193,7 @@ namespace Arrowgene.Networking
                 }
                 catch (Exception)
                 {
-                    logger?.Debug("Ignoring Socket Setting: DualMode");
+                    Logger.Debug("Ignoring Socket Setting: DualMode");
                 }
             }
 
@@ -186,7 +203,7 @@ namespace Arrowgene.Networking
             }
             catch (Exception)
             {
-                logger?.Debug("Ignoring Socket Setting: ExclusiveAddressUse");
+                Logger.Debug("Ignoring Socket Setting: ExclusiveAddressUse");
             }
 
             try
@@ -195,7 +212,7 @@ namespace Arrowgene.Networking
             }
             catch (Exception)
             {
-                logger?.Debug("Ignoring Socket Setting: LingerState");
+                Logger.Debug("Ignoring Socket Setting: LingerState");
             }
 
             try
@@ -204,7 +221,7 @@ namespace Arrowgene.Networking
             }
             catch (Exception)
             {
-                logger?.Debug("Ignoring Socket Setting: NoDelay");
+                Logger.Debug("Ignoring Socket Setting: NoDelay");
             }
 
             try
@@ -213,7 +230,7 @@ namespace Arrowgene.Networking
             }
             catch (Exception)
             {
-                logger?.Debug("Ignoring Socket Setting: ReceiveBufferSize");
+                Logger.Debug("Ignoring Socket Setting: ReceiveBufferSize");
             }
 
 
@@ -223,7 +240,7 @@ namespace Arrowgene.Networking
             }
             catch (Exception)
             {
-                logger?.Debug("Ignoring Socket Setting: ReceiveTimeout");
+                Logger.Debug("Ignoring Socket Setting: ReceiveTimeout");
             }
 
 
@@ -233,7 +250,7 @@ namespace Arrowgene.Networking
             }
             catch (Exception)
             {
-                logger?.Debug("Ignoring Socket Setting: SendBufferSize");
+                Logger.Debug("Ignoring Socket Setting: SendBufferSize");
             }
 
             try
@@ -242,7 +259,7 @@ namespace Arrowgene.Networking
             }
             catch (Exception)
             {
-                logger?.Debug("Ignoring Socket Setting: SendTimeout");
+                Logger.Debug("Ignoring Socket Setting: SendTimeout");
             }
 
             try
@@ -251,23 +268,17 @@ namespace Arrowgene.Networking
             }
             catch (Exception)
             {
-                logger?.Debug("Ignoring Socket Setting: Ttl");
-            }
-
-
-            try
-            {
-                socket.UseOnlyOverlappedIO = UseOnlyOverlappedIo;
-            }
-            catch (Exception)
-            {
-                logger?.Debug("Ignoring Socket Setting: UseOnlyOverlappedIo");
+                Logger.Debug("Ignoring Socket Setting: Ttl");
             }
 
             SetSocketOptions(socket);
         }
 
-
+        
+        /// <summary>
+        /// Creates a deep copy of the socket settings.
+        /// </summary>
+        /// <returns>A copied <see cref="SocketSettings"/> instance.</returns>
         public object Clone()
         {
             return new SocketSettings(this);
