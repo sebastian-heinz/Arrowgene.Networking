@@ -215,6 +215,7 @@ public sealed class Server : IDisposable
 
         if (!TrySocketListen())
         {
+            bool shouldShutdown = false;
             lock (_lifecycleLock)
             {
                 
