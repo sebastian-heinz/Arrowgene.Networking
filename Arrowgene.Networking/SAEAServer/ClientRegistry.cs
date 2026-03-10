@@ -115,10 +115,25 @@ internal sealed class ClientRegistry : IDisposable
 
             client.ResetForPool();
             _availableClients.Push(client);
-            _activeHandles.Remove(clientHandle);
+            RemoveActiveHandleFastNoLock(clientHandle);
         }
 
         return true;
+    }
+
+    private void RemoveActiveHandleFastNoLock(ClientHandle clientHandle)
+    {
+        int idx = _activeHandles.IndexOf(clientHandle);
+        if (idx >= 0)
+        {
+            int last = _activeHandles.Count - 1;
+            if (idx != last)
+            {
+                _activeHandles[idx] = _activeHandles[last];
+            }
+
+            _activeHandles.RemoveAt(last);
+        }
     }
 
     internal void SnapshotActiveHandles(List<ClientHandle> destination)

@@ -118,17 +118,17 @@ internal sealed class Client : IDisposable
         {
             snapshot = new ClientSnapshot(
                 ClientId,
-                Generation,
+                _generation,
                 Identity,
                 RemoteIpAddress,
                 Port,
-                IsAlive,
+                _isAlive,
                 ConnectedAt,
-                LastReadMs,
-                LastWriteMs,
-                BytesReceived,
-                BytesSent,
-                PendingOperations,
+                Volatile.Read(ref _lastReadMs),
+                Volatile.Read(ref _lastWriteMs),
+                unchecked((ulong)Interlocked.Read(ref _bytesReceived)),
+                unchecked((ulong)Interlocked.Read(ref _bytesSent)),
+                Volatile.Read(ref _pendingOperations),
                 UnitOfOrder
             );
         }

@@ -515,56 +515,61 @@ public sealed class Server : IDisposable
             return false;
         }
 
-        client.DecrementPendingOperations();
-
-        SocketAsyncEventArgs receiveEventArgs = client.ReceiveEventArgs;
-
-        SocketError socketError = receiveEventArgs.SocketError;
-        if (socketError != SocketError.Success)
-        {
-            Log(LogLevel.Error, nameof(ProcessReceive), $"Socket error {socketError}.", client.Identity);
-            return false;
-        }
-
-        int bytesTransferred = receiveEventArgs.BytesTransferred;
-        if (bytesTransferred <= 0)
-        {
-            Log(
-                LogLevel.Error,
-                nameof(ProcessReceive),
-                "No bytes transferred, remote most likely closed",
-                client.Identity
-            );
-            return false;
-        }
-
-        byte[]? receiveBuffer = receiveEventArgs.Buffer;
-        int receiveOffset = receiveEventArgs.Offset;
-        if (receiveBuffer is null)
-        {
-            Log(LogLevel.Error, nameof(ProcessReceive), "Receive buffer is null.", client.Identity);
-            return false;
-        }
-
-        client.RecordReceive(bytesTransferred);
-
-        byte[] data = GC.AllocateUninitializedArray<byte>(bytesTransferred);
-        Buffer.BlockCopy(receiveBuffer, receiveOffset, data, 0, bytesTransferred);
         try
         {
-            _consumer.OnReceivedData(clientHandle, data);
-        }
-        catch (Exception exception)
-        {
-            OnConsumerError(
-                clientHandle,
-                exception,
-                nameof(ProcessReceive),
-                "Error during consumer code."
-            );
-        }
+            SocketAsyncEventArgs receiveEventArgs = client.ReceiveEventArgs;
 
-        return client.IsAlive;
+            SocketError socketError = receiveEventArgs.SocketError;
+            if (socketError != SocketError.Success)
+            {
+                Log(LogLevel.Error, nameof(ProcessReceive), $"Socket error {socketError}.", client.Identity);
+                return false;
+            }
+
+            int bytesTransferred = receiveEventArgs.BytesTransferred;
+            if (bytesTransferred <= 0)
+            {
+                Log(
+                    LogLevel.Error,
+                    nameof(ProcessReceive),
+                    "No bytes transferred, remote most likely closed",
+                    client.Identity
+                );
+                return false;
+            }
+
+            byte[]? receiveBuffer = receiveEventArgs.Buffer;
+            int receiveOffset = receiveEventArgs.Offset;
+            if (receiveBuffer is null)
+            {
+                Log(LogLevel.Error, nameof(ProcessReceive), "Receive buffer is null.", client.Identity);
+                return false;
+            }
+
+            client.RecordReceive(bytesTransferred);
+
+            byte[] data = GC.AllocateUninitializedArray<byte>(bytesTransferred);
+            Buffer.BlockCopy(receiveBuffer, receiveOffset, data, 0, bytesTransferred);
+            try
+            {
+                _consumer.OnReceivedData(clientHandle, data);
+            }
+            catch (Exception exception)
+            {
+                OnConsumerError(
+                    clientHandle,
+                    exception,
+                    nameof(ProcessReceive),
+                    "Error during consumer code."
+                );
+            }
+
+            return client.IsAlive;
+        }
+        finally
+        {
+            client.DecrementPendingOperations();
+        }
     }
 
     public void Send(ClientHandle clientHandle, byte[] data)
@@ -699,10 +704,9 @@ public sealed class Server : IDisposable
             return false;
         }
 
-        client.DecrementPendingOperations();
-
         if (!client.IsAlive)
         {
+            client.DecrementPendingOperations();
             Disconnect(clientHandle);
             return false;
         }
@@ -711,19 +715,29 @@ public sealed class Server : IDisposable
         if (sendEventArgs.SocketError != SocketError.Success)
         {
             Log(LogLevel.Error, nameof(ProcessSend), $"Socket error {sendEventArgs.SocketError}.", client.Identity);
+            client.DecrementPendingOperations();
             Disconnect(clientHandle);
             return false;
         }
 
         if (sendEventArgs.BytesTransferred <= 0)
         {
-            Log(LogLevel.Error, nameof(ProcessSend), "Send completed with zero bytes transferred.", client.Identity);
+            Log(LogLevel.Error, nameof(ProcessSend), "Send completed with zero bytes transferred.",
+                client.Identity);
+            client.DecrementPendingOperations();
             Disconnect(clientHandle);
             return false;
         }
 
-        client.RecordSend(sendEventArgs.BytesTransferred);
-        return client.CompleteSend(sendEventArgs.BytesTransferred);
+        try
+        {
+            client.RecordSend(sendEventArgs.BytesTransferred);
+            return client.CompleteSend(sendEventArgs.BytesTransferred);
+        }
+        finally
+        {
+            client.DecrementPendingOperations();
+        }
     }
 
     private Client CreateClient(int clientId)
