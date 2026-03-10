@@ -5,7 +5,7 @@ namespace Arrowgene.Networking.Consumer.EventConsumption
 {
     public class DisconnectedEventArgs : EventArgs
     {
-        public DisconnectedEventArgs(ClientSnapshot clientSnapshot)
+        internal DisconnectedEventArgs(ClientSnapshot clientSnapshot)
         {
             ClientSnapshot = clientSnapshot;
         }

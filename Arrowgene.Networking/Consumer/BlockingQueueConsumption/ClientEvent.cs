@@ -9,7 +9,7 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
         public ClientHandle? ClientHandle { get; }
         public ClientSnapshot? ClientSnapshot { get; }
 
-        public ClientEvent(
+        internal ClientEvent(
             ClientHandle? clientHandle,
             ClientSnapshot? clientSnapshot,
             ClientEventType clientEventType,

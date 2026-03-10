@@ -5,7 +5,7 @@ namespace Arrowgene.Networking.Consumer.EventConsumption
 {
     public class ConnectedEventArgs : EventArgs
     {
-        public ConnectedEventArgs(ClientHandle socket)
+        internal ConnectedEventArgs(ClientHandle socket)
         {
             Socket = socket;
         }

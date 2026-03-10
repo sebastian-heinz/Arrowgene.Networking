@@ -20,7 +20,7 @@ namespace Arrowgene.Networking.Consumer.EventConsumption
         /// </summary>
         public event EventHandler<ReceivedPacketEventArgs> ReceivedPacket;
 
-        public void OnReceivedData(ClientHandle socket, byte[] data)
+        void IConsumer.OnReceivedData(ClientHandle socket, byte[] data)
         {
             EventHandler<ReceivedPacketEventArgs> receivedPacket = ReceivedPacket;
             if (receivedPacket != null)
@@ -30,7 +30,7 @@ namespace Arrowgene.Networking.Consumer.EventConsumption
             }
         }
 
-        public void OnClientDisconnected(ClientSnapshot clientSnapshot)
+        void IConsumer.OnClientDisconnected(ClientSnapshot clientSnapshot)
         {
             EventHandler<DisconnectedEventArgs> clientDisconnected = ClientDisconnected;
             if (clientDisconnected != null)
@@ -41,7 +41,7 @@ namespace Arrowgene.Networking.Consumer.EventConsumption
             }
         }
 
-        public void OnClientConnected(ClientHandle socket)
+        void IConsumer.OnClientConnected(ClientHandle socket)
         {
             EventHandler<ConnectedEventArgs> clientConnected = ClientConnected;
             if (clientConnected != null)
@@ -51,7 +51,7 @@ namespace Arrowgene.Networking.Consumer.EventConsumption
             }
         }
 
-        public void OnError(ClientHandle clientHandle, Exception exception, string message)
+        void IConsumer.OnError(ClientHandle clientHandle, Exception exception, string message)
         {
             throw exception;
         }

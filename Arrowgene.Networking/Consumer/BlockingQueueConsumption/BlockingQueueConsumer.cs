@@ -13,22 +13,22 @@ namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
             ClientEvents = new BlockingCollection<ClientEvent>();
         }
 
-        public void OnReceivedData(ClientHandle socket, byte[] data)
+        void IConsumer.OnReceivedData(ClientHandle socket, byte[] data)
         {
             ClientEvents.Add(new ClientEvent(socket, null, ClientEventType.ReceivedData, data));
         }
 
-        public void OnClientDisconnected(ClientSnapshot clientSnapshot)
+        void IConsumer.OnClientDisconnected(ClientSnapshot clientSnapshot)
         {
             ClientEvents.Add(new ClientEvent(null, clientSnapshot, ClientEventType.Disconnected));
         }
 
-        public void OnClientConnected(ClientHandle clientHandle)
+        void IConsumer.OnClientConnected(ClientHandle clientHandle)
         {
             ClientEvents.Add(new ClientEvent(clientHandle, null, ClientEventType.Connected));
         }
 
-        public void OnError(ClientHandle clientHandle, Exception exception, string message)
+        void IConsumer.OnError(ClientHandle clientHandle, Exception exception, string message)
         {
             throw exception;
         }

@@ -59,18 +59,6 @@ public readonly struct ClientHandle : IEquatable<ClientHandle>
         return true;
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal bool EqualsClient(Client other)
-    {
-        return other == _client;
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal bool EqualsClientGeneration(Client client, uint generation)
-    {
-        return _client == client && Generation == generation;
-    }
-
     public string Identity => Client.Identity;
 
     public IPAddress RemoteIpAddress => Client.RemoteIpAddress;

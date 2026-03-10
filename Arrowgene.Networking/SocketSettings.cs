@@ -131,7 +131,7 @@ namespace Arrowgene.Networking
             SocketOptions.Add(socketOption);
         }
 
-        public void SetSocketOptions(Socket socket)
+        private void SetSocketOptions(Socket socket)
         {
             foreach (SocketOption option in SocketOptions)
             {

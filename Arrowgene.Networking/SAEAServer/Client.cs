@@ -231,7 +231,7 @@ internal sealed class Client : IDisposable
                 return false;
             }
 
-            Interlocked.Increment(ref _pendingOperations);
+            IncrementPendingOperations();
             socket = connectionSocket;
             return true;
         }

@@ -5,7 +5,7 @@ namespace Arrowgene.Networking.Consumer.EventConsumption
 {
     public class ReceivedPacketEventArgs : EventArgs
     {
-        public ReceivedPacketEventArgs(ClientHandle socket, byte[] data)
+        internal ReceivedPacketEventArgs(ClientHandle socket, byte[] data)
         {
             Socket = socket;
             Data = data;
