@@ -18,10 +18,8 @@ This file provides guidance for AI coding agents.
 ---
 
 ## Higher Concepts
-
-- lifecycle should be start once and stop once, after that starting is not possible anymore.
 - the user buffer should be copied on send / recv for isolation, zero copy is not desired.
-- unit of order should be assigned to each client, always assign the lowest available from a configurable max.
+- unit of order should be assigned to each client, always assign the least-loaded shared lane.
 
 # Components
 ## client

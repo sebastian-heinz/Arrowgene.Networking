@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Sockets;
+using System.Threading;
 using System.Threading.Tasks;
 using Arrowgene.Networking.SAEAServer;
 using Xunit;
@@ -154,6 +155,63 @@ public sealed class ServerIntegrationTests
         }
 
         await consumer.WaitForDisconnectedCountAsync(1, MediumTimeout);
+    }
+
+    /// <summary>
+    /// Verifies a stale handle cannot send data into a recycled pooled client slot.
+    /// </summary>
+    [Fact]
+    public async Task StaleHandle_SendDoesNotReachRecycledConnection()
+    {
+        RecordingConsumer consumer = new RecordingConsumer();
+
+        using ServerTestHost host = new ServerTestHost(
+            consumer,
+            settings =>
+            {
+                settings.MaxConnections = 1;
+                settings.BufferSize = 256;
+            }
+        );
+
+        TcpClient firstClient = await host.ConnectClientAsync();
+
+        try
+        {
+            await consumer.WaitForConnectedCountAsync(1, ShortTimeout);
+            ClientHandle staleHandle = consumer.GetConnectedClient(0).Handle;
+
+            host.DisposeClient(firstClient);
+            await consumer.WaitForDisconnectedCountAsync(1, MediumTimeout);
+
+            TcpClient secondClient = await host.ConnectClientAsync();
+            try
+            {
+                await consumer.WaitForConnectedCountAsync(2, MediumTimeout);
+
+                byte[] payload = CreatePayload(64, 73);
+                staleHandle.Send(payload);
+
+                NetworkStream stream = secondClient.GetStream();
+                byte[] buffer = new byte[payload.Length];
+                using CancellationTokenSource cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+                    await stream.ReadExactlyAsync(buffer, cancellation.Token));
+
+                Assert.Empty(consumer.Errors);
+            }
+            finally
+            {
+                host.DisposeClient(secondClient);
+            }
+        }
+        finally
+        {
+            host.DisposeClient(firstClient);
+        }
+
+        await consumer.WaitForDisconnectedCountAsync(2, MediumTimeout);
     }
 
     /// <summary>

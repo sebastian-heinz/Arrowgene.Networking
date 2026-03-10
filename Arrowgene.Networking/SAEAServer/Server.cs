@@ -397,6 +397,11 @@ public sealed class Server : IDisposable
         {
             ProcessAccept(acceptEventArgs);
         }
+        catch (Exception exception)
+        {
+            Logger.Exception(exception);
+            Service.CloseSocket(acceptEventArgs.AcceptSocket);
+        }
         finally
         {
             ExitAsyncCallback();
@@ -408,46 +413,68 @@ public sealed class Server : IDisposable
         Socket? acceptedSocket = acceptEventArgs.AcceptSocket;
         SocketError socketError = acceptEventArgs.SocketError;
         _acceptPool.Return(acceptEventArgs);
+        ClientHandle clientHandle = default;
+        bool clientActivated = false;
 
-        if (acceptedSocket is null)
+        try
         {
-            Log(
-                LogLevel.Error,
-                nameof(ProcessAccept),
-                $"Accept completed without a socket. SocketError:{socketError}."
-            );
-            return;
+            if (acceptedSocket is null)
+            {
+                Log(
+                    LogLevel.Error,
+                    nameof(ProcessAccept),
+                    $"Accept completed without a socket. SocketError:{socketError}."
+                );
+                return;
+            }
+
+            string clientIdentity = acceptedSocket.RemoteEndPoint is IPEndPoint endPoint
+                ? $"[{endPoint.Address}:{endPoint.Port}]"
+                : UnknownIdentity;
+
+            if (socketError != SocketError.Success)
+            {
+                Log(LogLevel.Error, nameof(ProcessAccept), $"SocketError: {socketError}.", clientIdentity);
+                Service.CloseSocket(acceptedSocket);
+                return;
+            }
+
+            if (!IsRunningState())
+            {
+                Log(
+                    LogLevel.Debug,
+                    nameof(ProcessAccept),
+                    "Server is not running, rejecting accepted socket.",
+                    clientIdentity
+                );
+                Service.CloseSocket(acceptedSocket);
+                return;
+            }
+
+            _settings.ClientSocketSettings.ConfigureSocket(acceptedSocket);
+
+            if (!_clientRegistry.TryActivateClient(this, acceptedSocket, out clientHandle))
+            {
+                Log(LogLevel.Error, nameof(ProcessAccept), "No available client slot in the pool.", clientIdentity);
+                Service.CloseSocket(acceptedSocket);
+                return;
+            }
+
+            clientActivated = true;
         }
 
-        string clientIdentity = acceptedSocket.RemoteEndPoint is IPEndPoint endPoint
-            ? $"[{endPoint.Address}:{endPoint.Port}]"
-            : UnknownIdentity;
-
-        if (socketError != SocketError.Success)
+        catch (Exception exception)
         {
-            Log(LogLevel.Error, nameof(ProcessAccept), $"SocketError: {socketError}.", clientIdentity);
-            Service.CloseSocket(acceptedSocket);
-            return;
-        }
+            Logger.Exception(exception);
+            if (clientActivated)
+            {
+                Disconnect(clientHandle, "AcceptFailure");
+            }
+            else
+            {
+                Service.CloseSocket(acceptedSocket);
+            }
 
-        if (!IsRunningState())
-        {
-            Log(
-                LogLevel.Debug,
-                nameof(ProcessAccept),
-                "Server is not running, rejecting accepted socket.",
-                clientIdentity
-            );
-            Service.CloseSocket(acceptedSocket);
-            return;
-        }
-
-        _settings.ClientSocketSettings.ConfigureSocket(acceptedSocket);
-
-        if (!_clientRegistry.TryActivateClient(this, acceptedSocket, out ClientHandle clientHandle))
-        {
-            Log(LogLevel.Error, nameof(ProcessAccept), "No available client slot in the pool.", clientIdentity);
-            Service.CloseSocket(acceptedSocket);
             return;
         }
 
@@ -478,7 +505,7 @@ public sealed class Server : IDisposable
 
         while (true)
         {
-            if (!client.TryBeginSocketOperation(out Socket socket))
+            if (!client.TryBeginSocketOperation(clientHandle.Generation, out Socket socket))
             {
                 Disconnect(clientHandle);
                 return;
@@ -542,6 +569,14 @@ public sealed class Server : IDisposable
             }
 
             Disconnect(clientHandle);
+        }
+        catch (Exception exception)
+        {
+            Logger.Exception(exception);
+            if (eventArgs.UserToken is ClientHandle clientHandle)
+            {
+                Disconnect(clientHandle, "ReceiveCompletedFailure");
+            }
         }
         finally
         {
@@ -645,7 +680,7 @@ public sealed class Server : IDisposable
             return;
         }
 
-        if (!client.QueueSend(data, out bool startSend, out bool queueOverflow))
+        if (!client.QueueSend(clientHandle.Generation, data, out bool startSend, out bool queueOverflow))
         {
             if (queueOverflow)
             {
@@ -672,18 +707,12 @@ public sealed class Server : IDisposable
 
         while (true)
         {
-            if (!client.IsAlive)
-            {
-                Disconnect(clientHandle);
-                return;
-            }
-
-            if (!client.TryPrepareSendChunk(_bufferSize, out int chunkSize))
+            if (!client.TryPrepareSendChunk(clientHandle.Generation, _bufferSize, out int chunkSize))
             {
                 return;
             }
 
-            if (!client.TryBeginSocketOperation(out Socket socket))
+            if (!client.TryBeginSocketOperation(clientHandle.Generation, out Socket socket))
             {
                 Disconnect(clientHandle);
                 return;
@@ -743,6 +772,14 @@ public sealed class Server : IDisposable
             if (continueSending)
             {
                 StartSend(clientHandle);
+            }
+        }
+        catch (Exception exception)
+        {
+            Logger.Exception(exception);
+            if (eventArgs.UserToken is ClientHandle clientHandle)
+            {
+                Disconnect(clientHandle, "SendCompletedFailure");
             }
         }
         finally

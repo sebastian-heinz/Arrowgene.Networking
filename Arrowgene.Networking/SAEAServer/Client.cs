@@ -220,12 +220,11 @@ internal sealed class Client : IDisposable
         }
     }
 
-    internal bool TryBeginSocketOperation(out Socket socket)
+    internal bool TryBeginSocketOperation(uint generation, out Socket socket)
     {
-        // TODO null check + return socket in sync
         lock (_sync)
         {
-            if (!_isAlive || _isInPool || _socket is not { } connectionSocket)
+            if (_generation != generation || !_isAlive || _isInPool || _socket is not { } connectionSocket)
             {
                 socket = null!;
                 return false;
@@ -237,10 +236,16 @@ internal sealed class Client : IDisposable
         }
     }
 
-    internal bool TryPrepareSendChunk(int maxChunkSize, out int chunkSize)
+    internal bool TryPrepareSendChunk(uint generation, int maxChunkSize, out int chunkSize)
     {
         lock (_sync)
         {
+            if (_generation != generation || !_isAlive || _isInPool)
+            {
+                chunkSize = 0;
+                return false;
+            }
+
             byte[]? sendBuffer = SendEventArgs.Buffer;
             if (sendBuffer is null)
             {
@@ -259,11 +264,11 @@ internal sealed class Client : IDisposable
     }
 
 
-    internal bool QueueSend(byte[] data, out bool startSend, out bool queueOverflow)
+    internal bool QueueSend(uint generation, byte[] data, out bool startSend, out bool queueOverflow)
     {
         lock (_sync)
         {
-            if (!_isAlive)
+            if (_generation != generation || !_isAlive || _isInPool)
             {
                 startSend = false;
                 queueOverflow = false;

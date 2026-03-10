@@ -1,111 +1,206 @@
 # Server.cs Technical Audit
 
-Audit of `SAEAServer/Server.cs` and its supporting types. Reviewed against the AGENTS.md
-architecture constraints: single-run lifecycle, intentional buffer copy, pooled resources.
+Audit of `SAEAServer/Server.cs` and supporting types on `feat/pass-4`.
+**Premise:** Restart (`Stop` → `Start`) is a supported and desired property.
+Reviewed against AGENTS.md constraints: intentional buffer copy, pooled resources.
+
+---
+
+## Previously Identified — Now Resolved
+
+| ID | Issue | Status |
+|----|-------|--------|
+| C1 (old) | `Dispose`/`Stop` race — use-after-dispose | **Fixed.** `_shutdownStarted` CAS + `_shutdownCompleted.Wait()` ensures single-entry shutdown and `Dispose` waits before disposing resources. |
+| C2 (old) | `Thread.Start` failure leaves orphaned threads | **Fixed.** `Start()` wraps thread startup in try/catch, transitions to `Stopping`, and calls `Shutdown()` on failure. |
 
 ---
 
 ## Critical Issues
 
-### C1. Dispose/ServerStop Race — Resource Use-After-Dispose
+### C1. Surviving Threads Access Disposed `CancellationTokenSource` — Process Crash
 
-**Files:** `Server.cs:191-220`, `Server.cs:938-955`
+**Files:** `Server.cs:864-880` (`CleanupDisconnectedClients`), `Server.cs:882-929`
+(`CheckSocketTimeout`), `Server.cs:964-980` (`Shutdown`)
 
-`ServerStop()` releases `_lifecycleLock` before calling `Shutdown()`. If `Dispose()` is called
-concurrently, it sets state to `Disposed`, calls its own `Shutdown()`, then immediately disposes
-`_acceptPool`, `_clientRegistry`, and `_cancellation` — while the first `Shutdown()` from
-`ServerStop` may still be executing and referencing those objects.
+Both background threads capture `_cancellation.Token` at method entry and call
+`cancellationToken.WaitHandle.WaitOne(...)` each iteration. In .NET 6+, accessing
+`CancellationToken.WaitHandle` after the source `CancellationTokenSource` is disposed throws
+`ObjectDisposedException`.
+
+Shutdown sequence:
 
 ```
-Thread A (ServerStop):   lock { _state = Stopping } → Shutdown() [running...]
-Thread B (Dispose):      lock { _state = Disposed } → Shutdown() → _acceptPool.Dispose() 💥
-                         Thread A's Shutdown still using _acceptPool
+_cancellation.Cancel();                                   // line 957
+Service.JoinThread(_acceptThread, 10_000);                // line 964
+WaitForShutdownQuiescence();                              // line 965
+Service.JoinThread(_timeoutThread, 10_000);               // line 966
+Service.JoinThread(_disconnectCleanupThread, 10_000);     // line 967
+WaitForShutdownQuiescence();                              // line 968
+// ...
+_cancellation.Dispose();                                  // line 980
 ```
 
-**Impact:** `ObjectDisposedException` or corrupted state during shutdown.
+If a thread join times out (10s), the thread survives. The CTS is then disposed. The surviving
+thread eventually reaches `cancellationToken.WaitHandle.WaitOne(...)` — the `.WaitHandle`
+property accessor hits the disposed CTS internals → `ObjectDisposedException`. This is an
+**unhandled exception on a background thread**, which terminates the process in .NET 6+.
 
-**Fix:** Guard `Shutdown` with a flag or make `Dispose` wait for an in-progress stop:
+**Race window:** Even without join timeout, there's a narrow TOCTOU: thread checks
+`IsCancellationRequested` (false, not yet cancelled) → enters loop body → `Cancel()` +
+`Dispose()` fire → thread reaches `WaitHandle.WaitOne()` → crash. After `Cancel()`, the
+WaitHandle is signaled so `WaitOne` would return immediately, but the `.WaitHandle` *property
+accessor* itself throws if the CTS is already disposed.
+
+**Impact:** Process crash during shutdown or restart cycle.
+
+**Fix:** Wrap the wait in a try/catch, or don't dispose the CTS during Shutdown (let `Dispose()`
+handle it):
 
 ```csharp
-private int _shutdownStarted; // 0 = not started
-
+// Option A: Remove CTS dispose from Shutdown, let Dispose() handle it
 private void Shutdown()
 {
-    if (Interlocked.Exchange(ref _shutdownStarted, 1) != 0)
-    {
-        return; // already running or completed
-    }
-
-    // ... existing shutdown logic ...
+    // ...
+    // Remove: _cancellation.Dispose();  ← line 980
+    // The CTS is disposed in Dispose() at line 1008
+    // For restart, RecreateRunResources replaces _cancellation;
+    // the old CTS is unreachable but GC-safe (finalizer handles it)
+    // ...
 }
 ```
-
-Then in `Dispose()`, ensure shutdown completes before disposing resources:
 
 ```csharp
-public void Dispose()
+// Option B: Guard WaitHandle access in thread methods
+while (true)
 {
-    lock (_lifecycleLock)
+    // ... work ...
+    try
     {
-        if (_state == ServerState.Disposed) return;
-        _state = ServerState.Disposed;
+        cancellationToken.WaitHandle.WaitOne(DelayMs);
     }
-
-    Shutdown();
-    // Shutdown is now guaranteed to have completed (single entry via Interlocked)
-    _acceptPool.Dispose();
-    _clientRegistry.Dispose();
-    _cancellation.Dispose();
+    catch (ObjectDisposedException)
+    {
+        return;
+    }
 }
 ```
+
+Option A is cleaner — it avoids the CTS being disposed while threads may still reference it.
+For restarts, `RecreateRunResources` overwrites `_cancellation` with a new instance; the old
+disposed-or-not CTS becomes unreachable and is collected.
 
 ---
 
-### C2. Thread.Start Failure Leaves Server in Inconsistent State
+### C2. `WaitForShutdownQuiescence` Has No Timeout — `Stop()` Can Hang Indefinitely
 
-**File:** `Server.cs:147-186`
-
-`ServerStart` sets `_state = Running`, then starts three threads sequentially. If any
-`Thread.Start()` throws (e.g., `OutOfMemoryException`), previously-started threads are running but
-the server is in a half-initialized state. There is no rollback.
+**File:** `Server.cs:1083-1099`
 
 ```csharp
-_state = ServerState.Running;
-_disconnectCleanupThread.Start(); // succeeds
-_timeoutThread.Start();           // succeeds
-_acceptThread.Start();            // throws → two orphan threads running, no listen socket
-```
-
-**Impact:** Orphaned background threads that never terminate (cancellation token never signaled
-because `ServerStop` sees `Running` state but the server is non-functional).
-
-**Fix:** Wrap thread startup in try/catch and trigger `Shutdown()` on failure:
-
-```csharp
-_state = ServerState.Running;
-try
+private void WaitForShutdownQuiescence()
 {
-    _disconnectCleanupThread.Start();
-    if (_socketTimeout > TimeSpan.Zero)
+    while (true)   // ← no exit condition other than IsShutdownQuiescent
     {
-        _timeoutThread.Start();
+        DisconnectActiveClients();
+        ProcessDisconnectCleanupQueue(handles, "DeferredCleanup");
+        if (IsShutdownQuiescent(handles)) return;
+        _asyncCallbacksDrained.Wait(DisconnectCleanupDelayMs);
     }
-    _acceptThread.Start();
-}
-catch (Exception ex)
-{
-    Logger.Exception(ex);
-    _state = ServerState.Stopping;
-    // Release the lock before shutdown
-    // (restructure to release lock, then call Shutdown)
-    Shutdown();
-    return;
 }
 ```
 
-Note: Since this calls `Shutdown()`, it must be done outside the lock to avoid deadlock with
-`Shutdown`'s own `_lifecycleLock` acquisition. The method would need restructuring — set state under
-lock, release lock, start threads, and on failure call `Shutdown()`.
+If a consumer callback blocks (e.g., `OnReceivedData` hangs), `_inFlightAsyncCallbacks` stays
+\> 0 indefinitely. `IsShutdownQuiescent` returns `false` forever. `Stop()` never returns, making
+restart impossible.
+
+Similarly, if a client has a pending SAEA operation that never completes (kernel-level socket
+stuck), `CanReturnToPool()` returns `false` because `_pendingOperations > 0`, and the client
+slot can never be deactivated.
+
+**Impact:** `Stop()` hangs, blocking the calling thread. Restart is impossible. On a server with
+a management API, this freezes the control plane.
+
+**Fix:** Add a deadline with escalation:
+
+```csharp
+private void WaitForShutdownQuiescence()
+{
+    List<ClientHandle> handles = new List<ClientHandle>(_settings.MaxConnections);
+    long deadline = Environment.TickCount64 + _settings.ShutdownTimeoutMs; // e.g., 30_000
+
+    while (true)
+    {
+        DisconnectActiveClients();
+        ProcessDisconnectCleanupQueue(handles, "DeferredCleanup");
+
+        if (IsShutdownQuiescent(handles))
+        {
+            return;
+        }
+
+        if (Environment.TickCount64 >= deadline)
+        {
+            Log(LogLevel.Error, nameof(WaitForShutdownQuiescence),
+                $"Shutdown quiescence timeout. Active:{handles.Count} " +
+                $"InFlight:{Volatile.Read(ref _inFlightAsyncCallbacks)}");
+
+            // Force-return remaining clients to pool despite pending ops
+            ForceReturnLeakedClients(handles);
+            return;
+        }
+
+        _asyncCallbacksDrained.Wait(DisconnectCleanupDelayMs);
+    }
+}
+```
+
+Without this, the restart property is aspirational — a single stuck consumer callback makes
+it unreachable.
+
+---
+
+### C3. Client Pool Slot Leak Across Restarts (Consequence of C2 Fix)
+
+**Files:** `Server.cs:1083-1099`, `ClientRegistry.cs:93-121`
+
+If `WaitForShutdownQuiescence` is given a timeout (to fix C2), clients that couldn't be
+deactivated remain in `_activeHandles` and are never returned to `_availableClients`.
+`RecreateRunResources` does not touch `_clientRegistry`. On restart, the pool has fewer
+available slots. Over multiple restart cycles, this compounds until `TryActivateClient` always
+fails — the server accepts connections but immediately rejects them all.
+
+```
+Restart 1: 1000/1000 slots available
+Restart 2:  998/1000 (2 leaked from stuck callbacks)
+Restart 3:  995/1000
+...
+Restart N:    0/1000 → server is functionally dead
+```
+
+**Impact:** Progressive capacity degradation across restart cycles.
+
+**Fix:** After the quiescence timeout, force-reset leaked clients:
+
+```csharp
+private void ForceReturnLeakedClients(List<ClientHandle> handles)
+{
+    _clientRegistry.SnapshotActiveHandles(handles);
+    foreach (ClientHandle handle in handles)
+    {
+        if (handle.TryGetClient(out Client client))
+        {
+            Log(LogLevel.Error, nameof(ForceReturnLeakedClients),
+                $"Force-recycling leaked client slot.", client.Identity);
+            // Reset pending ops to 0 so CanReturnToPool succeeds
+            client.ForceResetPendingOperations();
+            _clientRegistry.TryDeactivateClient(handle, out _);
+        }
+    }
+}
+```
+
+This requires adding a `ForceResetPendingOperations()` method to `Client` that zeroes the
+counter under lock. It's a last-resort escalation — data integrity for the stuck connection
+is already lost at this point.
 
 ---
 
@@ -113,31 +208,20 @@ lock, release lock, start threads, and on failure call `Shutdown()`.
 
 ### H1. IOCP Thread Pool Starvation from Consumer Callbacks
 
-**Files:** `Server.cs:367-370` (`AcceptCompleted`), `Server.cs:492-508` (`ReceiveCompleted`),
-`Server.cs:684-697` (`SendCompleted`)
+**Files:** `Server.cs:393-404`, `Server.cs:526-550`, `Server.cs:731-752`
 
-When `AcceptAsync`/`ReceiveAsync`/`SendAsync` complete asynchronously, the completion callbacks fire
-on .NET ThreadPool IOCP threads. These callbacks directly invoke consumer code:
+Async completions fire on ThreadPool IOCP threads and directly invoke consumer code
+(`OnClientConnected`, `OnReceivedData`). A blocking consumer starves the IOCP pool, degrading
+all async I/O across the entire process.
 
-- `ProcessAccept` → `_consumer.OnClientConnected()`
-- `ProcessReceive` → `_consumer.OnReceivedData()`
-
-If the consumer performs blocking or long-running work, IOCP threads are held. The .NET ThreadPool
-has a limited number of IOCP threads, and starvation here degrades **all** async I/O across the
-entire process — not just this server.
-
-**Impact:** Under load with a slow consumer, accept/receive/send throughput collapses for all
-connections.
-
-**Recommendation:** This is an architectural tradeoff. Document the contract that `IConsumer`
-callbacks **must not block**. Alternatively, for `OnClientConnected` specifically, consider posting
-to a dedicated work queue since connection setup is less latency-sensitive than data receive.
+**Recommendation:** Document that `IConsumer` callbacks **must not block**. Consider posting
+`OnClientConnected` to a dedicated queue.
 
 ---
 
 ### H2. Timeout Check Interval Equals Full Timeout Duration
 
-**File:** `Server.cs:886-891`
+**File:** `Server.cs:923-928`
 
 ```csharp
 int timeoutMs = Math.Clamp(
@@ -145,14 +229,12 @@ int timeoutMs = Math.Clamp(
     MinSocketTimeoutDelayMs,
     MaxSocketTimeoutDelayMs
 );
-cancellationToken.WaitHandle.WaitOne(timeoutMs);
 ```
 
-With a 30-second timeout (`ClientSocketTimeoutSeconds = 30`), the check interval is also 30 seconds
-(clamped to `MaxSocketTimeoutDelayMs = 30000`). A client that becomes idle at T=1s after a check
-won't be detected until T=31s — nearly double the configured timeout.
+With a 30s timeout, the check runs every 30s. Worst-case detection delay is ~2x the configured
+timeout.
 
-**Fix:** Use half the timeout or a fixed sub-interval:
+**Fix:** Use half the timeout:
 
 ```csharp
 int timeoutMs = Math.Clamp(
@@ -164,19 +246,85 @@ int timeoutMs = Math.Clamp(
 
 ---
 
-### H3. Synchronous Accept Loop Blocked by Consumer Callback
+### H3. Synchronous Accept Path Blocks Accept Thread
 
-**File:** `Server.cs:318-365`, `Server.cs:420-432`
+**Files:** `Server.cs:344-391`, `Server.cs:406-469`
 
-When `AcceptAsync` completes synchronously (`willRaiseEvent == false`), `ProcessAccept` runs inline
-on the accept thread. This calls `_consumer.OnClientConnected()` and `StartReceive()` —
-both on the accept thread. A slow consumer blocks the accept loop, preventing new connections.
+When `AcceptAsync` completes synchronously, `ProcessAccept` runs inline on the single accept
+thread, including `_consumer.OnClientConnected()` and `StartReceive()`. A slow consumer blocks
+all new accepts.
 
-The async path has the same problem (H1) but on IOCP threads. On the sync path, it's worse because
-there is only **one** accept thread.
+**Recommendation:** Enforce non-blocking consumer contract or offload synchronous-path accepts.
 
-**Recommendation:** Same as H1 — enforce that `OnClientConnected` is non-blocking, or offload
-connection setup to a separate queue.
+---
+
+### H4. `ProcessSend` Error Path Skips `CompleteSend` — Stale SendQueue State
+
+**File:** `Server.cs:754-796`
+
+On error (socket error / zero bytes), `ProcessSend` calls `Disconnect` but never calls
+`_sendQueue.CompleteSend()`. The queue's `_sendInProgress` flag and `_currentMessage` remain
+set. This is cleaned up by `ResetForPool()` when the client is deactivated, but during the
+deferred cleanup window a racing `Send()` call could see `_sendInProgress == true` and silently
+not start the send pump.
+
+**Severity:** Medium — no data corruption, but potential for a send to be silently dropped
+during the disconnect grace period.
+
+---
+
+### H5. `EnterAsyncCallback` / `ExitAsyncCallback` — MRES Lost-Signal Race
+
+**File:** `Server.cs:1056-1070`
+
+```csharp
+private void EnterAsyncCallback()
+{
+    if (Interlocked.Increment(ref _inFlightAsyncCallbacks) == 1)
+        _asyncCallbacksDrained.Reset();
+}
+
+private void ExitAsyncCallback()
+{
+    if (Interlocked.Decrement(ref _inFlightAsyncCallbacks) == 0)
+        _asyncCallbacksDrained.Set();
+}
+```
+
+The counter update and MRES signal are not atomic:
+
+```
+Thread A (exit):  Decrement → 0    (about to Set)
+Thread B (enter): Increment → 1  → Reset()
+Thread A:                           Set()   ← spurious: B is in-flight
+```
+
+Mitigated by `IsShutdownQuiescent` re-checking the counter. But the correctness of shutdown
+depends on that re-check. If `IsShutdownQuiescent` is ever refactored to trust the MRES alone,
+shutdown can escape with in-flight callbacks.
+
+**Fix:** Replace MRES with a spin-wait on the counter, or gate both operations under a lock.
+
+---
+
+### H6. `RecreateRunResources` Does Not Clear `_disconnectCleanupQueue`
+
+**File:** `Server.cs:1158-1168`
+
+`RecreateRunResources` resets threads, CTS, counters, and events — but not the
+`_disconnectCleanupQueue`. `Shutdown`'s `WaitForShutdownQuiescence` should drain it, but if a
+quiescence timeout is added (C2 fix), stale handles could carry into the next lifecycle. The new
+cleanup thread would process them, and generation checks would reject them, but it's wasted work
+and a correctness hazard if the generation wraps (uint overflow after ~4B activations per slot).
+
+**Fix:** Add to `RecreateRunResources`:
+
+```csharp
+lock (_disconnectCleanupSync)
+{
+    _disconnectCleanupQueue.Clear();
+}
+```
 
 ---
 
@@ -184,135 +332,84 @@ connection setup to a separate queue.
 
 ### O1. Per-Receive `byte[]` Allocation — GC Pressure
 
-**File:** `Server.cs:551`
+**File:** `Server.cs:593-594`
 
-```csharp
-byte[] data = GC.AllocateUninitializedArray<byte>(bytesTransferred);
-Buffer.BlockCopy(receiveBuffer, receiveOffset, data, 0, bytesTransferred);
-```
-
-Every receive allocates a new array. Under high throughput (e.g., 10K connections each receiving
-10 messages/sec = 100K allocations/sec), this creates significant Gen0 GC pressure.
-
-The buffer copy is intentional per architecture, but the allocation source can be optimized:
-
-```csharp
-// Option: Use ArrayPool for the copy buffer, require consumer to return it
-byte[] data = ArrayPool<byte>.Shared.Rent(bytesTransferred);
-Buffer.BlockCopy(receiveBuffer, receiveOffset, data, 0, bytesTransferred);
-// Consumer would need a way to return the buffer (changes IConsumer contract)
-```
-
-If changing `IConsumer` is undesirable, consider `Memory<byte>` / `ReadOnlyMemory<byte>` backed by
-pooled arrays with a rental pattern. This is a tradeoff between API simplicity and GC pressure.
+Every receive allocates a `byte[]`. At scale (10K connections × 10 msg/sec), this generates
+~100K Gen0 allocations/sec. The copy is intentional (buffer isolation). Consider
+`ArrayPool<byte>.Shared.Rent()` with a return protocol, or accept the cost for API simplicity.
 
 ---
 
-### O2. Per-Send `byte[]` Copy in SendQueue.Enqueue
+### O2. Per-Send `byte[]` Copy in `SendQueue.Enqueue`
 
 **File:** `SendQueue.cs:46-47`
 
-```csharp
-byte[] copy = GC.AllocateUninitializedArray<byte>(data.Length);
-Buffer.BlockCopy(data, 0, copy, 0, data.Length);
-```
-
-Same pattern as O1. The copy is architecturally intentional, but pooling the copy buffer via
-`ArrayPool<byte>` would reduce allocation pressure. Requires tracking rentals for return after send
-completion.
+Same allocation pattern as O1. Pooling would reduce GC pressure but requires tracking rentals
+through `CompleteSend`.
 
 ---
 
-### O3. ClientHandle Boxing via UserToken
+### O3. `ClientHandle` Boxing via `SocketAsyncEventArgs.UserToken`
 
-**Files:** `ClientRegistry.cs:86-87`, `Server.cs:494`, `Server.cs:686`
+**Files:** `ClientRegistry.cs:86-87`, `Server.cs:531`, `Server.cs:736`
 
-`ClientHandle` is a `readonly struct`, but `SocketAsyncEventArgs.UserToken` is `object?`. Every
-client activation boxes the handle:
-
-```csharp
-pooledClient.ReceiveEventArgs.UserToken = handle; // boxes ClientHandle
-```
-
-And every callback unboxes:
+`ClientHandle` is a struct but `UserToken` is `object?` — boxing on every activation, unboxing
+on every callback. Store the `Client` (class) directly as `UserToken` and reconstruct the
+`ClientHandle` from it:
 
 ```csharp
-if (eventArgs.UserToken is not ClientHandle clientHandle) // unboxes
-```
+pooledClient.ReceiveEventArgs.UserToken = pooledClient; // no boxing
 
-With high connection churn, this contributes to GC pressure. Consider storing a class wrapper or
-using the client ID as the token and looking up the handle from a concurrent structure.
+// In callback:
+if (eventArgs.UserToken is not Client client) { ... }
+ClientHandle clientHandle = new ClientHandle(this, client);
+```
 
 ---
 
-### O4. String Interpolation in Logging Hot Paths
+### O4. String Interpolation in Disconnect Logging
 
-**File:** `Server.cs:991-997` and all call sites
+**File:** `Server.cs:836-845`
 
-```csharp
-Logger.Write(level, $"{prefix}{function} - {message}", null);
-```
-
-Every `Log()` call performs string interpolation regardless of whether the log level is active. In
-high-throughput paths (`ProcessReceive`, `ProcessSend`), the error-path logging is fine, but the
-pattern should be verified to not run in success paths. Currently, success paths don't log (good),
-but the `Disconnect` path (line 784-789) builds a multi-line interpolated string on every
-disconnect.
-
-**Recommendation:** Consider checking log level before formatting in `Disconnect`:
-
-```csharp
-if (Logger.IsLevel(LogLevel.Info))
-{
-    Log(LogLevel.Info, nameof(Disconnect), $"Disconnected...");
-}
-```
+Multi-line interpolated string built on every disconnect. Guard with log-level check under high
+churn.
 
 ---
 
 ## Minor / Informational
 
-### M1. `ClientHandle` Retains Object References After Staleness
+### M1. `ClientHandle` Retains References After Staleness
 
 **File:** `ClientHandle.cs:13-14`
 
-A stale `ClientHandle` (generation mismatch) still holds references to both `Server` and `Client`,
-preventing GC of those objects if the consumer caches handles. Since this is a `readonly struct`,
-the references can't be cleared. This is acceptable for the single-run constraint but worth
-documenting in the API — consumers should not store `ClientHandle` values long-term after
-disconnection.
+Stale handles hold `Server` + `Client` references, preventing GC if consumers cache them.
+Document that handles should not be stored after disconnection.
 
-### M2. `BytesSend` Typo / Duplicate Property
+### M2. `BytesSend` Duplicate Property
 
-**File:** `ClientHandle.cs:95`
+**File:** `ClientHandle.cs:111`
 
-```csharp
-public ulong BytesSent => Client.BytesSent;
-public ulong BytesSend => Client.BytesSent;  // duplicate with typo
-```
+`BytesSend` is a typo of `BytesSent`. Remove to avoid API confusion.
 
-`BytesSend` appears to be a typo of `BytesSent`. Both return the same value. Consider removing
-`BytesSend` to avoid API confusion.
+### M3. Disconnect Cleanup Re-enqueue Has No Retry Limit
 
-### M3. `_disconnectCleanupQueue` Re-enqueue Spin
+**File:** `Server.cs:1130-1155`
 
-**File:** `Server.cs:832-838`
+Handles that can't be finalized are re-enqueued every 500ms indefinitely. Add a retry limit.
 
-If `TryFinalizeDisconnect` keeps failing (pending operations never reach 0 due to a stuck SAEA
-operation), the cleanup thread re-enqueues the handle every 500ms indefinitely. This won't cause a
-crash but wastes CPU. Consider adding a retry limit or escalation (force-close after N retries).
+### M4. `_cancellation.Dispose()` Called Twice
 
-### M4. `CheckSocketTimeout` List Reuse Pattern
+**Files:** `Server.cs:980`, `Server.cs:1008`
 
-**File:** `Server.cs:848`
+`Shutdown()` and `Dispose()` both dispose the CTS. Idempotent but redundant. If C1 fix is
+applied (remove dispose from Shutdown), this is resolved.
 
-```csharp
-List<ClientHandle> handles = new List<ClientHandle>(_settings.MaxConnections);
-```
+### M5. AGENTS.md Does Not Reflect Restart Support
 
-The list is pre-allocated with `MaxConnections` capacity. `SnapshotActiveHandles` calls `Clear()`
-then `AddRange()`, which is efficient since capacity is preserved. No issue — noting for
-completeness.
+**File:** `AGENTS.md:22`
+
+States *"lifecycle should be start once and stop once"* but the implementation supports restart.
+Update documentation to match the design.
 
 ---
 
@@ -320,15 +417,21 @@ completeness.
 
 | ID | Severity | Category | Summary |
 |----|----------|----------|---------|
-| C1 | Critical | Thread Safety | `Dispose`/`ServerStop` race — use-after-dispose of shared resources |
-| C2 | Critical | Logic | `Thread.Start` failure leaves orphaned threads, no rollback |
-| H1 | High | Scalability | IOCP thread starvation from consumer callbacks on async path |
-| H2 | High | Logic | Timeout check interval equals full timeout, up to 2x detection delay |
+| C1 | Critical | Thread Safety | Surviving threads access disposed CTS WaitHandle → process crash |
+| C2 | Critical | Liveness | `WaitForShutdownQuiescence` has no timeout → `Stop()` hangs, restart impossible |
+| C3 | Critical | Resource Leak | Client pool slots leak across restart cycles (compounds with C2 fix) |
+| H1 | High | Scalability | IOCP thread starvation from blocking consumer callbacks |
+| H2 | High | Logic | Timeout check interval = full timeout → 2x detection delay |
 | H3 | High | Scalability | Accept thread blocked by synchronous consumer callback |
-| O1 | Medium | GC Pressure | Per-receive `byte[]` allocation under high throughput |
+| H4 | High | Logic | `ProcessSend` error path leaves `SendQueue` state dirty |
+| H5 | High | Thread Safety | MRES lost-signal race in async callback tracking (mitigated by counter re-check) |
+| H6 | High | Restart | `RecreateRunResources` doesn't clear `_disconnectCleanupQueue` |
+| O1 | Medium | GC Pressure | Per-receive `byte[]` allocation |
 | O2 | Medium | GC Pressure | Per-send `byte[]` copy allocation |
 | O3 | Low | GC Pressure | `ClientHandle` struct boxing via `UserToken` |
 | O4 | Low | GC Pressure | String interpolation in disconnect logging |
 | M1 | Info | Resource | Stale `ClientHandle` retains object references |
 | M2 | Info | API | `BytesSend` duplicate/typo property |
 | M3 | Info | Resilience | Cleanup re-enqueue has no retry limit |
+| M4 | Info | Cleanup | Double CTS dispose (resolved if C1 fix applied) |
+| M5 | Info | Documentation | AGENTS.md doesn't reflect restart support |
