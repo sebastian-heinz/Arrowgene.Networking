@@ -19,7 +19,7 @@ namespace Arrowgene.Networking
         /// </summary>
         public SocketSettings()
         {
-            Backlog = 5;
+            Backlog = 128;
             DualMode = false;
             ExclusiveAddressUse = false;
             NoDelay = false;

@@ -35,6 +35,7 @@ internal sealed class ServerTestHost : IDisposable
             DebugMode = false
         };
 
+        settings.ListenSocketSettings.Backlog = 128;
         configureSettings?.Invoke(settings);
 
         _sync = new object();
