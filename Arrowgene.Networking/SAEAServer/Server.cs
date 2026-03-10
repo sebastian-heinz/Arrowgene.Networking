@@ -68,7 +68,7 @@ public sealed class Server : IDisposable
     private readonly Thread _acceptThread;
     private readonly Thread _timeoutThread;
     private Socket? _listenSocket;
-    private int _state;
+    private ServerState _state;
 
     public IPAddress IpAddress { get; }
 
@@ -118,7 +118,7 @@ public sealed class Server : IDisposable
         );
         _acceptPool = new AcceptPool(_settings.ConcurrentAccepts, AcceptCompleted);
 
-        _state = (int)ServerState.Created;
+        _state = ServerState.Created;
 
         _timeoutThread = new Thread(CheckSocketTimeout)
         {
@@ -138,7 +138,7 @@ public sealed class Server : IDisposable
 
         lock (_lifecycleLock)
         {
-            ServerState state = GetState();
+            ServerState state = _state;
             if (state == ServerState.Disposed)
             {
                 Log(LogLevel.Error, nameof(ServerStart), "Server is disposed.");
@@ -162,8 +162,8 @@ public sealed class Server : IDisposable
                 Log(LogLevel.Error, nameof(ServerStart), "Server already started.");
                 return;
             }
-
-            Volatile.Write(ref _state, (int)ServerState.Running);
+            
+            _state = ServerState.Running;
             if (_socketTimeout > TimeSpan.Zero)
             {
                 _timeoutThread.Start();
@@ -179,7 +179,7 @@ public sealed class Server : IDisposable
     {
         lock (_lifecycleLock)
         {
-            ServerState state = GetState();
+            ServerState state = _state;
             if (state == ServerState.Disposed)
             {
                 Log(LogLevel.Error, nameof(ServerStop), "Server is disposed.");
@@ -198,12 +198,11 @@ public sealed class Server : IDisposable
                 return;
             }
 
-            Volatile.Write(ref _state, (int)ServerState.Stopping);
+            _state = ServerState.Stopping;
         }
 
         Log(LogLevel.Info, nameof(ServerStop), "Stopping server...");
         Shutdown();
-        Interlocked.CompareExchange(ref _state, (int)ServerState.Stopped, (int)ServerState.Stopping);
         Log(LogLevel.Info, nameof(ServerStop), "Server stopped.");
     }
 
@@ -216,14 +215,22 @@ public sealed class Server : IDisposable
 
         if (!TrySocketListen())
         {
-            if (Interlocked.CompareExchange(ref _state, (int)ServerState.Stopping, (int)ServerState.Running) ==
-                (int)ServerState.Running)
+            lock (_lifecycleLock)
+            {
+                
+                if (_state == ServerState.Running)
+                {
+                    _state = ServerState.Stopping;
+                    shouldShutdown = true;
+                }
+            }
+
+            if (shouldShutdown)
             {
                 Log(LogLevel.Error, nameof(Run), "Stopping server due to startup failure.");
                 Shutdown();
-                Interlocked.CompareExchange(ref _state, (int)ServerState.Stopped, (int)ServerState.Stopping);
             }
-            
+
             return;
         }
 
@@ -250,7 +257,21 @@ public sealed class Server : IDisposable
                 listenSocket.Bind(localEndPoint);
                 listenSocket.Listen(_settings.ListenSocketSettings.Backlog);
 
-                Interlocked.Exchange(ref _listenSocket, listenSocket);
+                bool listenerPublished = false;
+                lock (_lifecycleLock)
+                {
+                    if (_state == ServerState.Running && !cancellationToken.IsCancellationRequested)
+                    {
+                        _listenSocket = listenSocket;
+                        listenerPublished = true;
+                    }
+                }
+
+                if (!listenerPublished)
+                {
+                    Service.CloseSocket(listenSocket);
+                    return false;
+                }
 
                 Log(LogLevel.Info, nameof(TrySocketListen), $"Listening on {IpAddress}:{Port}.");
                 return true;
@@ -285,7 +306,7 @@ public sealed class Server : IDisposable
     {
         CancellationToken cancellationToken = _cancellation.Token;
 
-        while (IsRunningState() && !cancellationToken.IsCancellationRequested)
+        while (!cancellationToken.IsCancellationRequested)
         {
             if (!_acceptPool.TryAcquire(cancellationToken, out SocketAsyncEventArgs? acceptEventArgs))
             {
@@ -294,7 +315,12 @@ public sealed class Server : IDisposable
 
             SocketAsyncEventArgs acquiredEventArgs = acceptEventArgs!;
 
-            Socket? listenSocket = Volatile.Read(ref _listenSocket);
+            Socket? listenSocket;
+            lock (_lifecycleLock)
+            {
+                listenSocket = _listenSocket;
+            }
+
             if (listenSocket is null)
             {
                 _acceptPool.Return(acquiredEventArgs);
@@ -530,7 +556,7 @@ public sealed class Server : IDisposable
 
     public void Send(ClientHandle clientHandle, byte[] data)
     {
-        if (GetState() != ServerState.Running)
+        if (!IsRunningState())
         {
             Log(LogLevel.Error, nameof(Send), "Server is not running.");
             return;
@@ -745,7 +771,7 @@ public sealed class Server : IDisposable
         CancellationToken cancellationToken = _cancellation.Token;
         List<ClientHandle> handles = new List<ClientHandle>(_settings.MaxConnections);
 
-        while (IsRunningState() && !cancellationToken.IsCancellationRequested)
+        while (!cancellationToken.IsCancellationRequested)
         {
             long now = Environment.TickCount64;
             _clientRegistry.SnapshotActiveHandles(handles);
@@ -792,9 +818,18 @@ public sealed class Server : IDisposable
 
     private void Shutdown()
     {
-        Interlocked.CompareExchange(ref _state, (int)ServerState.Stopping, (int)ServerState.Running);
+        Socket? listenSocket;
+        lock (_lifecycleLock)
+        {
+            if (_state == ServerState.Running || _state == ServerState.Created)
+            {
+                _state = ServerState.Stopping;
+            }
 
-        Socket? listenSocket = Interlocked.Exchange(ref _listenSocket, null);
+            listenSocket = _listenSocket;
+            _listenSocket = null;
+        }
+
         Service.CloseSocket(listenSocket);
         try
         {
@@ -814,19 +849,25 @@ public sealed class Server : IDisposable
         Service.JoinThread(_acceptThread, ThreadTimeoutMs);
         Service.JoinThread(_timeoutThread, ThreadTimeoutMs);
 
-        Interlocked.CompareExchange(ref _state, (int)ServerState.Stopped, (int)ServerState.Stopping);
+        lock (_lifecycleLock)
+        {
+            if (_state == ServerState.Stopping)
+            {
+                _state = ServerState.Stopped;
+            }
+        }
     }
 
     public void Dispose()
     {
         lock (_lifecycleLock)
         {
-            if (GetState() == ServerState.Disposed)
+            if (_state == ServerState.Disposed)
             {
                 return;
             }
 
-            Volatile.Write(ref _state, (int)ServerState.Disposed);
+            _state = ServerState.Disposed;
         }
 
         Shutdown();
@@ -836,14 +877,12 @@ public sealed class Server : IDisposable
         Log(LogLevel.Info, nameof(Dispose), "Server resources disposed.");
     }
 
-    private ServerState GetState()
-    {
-        return (ServerState)Volatile.Read(ref _state);
-    }
-
     private bool IsRunningState()
     {
-        return Volatile.Read(ref _state) == (int)ServerState.Running;
+        lock (_lifecycleLock)
+        {
+            return _state == ServerState.Running;
+        }
     }
 
     private void OnConsumerError(
