@@ -7,12 +7,12 @@ namespace Arrowgene.Networking.SAEAServer;
 /// Configuration for <see cref="TcpServer"/>.
 /// </summary>
 [DataContract]
-public sealed class ServerSettings : ICloneable
+public sealed class TcpServerSettings : ICloneable
 {
     /// <summary>
     /// Creates the default configuration.
     /// </summary>
-    public ServerSettings()
+    public TcpServerSettings()
     {
         Identity = string.Empty;
         MaxConnections = 100;
@@ -31,7 +31,7 @@ public sealed class ServerSettings : ICloneable
     /// Creates a deep copy of an existing configuration.
     /// </summary>
     /// <param name="settings">The configuration to copy.</param>
-    public ServerSettings(ServerSettings settings)
+    public TcpServerSettings(TcpServerSettings settings)
     {
         if (settings is null)
         {
@@ -170,6 +170,6 @@ public sealed class ServerSettings : ICloneable
     /// <inheritdoc />
     public object Clone()
     {
-        return new ServerSettings(this);
+        return new TcpServerSettings(this);
     }
 }

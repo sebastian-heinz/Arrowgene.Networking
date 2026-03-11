@@ -17,12 +17,12 @@ internal sealed class ServerTestHost : IDisposable
 
     internal ServerTestHost(
         RecordingConsumer consumer,
-        Action<ServerSettings>? configureSettings = null
+        Action<TcpServerSettings>? configureSettings = null
     )
     {
         Consumer = consumer ?? throw new ArgumentNullException(nameof(consumer));
 
-        ServerSettings settings = new ServerSettings
+        TcpServerSettings settings = new TcpServerSettings
         {
             Identity = "Tests",
             MaxConnections = 16,
