@@ -3,43 +3,36 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Arrowgene.Networking.SAEAServer;
-using Arrowgene.Networking.SAEAServer.Consumer;
+using Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption;
 
 namespace Arrowgene.Networking.Tests;
 
-internal sealed class RecordingConsumer : IConsumer
+internal sealed class ThreadedEchoRecordingConsumer : ThreadedBlockingQueueConsumer
 {
     private readonly object _sync;
     private readonly List<ConnectedClientRecord> _connectedClients;
     private readonly List<DisconnectedClientRecord> _disconnectedClients;
     private readonly List<Exception> _errors;
-    private readonly Dictionary<ClientKey, long> _receivedBytesByClient;
     private readonly bool _echoReceivedData;
     private readonly int _receiveDelayMs;
-    private readonly bool _blockFirstReceive;
-    private readonly ManualResetEventSlim _blockedReceiveEntered;
-    private readonly ManualResetEventSlim _blockedReceiveRelease;
     private long _totalReceivedBytes;
-    private int _activeReceiveCallbacks;
-    private int _maxConcurrentReceiveCallbacks;
-    private int _blockedReceiveConsumed;
+    private int _activeHandlers;
+    private int _maxConcurrentHandlers;
 
-    internal RecordingConsumer(
+    internal ThreadedEchoRecordingConsumer(
+        int maxUnitOfOrder,
         bool echoReceivedData = false,
-        int receiveDelayMs = 0,
-        bool blockFirstReceive = false
+        int queueCapacityPerLane = 1024,
+        int receiveDelayMs = 0
     )
+        : base(maxUnitOfOrder, queueCapacityPerLane, nameof(ThreadedEchoRecordingConsumer))
     {
         _sync = new object();
         _connectedClients = new List<ConnectedClientRecord>();
         _disconnectedClients = new List<DisconnectedClientRecord>();
         _errors = new List<Exception>();
-        _receivedBytesByClient = new Dictionary<ClientKey, long>();
         _echoReceivedData = echoReceivedData;
         _receiveDelayMs = receiveDelayMs;
-        _blockFirstReceive = blockFirstReceive;
-        _blockedReceiveEntered = new ManualResetEventSlim(false);
-        _blockedReceiveRelease = new ManualResetEventSlim(!blockFirstReceive);
     }
 
     internal int ConnectedCount
@@ -66,7 +59,7 @@ internal sealed class RecordingConsumer : IConsumer
 
     internal long TotalReceivedBytes => Interlocked.Read(ref _totalReceivedBytes);
 
-    internal int MaxConcurrentReceiveCallbacks => Volatile.Read(ref _maxConcurrentReceiveCallbacks);
+    internal int MaxConcurrentHandlers => Volatile.Read(ref _maxConcurrentHandlers);
 
     internal IReadOnlyList<ConnectedClientRecord> ConnectedClients
     {
@@ -101,10 +94,10 @@ internal sealed class RecordingConsumer : IConsumer
         }
     }
 
-    public void OnReceivedData(ClientHandle clientHandle, byte[] data)
+    protected override void HandleReceived(ClientHandle clientHandle, byte[] data)
     {
-        int activeCallbacks = Interlocked.Increment(ref _activeReceiveCallbacks);
-        UpdateMaxConcurrentCallbacks(activeCallbacks);
+        int activeHandlers = Interlocked.Increment(ref _activeHandlers);
+        UpdateMaxConcurrentHandlers(activeHandlers);
 
         try
         {
@@ -113,20 +106,7 @@ internal sealed class RecordingConsumer : IConsumer
                 Thread.Sleep(_receiveDelayMs);
             }
 
-            ClientKey key = new ClientKey(clientHandle.Port, clientHandle.Generation);
-            lock (_sync)
-            {
-                _receivedBytesByClient.TryGetValue(key, out long currentBytes);
-                _receivedBytesByClient[key] = currentBytes + data.Length;
-            }
-
             Interlocked.Add(ref _totalReceivedBytes, data.Length);
-
-            if (_blockFirstReceive && Interlocked.CompareExchange(ref _blockedReceiveConsumed, 1, 0) == 0)
-            {
-                _blockedReceiveEntered.Set();
-                _blockedReceiveRelease.Wait();
-            }
 
             if (_echoReceivedData)
             {
@@ -135,11 +115,11 @@ internal sealed class RecordingConsumer : IConsumer
         }
         finally
         {
-            Interlocked.Decrement(ref _activeReceiveCallbacks);
+            Interlocked.Decrement(ref _activeHandlers);
         }
     }
 
-    public void OnClientDisconnected(ClientSnapshot clientSnapshot)
+    protected override void HandleDisconnected(ClientSnapshot clientSnapshot)
     {
         lock (_sync)
         {
@@ -147,7 +127,7 @@ internal sealed class RecordingConsumer : IConsumer
         }
     }
 
-    public void OnClientConnected(ClientHandle clientHandle)
+    protected override void HandleConnected(ClientHandle clientHandle)
     {
         ClientKey key = new ClientKey(clientHandle.Port, clientHandle.Generation);
         ConnectedClientRecord record = new ConnectedClientRecord(clientHandle, key, clientHandle.UnitOfOrder);
@@ -158,19 +138,11 @@ internal sealed class RecordingConsumer : IConsumer
         }
     }
 
-    public void OnError(ClientHandle clientHandle, Exception exception, string message)
+    protected override void HandleError(ClientHandle clientHandle, Exception exception, string message)
     {
         lock (_sync)
         {
             _errors.Add(exception);
-        }
-    }
-
-    internal long GetReceivedBytes(ClientKey key)
-    {
-        lock (_sync)
-        {
-            return _receivedBytesByClient.GetValueOrDefault(key);
         }
     }
 
@@ -179,6 +151,14 @@ internal sealed class RecordingConsumer : IConsumer
         lock (_sync)
         {
             return _connectedClients[index];
+        }
+    }
+
+    internal DisconnectedClientRecord GetDisconnectedClient(int index)
+    {
+        lock (_sync)
+        {
+            return _disconnectedClients[index];
         }
     }
 
@@ -200,43 +180,20 @@ internal sealed class RecordingConsumer : IConsumer
         ).ConfigureAwait(false);
     }
 
-    internal async Task WaitForTotalReceivedBytesAsync(long expected, TimeSpan timeout)
-    {
-        await TestWait.UntilAsync(
-            () => TotalReceivedBytes >= expected,
-            timeout,
-            $"Timed out waiting for {expected} received bytes. Current total: {TotalReceivedBytes}."
-        ).ConfigureAwait(false);
-    }
-
-    internal async Task WaitForBlockedReceiveAsync(TimeSpan timeout)
-    {
-        await TestWait.UntilAsync(
-            () => _blockedReceiveEntered.IsSet,
-            timeout,
-            "Timed out waiting for the blocked receive callback to start."
-        ).ConfigureAwait(false);
-    }
-
-    internal void ReleaseBlockedReceive()
-    {
-        _blockedReceiveRelease.Set();
-    }
-
-    private void UpdateMaxConcurrentCallbacks(int activeCallbacks)
+    private void UpdateMaxConcurrentHandlers(int activeHandlers)
     {
         int observed;
         do
         {
-            observed = Volatile.Read(ref _maxConcurrentReceiveCallbacks);
-            if (activeCallbacks <= observed)
+            observed = Volatile.Read(ref _maxConcurrentHandlers);
+            if (activeHandlers <= observed)
             {
                 return;
             }
         }
         while (Interlocked.CompareExchange(
-                   ref _maxConcurrentReceiveCallbacks,
-                   activeCallbacks,
+                   ref _maxConcurrentHandlers,
+                   activeHandlers,
                    observed
                ) != observed);
     }

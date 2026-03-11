@@ -1,7 +1,6 @@
 ﻿using System;
-using Arrowgene.Networking.SAEAServer;
 
-namespace Arrowgene.Networking.Consumer.EventConsumption
+namespace Arrowgene.Networking.SAEAServer.Consumer.EventConsumption
 {
     /// <summary>
     /// Event payload for a client connection notification.

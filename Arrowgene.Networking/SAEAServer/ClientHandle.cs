@@ -11,11 +11,11 @@ namespace Arrowgene.Networking.SAEAServer;
 public readonly struct ClientHandle : IEquatable<ClientHandle>
 {
     private readonly Client _client;
-    private readonly Server _server;
+    private readonly TcpServer _tcpServer;
 
-    internal ClientHandle(Server server, Client client)
+    internal ClientHandle(TcpServer tcpServer, Client client)
     {
-        _server = server;
+        _tcpServer = tcpServer;
         _client = client;
         Generation = _client.Generation;
     }
@@ -40,9 +40,20 @@ public readonly struct ClientHandle : IEquatable<ClientHandle>
         }
     }
 
-    public ClientSnapshot Snapshot()
+    /// <summary>
+    /// Captures an immutable snapshot of the current client state.
+    /// </summary>
+    /// <returns>A <see cref="ClientSnapshot"/> representing the client's state at this moment.</returns>
+    public bool TrySnapshot(out ClientSnapshot snapshot)
     {
-        return Client.Snapshot();
+        if (!TryGetClient(out Client client))
+        {
+            snapshot = default;
+            return false;
+        }
+
+        snapshot = client.Snapshot();
+        return false;
     }
 
     /// <summary>
@@ -127,7 +138,7 @@ public readonly struct ClientHandle : IEquatable<ClientHandle>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Send(byte[] data)
     {
-        _server.Send(this, data);
+        _tcpServer.Send(this, data);
     }
 
     /// <summary>
@@ -135,7 +146,7 @@ public readonly struct ClientHandle : IEquatable<ClientHandle>
     /// </summary>
     public void Close()
     {
-        _server.Disconnect(this);
+        _tcpServer.Disconnect(this);
     }
 
     /// <summary>

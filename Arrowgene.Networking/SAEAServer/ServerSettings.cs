@@ -4,7 +4,7 @@ using System.Runtime.Serialization;
 namespace Arrowgene.Networking.SAEAServer;
 
 /// <summary>
-/// Configuration for <see cref="Server"/>.
+/// Configuration for <see cref="TcpServer"/>.
 /// </summary>
 [DataContract]
 public sealed class ServerSettings : ICloneable

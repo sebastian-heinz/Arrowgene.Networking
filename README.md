@@ -39,8 +39,8 @@ dotnet build
 
 ```csharp
 using System.Net;
-using Arrowgene.Networking.Consumer.EventConsumption;
 using Arrowgene.Networking.SAEAServer;
+using Arrowgene.Networking.SAEAServer.Consumer.EventConsumption;
 
 // Configure the server
 var settings = new ServerSettings
@@ -57,27 +57,27 @@ var settings = new ServerSettings
 var consumer = new EventConsumer();
 consumer.ClientConnected += (s, e) =>
 {
-    Console.WriteLine($"Client connected: {e.ClientHandle.Id}");
+    Console.WriteLine($"Client connected: {e.Socket.Identity}");
 };
 consumer.ClientDisconnected += (s, e) =>
 {
-    Console.WriteLine($"Client disconnected: {e.ClientSnapshot.ClientId}");
+    Console.WriteLine($"Client disconnected: {e.ClientSnapshot.Identity}");
 };
 consumer.ReceivedPacket += (s, e) =>
 {
     // Echo received data back to the client
-    e.ClientHandle.Send(e.Data);
+    e.Socket.Send(e.Data);
 };
 
 // Start listening
-var server = new Server(settings, consumer);
-server.Start(new IPEndPoint(IPAddress.Any, 2345));
+var server = new TcpServer(IPAddress.Any, 2345, consumer, settings);
+server.Start();
 ```
 
 ## Architecture
 
 ```
-Server
+TcpServer
 ├── AcceptPool           - Reusable SocketAsyncEventArgs for accept operations
 ├── BufferSlab           - Single pinned byte[] divided among all client slots
 ├── ClientRegistry       - Client pool manager with ordering lane assignment
@@ -165,7 +165,7 @@ The test suite covers server lifecycle, connection caps, ordering lanes, pooling
 ```
 Arrowgene.Networking/
 ├── SAEAServer/
-│   ├── Server.cs              # Core TCP server
+│   ├── TcpServer.cs           # Core TCP server
 │   ├── Client.cs              # Pooled client connection
 │   ├── ClientHandle.cs        # Generation-checked client reference
 │   ├── ClientSnapshot.cs      # Immutable disconnect snapshot
@@ -173,11 +173,11 @@ Arrowgene.Networking/
 │   ├── AcceptPool.cs          # Accept operation pool
 │   ├── BufferSlab.cs          # Pinned buffer allocation
 │   ├── SendQueue.cs           # Per-client send queue
-│   └── ServerSettings.cs      # Configuration
-├── Consumer/
-│   ├── IConsumer.cs           # Consumer callback interface
-│   ├── EventConsumption/      # Event-based consumer
-│   └── BlockingQueueConsumption/  # Queue-based consumers
+│   ├── ServerSettings.cs      # Configuration
+│   └── Consumer/
+│       ├── IConsumer.cs           # Consumer callback interface
+│       ├── EventConsumption/      # Event-based consumer
+│       └── BlockingQueueConsumption/  # Queue-based consumers
 ├── Service.cs                 # Utility methods
 ├── SocketSettings.cs          # Socket configuration
 └── SocketOption.cs            # Raw socket options

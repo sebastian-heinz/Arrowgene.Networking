@@ -1,4 +1,4 @@
-﻿namespace Arrowgene.Networking.Consumer.BlockingQueueConsumption
+﻿namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
 {
     /// <summary>
     /// Identifies the kind of client event stored in a queue.
@@ -18,6 +18,11 @@
         /// <summary>
         /// A client disconnected.
         /// </summary>
-        Disconnected
+        Disconnected,
+
+        /// <summary>
+        /// A client caused an error.
+        /// </summary>
+        Error
     }
 }

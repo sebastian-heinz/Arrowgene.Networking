@@ -6,7 +6,7 @@ using System.Threading;
 namespace Arrowgene.Networking.SAEAServer;
 
 /// <summary>
-/// Represents one pooled client slot managed by <see cref="Server"/>.
+/// Represents one pooled client slot managed by <see cref="TcpServer"/>.
 /// </summary>
 internal sealed class Client : IDisposable
 {

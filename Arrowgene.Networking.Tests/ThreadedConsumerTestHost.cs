@@ -6,17 +6,18 @@ using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using Arrowgene.Networking.SAEAServer;
+using Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption;
 
 namespace Arrowgene.Networking.Tests;
 
-internal sealed class ServerTestHost : IDisposable
+internal sealed class ThreadedConsumerTestHost : IDisposable
 {
     private readonly object _sync;
     private readonly List<TcpClient> _trackedClients;
     private bool _disposed;
 
-    internal ServerTestHost(
-        RecordingConsumer consumer,
+    internal ThreadedConsumerTestHost(
+        ThreadedBlockingQueueConsumer consumer,
         Action<ServerSettings>? configureSettings = null
     )
     {
@@ -24,7 +25,7 @@ internal sealed class ServerTestHost : IDisposable
 
         ServerSettings settings = new ServerSettings
         {
-            Identity = "Tests",
+            Identity = "ThreadedTests",
             MaxConnections = 16,
             BufferSize = 1024,
             OrderingLaneCount = 4,
@@ -41,11 +42,13 @@ internal sealed class ServerTestHost : IDisposable
         _sync = new object();
         _trackedClients = new List<TcpClient>();
         Port = PortAllocator.GetFreeTcpPort();
+
+        Consumer.Start();
         TcpServer = new TcpServer(IPAddress.Loopback, Port, Consumer, settings);
         TcpServer.Start();
     }
 
-    internal RecordingConsumer Consumer { get; }
+    internal ThreadedBlockingQueueConsumer Consumer { get; }
 
     internal TcpServer TcpServer { get; }
 
@@ -189,6 +192,7 @@ internal sealed class ServerTestHost : IDisposable
 
         Thread.Sleep(100);
         TcpServer.Dispose();
+        Consumer.Dispose();
         _disposed = true;
     }
 
@@ -202,7 +206,7 @@ internal sealed class ServerTestHost : IDisposable
     {
         if (_disposed)
         {
-            throw new ObjectDisposedException(nameof(ServerTestHost));
+            throw new ObjectDisposedException(nameof(ThreadedConsumerTestHost));
         }
     }
 }
