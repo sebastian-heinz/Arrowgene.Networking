@@ -18,12 +18,12 @@ internal sealed class ThreadedConsumerTestHost : IDisposable
 
     internal ThreadedConsumerTestHost(
         ThreadedBlockingQueueConsumer consumer,
-        Action<ServerSettings>? configureSettings = null
+        Action<TcpServerSettings>? configureSettings = null
     )
     {
         Consumer = consumer ?? throw new ArgumentNullException(nameof(consumer));
 
-        ServerSettings settings = new ServerSettings
+        TcpServerSettings settings = new TcpServerSettings
         {
             Identity = "ThreadedTests",
             MaxConnections = 16,

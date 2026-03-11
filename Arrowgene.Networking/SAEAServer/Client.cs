@@ -1,6 +1,7 @@
 using System;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using System.Threading;
 
 namespace Arrowgene.Networking.SAEAServer;
@@ -22,15 +23,18 @@ internal sealed class Client : IDisposable
     private int _pendingOperations;
     private uint _generation;
     private bool _disconnectCleanupQueued;
+    private TcpServer _server;
 
 
     internal Client(
-        int clientId,
+        TcpServer server,
+        ushort clientId,
         SocketAsyncEventArgs receiveEventArgs,
         SocketAsyncEventArgs sendEventArgs,
         int maxQueuedSendBytes
     )
     {
+        _server = server;
         ClientId = clientId;
         _sync = new object();
         _sendQueue = new SendQueue(maxQueuedSendBytes);
@@ -43,12 +47,13 @@ internal sealed class Client : IDisposable
         RemoteIpAddress = IPAddress.None;
         ConnectedAt = DateTime.MinValue;
         _generation = 0;
+        UniqueId = UniqueIdManager.Pack(ClientId, _generation);
     }
 
     /// <summary>
     /// Gets the stable pooled client slot identifier.
     /// </summary>
-    internal int ClientId { get; }
+    internal ushort ClientId { get; }
 
     /// <summary>
     /// Gets the current connection identity.
@@ -93,6 +98,7 @@ internal sealed class Client : IDisposable
     /// </summary>
     internal ulong BytesSent => unchecked((ulong)Interlocked.Read(ref _bytesSent));
 
+    internal long UniqueId { get; private set; }
 
     internal bool IsAlive
     {
@@ -110,6 +116,25 @@ internal sealed class Client : IDisposable
     internal SocketAsyncEventArgs SendEventArgs { get; }
 
     internal int PendingOperations => Volatile.Read(ref _pendingOperations);
+
+    /// <summary>
+    /// Queues a payload to be sent to the client.
+    /// </summary>
+    /// <param name="clientHandle">The target client.</param>
+    /// <param name="data">The payload to send.</param>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Send(ClientHandle clientHandle, byte[] data)
+    {
+        _server.Send(clientHandle, data);
+    }
+
+    /// <summary>
+    /// Disconnects the client.
+    /// </summary>
+    public void Disconnect(ClientHandle clientHandle, string reason = "")
+    {
+        _server.Disconnect(clientHandle, reason);
+    }
 
     public ClientSnapshot Snapshot()
     {
@@ -136,7 +161,7 @@ internal sealed class Client : IDisposable
         return snapshot;
     }
 
-    internal void Activate(Socket socket, int unitOfOrder)
+    internal void Activate(Socket socket, int unitOfOrder, out ClientHandle handle)
     {
         lock (_sync)
         {
@@ -172,6 +197,8 @@ internal sealed class Client : IDisposable
             _isInPool = false;
             _isAlive = true;
             _disconnectCleanupQueued = false;
+            UniqueId = UniqueIdManager.Pack(ClientId, _generation);
+            handle = new ClientHandle(this, _generation, ClientId);
         }
     }
 
@@ -307,6 +334,8 @@ internal sealed class Client : IDisposable
             Interlocked.Exchange(ref _pendingOperations, 0);
             _disconnectCleanupQueued = false;
             _sendQueue.Reset();
+
+            UniqueId = UniqueIdManager.Pack(ClientId, _generation);
         }
     }
 

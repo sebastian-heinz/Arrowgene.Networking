@@ -11,10 +11,10 @@ internal sealed class ClientRegistry : IDisposable
     private readonly Client[] _allClients;
     private readonly Stack<Client> _availableClients;
     private readonly List<ClientHandle> _activeHandles;
-    private readonly int _maxConnections;
+    private readonly ushort _maxConnections;
 
-    internal ClientRegistry(int maxConnections, int orderingLaneCount,
-        Func<int, Client> clientFactory)
+    internal ClientRegistry(ushort maxConnections, int orderingLaneCount,
+        Func<ushort, Client> clientFactory)
     {
         if (maxConnections <= 0)
         {
@@ -38,9 +38,9 @@ internal sealed class ClientRegistry : IDisposable
         _availableClients = new Stack<Client>(_maxConnections);
         _activeHandles = new List<ClientHandle>(_maxConnections);
 
-        for (int clientId = _maxConnections - 1; clientId >= 0; clientId--)
+        for (int clientId = maxConnections - 1; clientId >= 0; clientId--)
         {
-            Client client = clientFactory(clientId);
+            Client client = clientFactory((ushort)clientId);
             _allClients[clientId] = client;
             _availableClients.Push(client);
         }
@@ -57,14 +57,14 @@ internal sealed class ClientRegistry : IDisposable
     internal bool TryActivateClient(
         TcpServer tcpServer,
         Socket acceptedSocket,
-        out ClientHandle handle
+        out ClientHandle clientHandle
     )
     {
         lock (_sync)
         {
             if (!_availableClients.TryPop(out Client? pooledClient))
             {
-                handle = default;
+                clientHandle = default;
                 return false;
             }
 
@@ -73,7 +73,7 @@ internal sealed class ClientRegistry : IDisposable
 
             try
             {
-                pooledClient.Activate(acceptedSocket, orderingLane);
+                pooledClient.Activate(acceptedSocket, orderingLane, out clientHandle);
             }
             catch
             {
@@ -82,10 +82,9 @@ internal sealed class ClientRegistry : IDisposable
                 throw;
             }
 
-            handle = new ClientHandle(tcpServer, pooledClient);
-            pooledClient.ReceiveEventArgs.UserToken = handle;
-            pooledClient.SendEventArgs.UserToken = handle;
-            _activeHandles.Add(handle);
+            pooledClient.ReceiveEventArgs.UserToken = clientHandle;
+            pooledClient.SendEventArgs.UserToken = clientHandle;
+            _activeHandles.Add(clientHandle);
             return true;
         }
     }

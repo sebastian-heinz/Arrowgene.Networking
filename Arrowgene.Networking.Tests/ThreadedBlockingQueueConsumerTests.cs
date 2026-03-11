@@ -293,7 +293,7 @@ public sealed class ThreadedBlockingQueueConsumerTests
         Assert.Empty(consumer.Errors);
     }
 
-    private static ClientSnapshot CreateSnapshot(int unitOfOrder, int clientId)
+    private static ClientSnapshot CreateSnapshot(int unitOfOrder, ushort clientId)
     {
         return new ClientSnapshot(
             clientId,

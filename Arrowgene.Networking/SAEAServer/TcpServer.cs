@@ -59,7 +59,7 @@ public sealed class TcpServer : IDisposable
 
     private readonly object _lifecycleLock;
     private readonly IConsumer _consumer;
-    private readonly ServerSettings _settings;
+    private readonly TcpServerSettings _settings;
     private readonly AcceptPool _acceptPool;
     private readonly BufferSlab _bufferSlab;
     private readonly ClientRegistry _clientRegistry;
@@ -96,7 +96,7 @@ public sealed class TcpServer : IDisposable
     /// <param name="port">The TCP port to bind.</param>
     /// <param name="consumer">The consumer that receives callbacks.</param>
     /// <param name="settings">The server settings.</param>
-    public TcpServer(IPAddress ipAddress, ushort port, IConsumer consumer, ServerSettings settings)
+    public TcpServer(IPAddress ipAddress, ushort port, IConsumer consumer, TcpServerSettings settings)
     {
         if (ipAddress is null)
         {
@@ -118,7 +118,7 @@ public sealed class TcpServer : IDisposable
         IpAddress = ipAddress;
         Port = port;
         _consumer = consumer;
-        _settings = new ServerSettings(settings);
+        _settings = new TcpServerSettings(settings);
         _bufferSize = settings.BufferSize;
 
         _lifecycleLock = new object();
@@ -832,9 +832,10 @@ public sealed class TcpServer : IDisposable
         }
     }
 
-    private Client CreateClient(int clientId)
+    private Client CreateClient(ushort clientId)
     {
         return new Client(
+            this,
             clientId,
             _bufferSlab.CreateReceiveEventArgs(clientId, ReceiveCompleted),
             _bufferSlab.CreateSendEventArgs(clientId, SendCompleted),

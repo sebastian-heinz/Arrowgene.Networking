@@ -7,12 +7,12 @@ namespace Arrowgene.Networking.SAEAServer;
 /// Configuration for <see cref="TcpServer"/>.
 /// </summary>
 [DataContract]
-public sealed class ServerSettings : ICloneable
+public sealed class TcpServerSettings : ICloneable
 {
     /// <summary>
     /// Creates the default configuration.
     /// </summary>
-    public ServerSettings()
+    public TcpServerSettings()
     {
         Identity = string.Empty;
         MaxConnections = 100;
@@ -31,7 +31,7 @@ public sealed class ServerSettings : ICloneable
     /// Creates a deep copy of an existing configuration.
     /// </summary>
     /// <param name="settings">The configuration to copy.</param>
-    public ServerSettings(ServerSettings settings)
+    public TcpServerSettings(TcpServerSettings settings)
     {
         if (settings is null)
         {
@@ -61,7 +61,7 @@ public sealed class ServerSettings : ICloneable
     /// Gets or sets the maximum number of concurrent connections.
     /// </summary>
     [DataMember(Order = 1)]
-    public int MaxConnections { get; set; }
+    public ushort MaxConnections { get; set; }
 
     /// <summary>
     /// Gets or sets the pinned receive and send buffer size per direction.
@@ -134,9 +134,10 @@ public sealed class ServerSettings : ICloneable
 
         if (OrderingLaneCount <= 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(OrderingLaneCount), "OrderingLaneCount must be greater than zero.");
+            throw new ArgumentOutOfRangeException(nameof(OrderingLaneCount),
+                "OrderingLaneCount must be greater than zero.");
         }
-        
+
         if (ConcurrentAccepts <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(ConcurrentAccepts),
@@ -169,6 +170,6 @@ public sealed class ServerSettings : ICloneable
     /// <inheritdoc />
     public object Clone()
     {
-        return new ServerSettings(this);
+        return new TcpServerSettings(this);
     }
 }

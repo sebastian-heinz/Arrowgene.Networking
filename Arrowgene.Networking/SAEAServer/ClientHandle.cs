@@ -11,19 +11,22 @@ namespace Arrowgene.Networking.SAEAServer;
 public readonly struct ClientHandle : IEquatable<ClientHandle>
 {
     private readonly Client _client;
-    private readonly TcpServer _tcpServer;
 
-    internal ClientHandle(TcpServer tcpServer, Client client)
+    internal ClientHandle(Client client, uint generation, ushort clientId)
     {
-        _tcpServer = tcpServer;
         _client = client;
-        Generation = _client.Generation;
+        Generation = generation;
+        ClientId = clientId;
     }
 
     /// <summary>
     /// Gets the captured generation used to detect stale references.
     /// </summary>
     public uint Generation { get; }
+
+    public ushort ClientId { get; }
+
+    public long UniqueId => UniqueIdManager.Pack(ClientId, Generation);
 
     private Client Client
     {
@@ -53,7 +56,7 @@ public readonly struct ClientHandle : IEquatable<ClientHandle>
         }
 
         snapshot = client.Snapshot();
-        return false;
+        return true;
     }
 
     /// <summary>
@@ -64,15 +67,14 @@ public readonly struct ClientHandle : IEquatable<ClientHandle>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool TryGetClient(out Client client)
     {
-        Client? c = _client;
-        if (c is null || c.Generation != Generation)
+        if (_client is { } c && c.Generation == Generation)
         {
-            client = null!;
-            return false;
+            client = c;
+            return true;
         }
 
-        client = c;
-        return true;
+        client = null!;
+        return false;
     }
 
     /// <summary>
@@ -131,22 +133,31 @@ public readonly struct ClientHandle : IEquatable<ClientHandle>
     /// </summary>
     public bool IsAlive => Client.IsAlive;
 
-    /// <summary>
-    /// Queues a payload to be sent to the client.
-    /// </summary>
-    /// <param name="data">The payload to send.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Send(byte[] data)
     {
-        _tcpServer.Send(this, data);
+        Client? client = _client;
+        if (client is null)
+        {
+            return;
+        }
+
+        client.Send(this, data);
     }
 
     /// <summary>
     /// Disconnects the client.
     /// </summary>
-    public void Close()
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Disconnect()
     {
-        _tcpServer.Disconnect(this);
+        Client? client = _client;
+        if (client is null)
+        {
+            return;
+        }
+
+        client.Disconnect(this);
     }
 
     /// <summary>
