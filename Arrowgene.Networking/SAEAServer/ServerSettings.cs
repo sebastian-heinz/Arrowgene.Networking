@@ -61,7 +61,7 @@ public sealed class ServerSettings : ICloneable
     /// Gets or sets the maximum number of concurrent connections.
     /// </summary>
     [DataMember(Order = 1)]
-    public int MaxConnections { get; set; }
+    public ushort MaxConnections { get; set; }
 
     /// <summary>
     /// Gets or sets the pinned receive and send buffer size per direction.
@@ -134,9 +134,10 @@ public sealed class ServerSettings : ICloneable
 
         if (OrderingLaneCount <= 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(OrderingLaneCount), "OrderingLaneCount must be greater than zero.");
+            throw new ArgumentOutOfRangeException(nameof(OrderingLaneCount),
+                "OrderingLaneCount must be greater than zero.");
         }
-        
+
         if (ConcurrentAccepts <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(ConcurrentAccepts),

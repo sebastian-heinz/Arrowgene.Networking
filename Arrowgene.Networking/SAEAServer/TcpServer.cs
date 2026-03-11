@@ -832,9 +832,10 @@ public sealed class TcpServer : IDisposable
         }
     }
 
-    private Client CreateClient(int clientId)
+    private Client CreateClient(ushort clientId)
     {
         return new Client(
+            this,
             clientId,
             _bufferSlab.CreateReceiveEventArgs(clientId, ReceiveCompleted),
             _bufferSlab.CreateSendEventArgs(clientId, SendCompleted),

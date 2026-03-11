@@ -20,7 +20,7 @@ namespace Arrowgene.Networking.SAEAServer;
 /// <param name="PendingOperations">The number of socket operations still tracked for the client.</param>
 /// <param name="UnitOfOrder">The ordering lane assigned to the client.</param>
 public readonly record struct ClientSnapshot(
-    int ClientId,
+    ushort ClientId,
     uint Generation,
     string Identity,
     IPAddress RemoteIpAddress,
@@ -33,4 +33,10 @@ public readonly record struct ClientSnapshot(
     ulong BytesSent,
     int PendingOperations,
     int UnitOfOrder
-);
+)
+{
+    public bool IsConnected()
+    {
+        return IsAlive;
+    }
+}

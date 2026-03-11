@@ -8,7 +8,7 @@ internal sealed class BufferSlab
     private readonly byte[] _buffer;
     private readonly int _bufferSize;
 
-    internal BufferSlab(int maxConnections, int bufferSize)
+    internal BufferSlab(ushort maxConnections, int bufferSize)
     {
         if (maxConnections <= 0)
         {
@@ -24,7 +24,7 @@ internal sealed class BufferSlab
         _buffer = GC.AllocateArray<byte>(checked(maxConnections * bufferSize * 2), pinned: true);
     }
 
-    internal SocketAsyncEventArgs CreateReceiveEventArgs(int clientId, EventHandler<SocketAsyncEventArgs> completedHandler)
+    internal SocketAsyncEventArgs CreateReceiveEventArgs(ushort clientId, EventHandler<SocketAsyncEventArgs> completedHandler)
     {
         if (completedHandler is null)
         {
@@ -37,7 +37,7 @@ internal sealed class BufferSlab
         return eventArgs;
     }
 
-    internal SocketAsyncEventArgs CreateSendEventArgs(int clientId, EventHandler<SocketAsyncEventArgs> completedHandler)
+    internal SocketAsyncEventArgs CreateSendEventArgs(ushort clientId, EventHandler<SocketAsyncEventArgs> completedHandler)
     {
         if (completedHandler is null)
         {
