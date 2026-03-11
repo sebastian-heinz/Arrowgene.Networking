@@ -1,33 +1,41 @@
-using System;
-
 namespace Arrowgene.Networking.SAEAServer;
 
-
+/// <summary>
+/// Packs and unpacks the stable client identifier and generation into a single 64-bit value.
+/// </summary>
 public static class UniqueIdManager
 {
-    // 17 bits supports ClientIDs up to 131,072
-    private const int ID_BIT_SHIFTS = 17;
-    private const int ID_MASK = (1 << ID_BIT_SHIFTS) - 1; // 0x1FFFF
-        
+    private const int ClientIdBitCount = 16;
+    private const long ClientIdMask = (1L << ClientIdBitCount) - 1;
+
     /// <summary>
-    /// Combines ClientID and Generation into a single 64-bit integer.
+    /// Combines the client ID and generation into a single 64-bit integer.
     /// </summary>
-    public static long Pack(int clientId, long generation)
+    /// <param name="clientId">The stable pooled client identifier.</param>
+    /// <param name="generation">The generation used to detect recycled clients.</param>
+    /// <returns>A packed unique identifier that round-trips through <see cref="GetClientId"/> and <see cref="GetGeneration"/>.</returns>
+    public static long Pack(ushort clientId, uint generation)
     {
-        // Safety check: Ensure ClientID fits in 17 bits
-        if (clientId > 100000 || clientId < 0) 
-            throw new ArgumentOutOfRangeException(nameof(clientId), "ID must be 0-100,000");
-        
-        return (generation << ID_BIT_SHIFTS) | (long)(clientId & ID_MASK);
+        return ((long)generation << ClientIdBitCount) | clientId;
     }
-        
-    public static int GetClientId(long uniqueId)
+
+    /// <summary>
+    /// Extracts the client ID from a packed unique identifier.
+    /// </summary>
+    /// <param name="uniqueId">The packed unique identifier.</param>
+    /// <returns>The unpacked client ID.</returns>
+    public static ushort GetClientId(long uniqueId)
     {
-        return (int)(uniqueId & ID_MASK);
+        return checked((ushort)(uniqueId & ClientIdMask));
     }
-        
-    public static long GetGeneration(long uniqueId)
+
+    /// <summary>
+    /// Extracts the generation from a packed unique identifier.
+    /// </summary>
+    /// <param name="uniqueId">The packed unique identifier.</param>
+    /// <returns>The unpacked generation.</returns>
+    public static uint GetGeneration(long uniqueId)
     {
-        return uniqueId >> ID_BIT_SHIFTS;
+        return checked((uint)(uniqueId >> ClientIdBitCount));
     }
 }

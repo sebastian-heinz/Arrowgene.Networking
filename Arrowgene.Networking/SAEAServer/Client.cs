@@ -47,6 +47,7 @@ internal sealed class Client : IDisposable
         RemoteIpAddress = IPAddress.None;
         ConnectedAt = DateTime.MinValue;
         _generation = 0;
+        UniqueId = UniqueIdManager.Pack(ClientId, _generation);
     }
 
     /// <summary>
@@ -97,6 +98,7 @@ internal sealed class Client : IDisposable
     /// </summary>
     internal ulong BytesSent => unchecked((ulong)Interlocked.Read(ref _bytesSent));
 
+    internal long UniqueId { get; private set; }
 
     internal bool IsAlive
     {
@@ -195,6 +197,7 @@ internal sealed class Client : IDisposable
             _isInPool = false;
             _isAlive = true;
             _disconnectCleanupQueued = false;
+            UniqueId = UniqueIdManager.Pack(ClientId, _generation);
             handle = new ClientHandle(this, _generation, ClientId);
         }
     }
@@ -331,6 +334,8 @@ internal sealed class Client : IDisposable
             Interlocked.Exchange(ref _pendingOperations, 0);
             _disconnectCleanupQueued = false;
             _sendQueue.Reset();
+
+            UniqueId = UniqueIdManager.Pack(ClientId, _generation);
         }
     }
 
