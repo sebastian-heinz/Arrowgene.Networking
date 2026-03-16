@@ -1,4 +1,5 @@
 using System;
+using System.Net.Sockets;
 using Arrowgene.Networking.SAEAServer;
 
 namespace Arrowgene.Networking.SAEAServer.Metric;
@@ -29,8 +30,14 @@ public readonly struct TcpServerMetricsSnapshot
     /// <param name="sendBytesPerSecond">The derived outbound byte rate for the most recent sample interval.</param>
     /// <param name="inFlightAsyncCallbacks">The current number of in-flight async socket callbacks.</param>
     /// <param name="disconnectCleanupQueueDepth">The current number of queued deferred disconnect cleanups.</param>
+    /// <param name="acceptPoolAvailable">The current number of available accept event args in the accept pool.</param>
+    /// <param name="availableClientSlots">The current number of available pooled client slots.</param>
     /// <param name="disconnectsByReason">Disconnect counters indexed by <see cref="DisconnectReason"/>.</param>
     /// <param name="laneActiveConnections">Current connection counts indexed by ordering lane.</param>
+    /// <param name="receiveSizeBuckets">Receive-size histogram buckets.</param>
+    /// <param name="sendSizeBuckets">Send-size histogram buckets.</param>
+    /// <param name="socketErrorsByCode">Socket error counters indexed by the raw <see cref="SocketError"/> value offset from <paramref name="socketErrorCodeMinimum"/>.</param>
+    /// <param name="socketErrorCodeMinimum">The minimum raw <see cref="SocketError"/> value represented in <paramref name="socketErrorsByCode"/>.</param>
     public TcpServerMetricsSnapshot(
         DateTime timestampUtc,
         long acceptedConnections,
@@ -50,8 +57,14 @@ public readonly struct TcpServerMetricsSnapshot
         double sendBytesPerSecond,
         long inFlightAsyncCallbacks,
         long disconnectCleanupQueueDepth,
+        long acceptPoolAvailable,
+        long availableClientSlots,
         long[] disconnectsByReason,
-        long[] laneActiveConnections)
+        long[] laneActiveConnections,
+        long[] receiveSizeBuckets,
+        long[] sendSizeBuckets,
+        long[] socketErrorsByCode,
+        int socketErrorCodeMinimum)
     {
         TimestampUtc = timestampUtc;
         AcceptedConnections = acceptedConnections;
@@ -71,8 +84,14 @@ public readonly struct TcpServerMetricsSnapshot
         SendBytesPerSecond = sendBytesPerSecond;
         InFlightAsyncCallbacks = inFlightAsyncCallbacks;
         DisconnectCleanupQueueDepth = disconnectCleanupQueueDepth;
+        AcceptPoolAvailable = acceptPoolAvailable;
+        AvailableClientSlots = availableClientSlots;
         DisconnectsByReason = disconnectsByReason ?? throw new ArgumentNullException(nameof(disconnectsByReason));
         LaneActiveConnections = laneActiveConnections ?? throw new ArgumentNullException(nameof(laneActiveConnections));
+        ReceiveSizeBuckets = receiveSizeBuckets ?? throw new ArgumentNullException(nameof(receiveSizeBuckets));
+        SendSizeBuckets = sendSizeBuckets ?? throw new ArgumentNullException(nameof(sendSizeBuckets));
+        SocketErrorsByCode = socketErrorsByCode ?? throw new ArgumentNullException(nameof(socketErrorsByCode));
+        SocketErrorCodeMinimum = socketErrorCodeMinimum;
     }
 
     /// <summary>
@@ -166,6 +185,16 @@ public readonly struct TcpServerMetricsSnapshot
     public long DisconnectCleanupQueueDepth { get; }
 
     /// <summary>
+    /// Gets the current number of available accept event args in the accept pool.
+    /// </summary>
+    public long AcceptPoolAvailable { get; }
+
+    /// <summary>
+    /// Gets the current number of available pooled client slots.
+    /// </summary>
+    public long AvailableClientSlots { get; }
+
+    /// <summary>
     /// Gets disconnect counters indexed by <see cref="DisconnectReason"/>.
     /// </summary>
     public ReadOnlyMemory<long> DisconnectsByReason { get; }
@@ -174,4 +203,40 @@ public readonly struct TcpServerMetricsSnapshot
     /// Gets current connection counts indexed by ordering lane.
     /// </summary>
     public ReadOnlyMemory<long> LaneActiveConnections { get; }
+
+    /// <summary>
+    /// Gets receive-size histogram buckets using the ranges 0..64, 65..256, 257..1024, 1025..4096, 4097..8192, 8193..16384, and 16385+.
+    /// </summary>
+    public ReadOnlyMemory<long> ReceiveSizeBuckets { get; }
+
+    /// <summary>
+    /// Gets send-size histogram buckets using the ranges 0..64, 65..256, 257..1024, 1025..4096, 4097..8192, 8193..16384, and 16385+.
+    /// </summary>
+    public ReadOnlyMemory<long> SendSizeBuckets { get; }
+
+    /// <summary>
+    /// Gets socket error counters indexed by the raw <see cref="SocketError"/> value offset from <see cref="SocketErrorCodeMinimum"/>.
+    /// </summary>
+    public ReadOnlyMemory<long> SocketErrorsByCode { get; }
+
+    /// <summary>
+    /// Gets the minimum raw <see cref="SocketError"/> value represented in <see cref="SocketErrorsByCode"/>.
+    /// </summary>
+    public int SocketErrorCodeMinimum { get; }
+
+    /// <summary>
+    /// Gets the count recorded for a specific <see cref="SocketError"/> code.
+    /// </summary>
+    /// <param name="socketError">The socket error to query.</param>
+    /// <returns>The number of times the error has been recorded in the snapshot.</returns>
+    public long GetSocketErrorCount(SocketError socketError)
+    {
+        int index = ((int)socketError) - SocketErrorCodeMinimum;
+        if ((uint)index >= (uint)SocketErrorsByCode.Length)
+        {
+            return 0;
+        }
+
+        return SocketErrorsByCode.Span[index];
+    }
 }

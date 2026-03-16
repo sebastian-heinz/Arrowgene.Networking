@@ -150,8 +150,13 @@ public sealed class TcpServer : IDisposable
             CreateClient
         );
         _metricsState = new TcpServerMetricsState();
-        _metricsCollector = new TcpServerMetricsCollector(_metricsState, _clientRegistry, _settings.OrderingLaneCount);
         _acceptPool = new AcceptPool(_settings.ConcurrentAccepts, AcceptCompleted);
+        _metricsCollector = new TcpServerMetricsCollector(
+            _metricsState,
+            _clientRegistry,
+            _acceptPool,
+            _settings.OrderingLaneCount
+        );
 
         _state = ServerState.Created;
         _shutdownCompleted = new ManualResetEventSlim(false);
@@ -468,7 +473,15 @@ public sealed class TcpServer : IDisposable
         {
             if (acceptedSocket is null)
             {
-                _metricsState.IncrementSocketAcceptErrors();
+                if (socketError != SocketError.Success)
+                {
+                    _metricsState.RecordSocketAcceptError(socketError);
+                }
+                else
+                {
+                    _metricsState.IncrementSocketAcceptErrors();
+                }
+
                 Log(
                     LogLevel.Error,
                     nameof(ProcessAccept),
@@ -483,7 +496,7 @@ public sealed class TcpServer : IDisposable
 
             if (socketError != SocketError.Success)
             {
-                _metricsState.IncrementSocketAcceptErrors();
+                _metricsState.RecordSocketAcceptError(socketError);
                 Log(LogLevel.Error, nameof(ProcessAccept), $"SocketError: {socketError}.", clientIdentity);
                 Service.CloseSocket(acceptedSocket);
                 return;
@@ -585,7 +598,7 @@ public sealed class TcpServer : IDisposable
             {
                 client.DecrementPendingOperations();
                 Logger.Exception(exception);
-                _metricsState.IncrementSocketReceiveErrors();
+                _metricsState.RecordSocketReceiveError(exception.SocketErrorCode);
                 Disconnect(clientHandle, DisconnectReason.ReceiveFailure);
                 return;
             }
@@ -656,7 +669,7 @@ public sealed class TcpServer : IDisposable
             SocketError socketError = receiveEventArgs.SocketError;
             if (socketError != SocketError.Success)
             {
-                _metricsState.IncrementSocketReceiveErrors();
+                _metricsState.RecordSocketReceiveError(socketError);
                 Log(LogLevel.Error, nameof(ProcessReceive), $"Socket error {socketError}.", client.Identity);
                 disconnectReason = DisconnectReason.ReceiveFailure;
                 return false;
@@ -803,7 +816,7 @@ public sealed class TcpServer : IDisposable
             {
                 client.DecrementPendingOperations();
                 Logger.Exception(exception);
-                _metricsState.IncrementSocketSendErrors();
+                _metricsState.RecordSocketSendError(exception.SocketErrorCode);
                 Disconnect(clientHandle, DisconnectReason.SendFailure);
                 return;
             }
@@ -898,7 +911,7 @@ public sealed class TcpServer : IDisposable
         SocketAsyncEventArgs sendEventArgs = client.SendEventArgs;
         if (sendEventArgs.SocketError != SocketError.Success)
         {
-            _metricsState.IncrementSocketSendErrors();
+            _metricsState.RecordSocketSendError(sendEventArgs.SocketError);
             Log(LogLevel.Error, nameof(ProcessSend), $"Socket error {sendEventArgs.SocketError}.", client.Identity);
             client.DecrementPendingOperations();
             disconnectClient = true;

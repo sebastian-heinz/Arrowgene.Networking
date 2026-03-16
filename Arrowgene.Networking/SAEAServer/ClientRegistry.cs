@@ -54,6 +54,14 @@ internal sealed class ClientRegistry : IDisposable
         }
     }
 
+    internal int GetAvailableClientSlotCount()
+    {
+        lock (_sync)
+        {
+            return _availableClients.Count;
+        }
+    }
+
     internal bool TryActivateClient(
         TcpServer tcpServer,
         Socket acceptedSocket,

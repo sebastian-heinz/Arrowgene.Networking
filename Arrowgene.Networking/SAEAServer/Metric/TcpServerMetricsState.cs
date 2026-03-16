@@ -1,12 +1,17 @@
 using System;
+using System.Net.Sockets;
 using System.Threading;
-using Arrowgene.Networking.SAEAServer;
 
 namespace Arrowgene.Networking.SAEAServer.Metric;
 
 internal sealed class TcpServerMetricsState
 {
+    private const int TransferSizeBucketCount = 7;
     private readonly long[] _disconnectsByReason;
+    private readonly long[] _receiveSizeBuckets;
+    private readonly long[] _sendSizeBuckets;
+    private readonly long[] _socketErrorsByCode;
+    private readonly int _socketErrorCodeMinimum;
     private int _captureEnabled;
     private long _acceptedConnections;
     private long _rejectedConnections;
@@ -26,10 +31,40 @@ internal sealed class TcpServerMetricsState
 
     internal TcpServerMetricsState()
     {
+        SocketError[] socketErrors = Enum.GetValues<SocketError>();
+        int socketErrorCodeMinimum = int.MaxValue;
+        int socketErrorCodeMaximum = int.MinValue;
+
+        for (int index = 0; index < socketErrors.Length; index++)
+        {
+            int socketErrorCode = (int)socketErrors[index];
+            if (socketErrorCode < socketErrorCodeMinimum)
+            {
+                socketErrorCodeMinimum = socketErrorCode;
+            }
+
+            if (socketErrorCode > socketErrorCodeMaximum)
+            {
+                socketErrorCodeMaximum = socketErrorCode;
+            }
+        }
+
         _disconnectsByReason = new long[Enum.GetValues<DisconnectReason>().Length];
+        _receiveSizeBuckets = new long[TransferSizeBucketCount];
+        _sendSizeBuckets = new long[TransferSizeBucketCount];
+        _socketErrorCodeMinimum = socketErrorCodeMinimum;
+        _socketErrorsByCode = new long[(socketErrorCodeMaximum - socketErrorCodeMinimum) + 1];
     }
 
     internal int DisconnectReasonCount => _disconnectsByReason.Length;
+
+    internal int ReceiveSizeBucketCount => _receiveSizeBuckets.Length;
+
+    internal int SendSizeBucketCount => _sendSizeBuckets.Length;
+
+    internal int SocketErrorCodeMinimum => _socketErrorCodeMinimum;
+
+    internal int SocketErrorCodeCount => _socketErrorsByCode.Length;
 
     internal void EnableCapture()
     {
@@ -89,32 +124,22 @@ internal sealed class TcpServerMetricsState
 
     internal void IncrementSocketAcceptErrors()
     {
-        if (!IsCaptureEnabled())
-        {
-            return;
-        }
-
-        Interlocked.Increment(ref _socketAcceptErrors);
+        IncrementSocketError(ref _socketAcceptErrors);
     }
 
-    internal void IncrementSocketReceiveErrors()
+    internal void RecordSocketAcceptError(SocketError socketError)
     {
-        if (!IsCaptureEnabled())
-        {
-            return;
-        }
-
-        Interlocked.Increment(ref _socketReceiveErrors);
+        RecordSocketError(ref _socketAcceptErrors, socketError);
     }
 
-    internal void IncrementSocketSendErrors()
+    internal void RecordSocketReceiveError(SocketError socketError)
     {
-        if (!IsCaptureEnabled())
-        {
-            return;
-        }
+        RecordSocketError(ref _socketReceiveErrors, socketError);
+    }
 
-        Interlocked.Increment(ref _socketSendErrors);
+    internal void RecordSocketSendError(SocketError socketError)
+    {
+        RecordSocketError(ref _socketSendErrors, socketError);
     }
 
     internal void RecordReceive(int bytesTransferred)
@@ -131,6 +156,7 @@ internal sealed class TcpServerMetricsState
 
         Interlocked.Increment(ref _receiveOperations);
         Interlocked.Add(ref _bytesReceived, bytesTransferred);
+        Interlocked.Increment(ref _receiveSizeBuckets[GetTransferSizeBucketIndex(bytesTransferred)]);
     }
 
     internal void RecordSend(int bytesTransferred)
@@ -147,6 +173,7 @@ internal sealed class TcpServerMetricsState
 
         Interlocked.Increment(ref _sendOperations);
         Interlocked.Add(ref _bytesSent, bytesTransferred);
+        Interlocked.Increment(ref _sendSizeBuckets[GetTransferSizeBucketIndex(bytesTransferred)]);
     }
 
     internal void FinalizeDisconnect(DisconnectReason disconnectReason)
@@ -301,20 +328,127 @@ internal sealed class TcpServerMetricsState
 
     internal void CopyDisconnectsByReason(long[] destination)
     {
+        CopyCounterArray(
+            _disconnectsByReason,
+            destination,
+            "Destination must be at least as large as the disconnect-reason counter array."
+        );
+    }
+
+    internal void CopyReceiveSizeBuckets(long[] destination)
+    {
+        CopyCounterArray(
+            _receiveSizeBuckets,
+            destination,
+            "Destination must be at least as large as the receive-size counter array."
+        );
+    }
+
+    internal void CopySendSizeBuckets(long[] destination)
+    {
+        CopyCounterArray(
+            _sendSizeBuckets,
+            destination,
+            "Destination must be at least as large as the send-size counter array."
+        );
+    }
+
+    internal void CopySocketErrorsByCode(long[] destination)
+    {
+        CopyCounterArray(
+            _socketErrorsByCode,
+            destination,
+            "Destination must be at least as large as the socket-error counter array."
+        );
+    }
+
+    private void IncrementSocketError(ref long errorCounter)
+    {
+        if (!IsCaptureEnabled())
+        {
+            return;
+        }
+
+        Interlocked.Increment(ref errorCounter);
+    }
+
+    private void RecordSocketError(ref long errorCounter, SocketError socketError)
+    {
+        if (!IsCaptureEnabled())
+        {
+            return;
+        }
+
+        Interlocked.Increment(ref errorCounter);
+        RecordSocketErrorCode(socketError);
+    }
+
+    private void RecordSocketErrorCode(SocketError socketError)
+    {
+        if (socketError == SocketError.Success)
+        {
+            return;
+        }
+
+        int index = ((int)socketError) - _socketErrorCodeMinimum;
+        if ((uint)index >= (uint)_socketErrorsByCode.Length)
+        {
+            return;
+        }
+
+        Interlocked.Increment(ref _socketErrorsByCode[index]);
+    }
+
+    private static int GetTransferSizeBucketIndex(int bytesTransferred)
+    {
+        if (bytesTransferred <= 64)
+        {
+            return 0;
+        }
+
+        if (bytesTransferred <= 256)
+        {
+            return 1;
+        }
+
+        if (bytesTransferred <= 1024)
+        {
+            return 2;
+        }
+
+        if (bytesTransferred <= 4096)
+        {
+            return 3;
+        }
+
+        if (bytesTransferred <= 8192)
+        {
+            return 4;
+        }
+
+        if (bytesTransferred <= 16384)
+        {
+            return 5;
+        }
+
+        return 6;
+    }
+
+    private static void CopyCounterArray(long[] source, long[] destination, string lengthErrorMessage)
+    {
         if (destination is null)
         {
             throw new ArgumentNullException(nameof(destination));
         }
 
-        if (destination.Length < _disconnectsByReason.Length)
+        if (destination.Length < source.Length)
         {
-            throw new ArgumentOutOfRangeException(nameof(destination),
-                "Destination must be at least as large as the disconnect-reason counter array.");
+            throw new ArgumentOutOfRangeException(nameof(destination), lengthErrorMessage);
         }
 
-        for (int index = 0; index < _disconnectsByReason.Length; index++)
+        for (int index = 0; index < source.Length; index++)
         {
-            destination[index] = Volatile.Read(ref _disconnectsByReason[index]);
+            destination[index] = Volatile.Read(ref source[index]);
         }
     }
 }

@@ -22,10 +22,16 @@
 | `BytesSent` | Counter | Total number of bytes sent to clients. |
 | `ReceiveBytesPerSecond` | Rate | Derived inbound throughput for the most recent sampling interval, in bytes per second. |
 | `SendBytesPerSecond` | Rate | Derived outbound throughput for the most recent sampling interval, in bytes per second. |
+| `AcceptPoolAvailable` | Gauge | Current number of available pooled accept event args. |
+| `AvailableClientSlots` | Gauge | Current number of available pooled client slots. |
 | `InFlightAsyncCallbacks` | Gauge | Current number of async socket callbacks still executing. |
 | `DisconnectCleanupQueueDepth` | Gauge | Current number of disconnected clients waiting for deferred cleanup finalization. |
 | `DisconnectsByReason` | Indexed counter | Disconnect totals indexed by `DisconnectReason`. |
 | `LaneActiveConnections` | Indexed gauge | Current active connection count per ordering lane. |
+| `ReceiveSizeBuckets` | Indexed counter | Receive completions bucketed into these ranges: `0..64`, `65..256`, `257..1024`, `1025..4096`, `4097..8192`, `8193..16384`, `16385+`. |
+| `SendSizeBuckets` | Indexed counter | Send completions bucketed into these ranges: `0..64`, `65..256`, `257..1024`, `1025..4096`, `4097..8192`, `8193..16384`, `16385+`. |
+| `SocketErrorsByCode` | Indexed counter | Socket errors indexed by raw `SocketError` value offset from `SocketErrorCodeMinimum`, or queried via `GetSocketErrorCount(SocketError.X)`. |
+| `SocketErrorCodeMinimum` | Scalar | Minimum raw `SocketError` value represented in `SocketErrorsByCode`. |
 
 ## DisconnectReason
 
@@ -53,3 +59,5 @@ Use `DisconnectsByReason.Span[(int)DisconnectReason.X]` to read a specific disco
 | Gauges | Current values at snapshot time. |
 | Rates | Derived values computed from recent counter deltas. |
 | Per-lane values | Array positions match the ordering lane index. |
+| Size buckets | Bucket positions map to the fixed ranges listed above. |
+| Socket error buckets | Use `GetSocketErrorCount(SocketError.X)` for direct lookup, or compute `((int)socketError) - SocketErrorCodeMinimum` to index `SocketErrorsByCode`. |

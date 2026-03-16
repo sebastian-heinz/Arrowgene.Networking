@@ -27,7 +27,7 @@ dotnet add package Arrowgene.Networking
 | `ClientHandle` | Generation-checked struct to `Send`, `Disconnect`, or inspect a live client. |
 | `ClientSnapshot` | Immutable state captured at disconnect or error time (ID, endpoint, bytes, timestamps). |
 | `TcpServerMetricsSnapshot` | Immutable metrics snapshot returned by `TcpServer.GetMetricsSnapshot()`. |
-| `TcpServerDisconnectReason` | Enum used for disconnect logs and `DisconnectsByReason` indexing. |
+| `DisconnectReason` | Enum used for disconnect logs and `DisconnectsByReason` indexing. |
 
 ## Quick Start
 
@@ -96,14 +96,16 @@ TcpServerMetricsSnapshot metrics = server.GetMetricsSnapshot();
 Console.WriteLine(
     $"active={metrics.ActiveConnections} " +
     $"accepted={metrics.AcceptedConnections} " +
+    $"availableSlots={metrics.AvailableClientSlots} " +
     $"recv={metrics.BytesReceived} " +
     $"sent={metrics.BytesSent} " +
     $"in={metrics.ReceiveBytesPerSecond:F0}/s " +
     $"out={metrics.SendBytesPerSecond:F0}/s"
 );
 
-long timeoutDisconnects = metrics.DisconnectsByReason.Span[(int)TcpServerDisconnectReason.Timeout];
+long timeoutDisconnects = metrics.DisconnectsByReason.Span[(int)DisconnectReason.Timeout];
 long laneZeroConnections = metrics.LaneActiveConnections.Span[0];
+long smallReceives = metrics.ReceiveSizeBuckets.Span[0];
 ```
 
 The snapshot includes:
@@ -111,8 +113,9 @@ The snapshot includes:
 - Connection totals and gauges: accepted, rejected, active, disconnected.
 - Throughput totals and rates: receive/send operations, bytes, bytes per second.
 - Failure and backpressure counters: socket errors, timeouts, send queue overflows.
-- Current server state: in-flight async callbacks, deferred disconnect cleanup depth, per-lane active connections.
-- Disconnect reason counters indexed by `TcpServerDisconnectReason`.
+- Current server state: accept-pool availability, available client slots, in-flight async callbacks, deferred disconnect cleanup depth, per-lane active connections.
+- Optional low-cost detail: receive/send size buckets and per-socket-error-code counters via `GetSocketErrorCount(SocketError.X)`.
+- Disconnect reason counters indexed by `DisconnectReason`.
 
 Use `GetMetricsSnapshot()` from your own timer, background service, or health endpoint.
 

@@ -9,7 +9,7 @@ using Xunit;
 namespace Arrowgene.Networking.Tests;
 
 /// <summary>
-/// Integration coverage for phase 1 tcpServer metrics.
+/// Integration coverage for tcpServer metrics snapshots.
 /// </summary>
 public sealed class TcpServerMetricsTests
 {
@@ -47,7 +47,7 @@ public sealed class TcpServerMetricsTests
 
             Assert.Equal(payload, echoed);
 
-            await WaitForSnapshotAsync(
+            TcpServerMetricsSnapshot connectedSnapshot = await WaitForSnapshotAsync(
                 host,
                 snapshot =>
                     snapshot.AcceptedConnections >= 1
@@ -56,10 +56,16 @@ public sealed class TcpServerMetricsTests
                     && snapshot.SendOperations >= 1
                     && snapshot.BytesReceived >= payload.Length
                     && snapshot.BytesSent >= payload.Length
+                    && snapshot.AvailableClientSlots == 0
                     && GetLaneConnectionTotal(snapshot) == 1,
                 MediumTimeout,
                 "Timed out waiting for the connected traffic metrics snapshot."
             );
+
+            Assert.Equal(7, connectedSnapshot.ReceiveSizeBuckets.Length);
+            Assert.Equal(7, connectedSnapshot.SendSizeBuckets.Length);
+            Assert.Equal(connectedSnapshot.ReceiveOperations, GetCounterTotal(connectedSnapshot.ReceiveSizeBuckets));
+            Assert.Equal(connectedSnapshot.SendOperations, GetCounterTotal(connectedSnapshot.SendSizeBuckets));
 
             host.DisposeClient(client);
 
@@ -70,6 +76,7 @@ public sealed class TcpServerMetricsTests
                 snapshot =>
                     snapshot.ActiveConnections == 0
                     && snapshot.DisconnectedConnections >= 1
+                    && snapshot.AvailableClientSlots == 1
                     && GetDisconnectCount(snapshot, DisconnectReason.RemoteClosed) >= 1,
                 MediumTimeout,
                 "Timed out waiting for the disconnected traffic metrics snapshot."
@@ -77,6 +84,74 @@ public sealed class TcpServerMetricsTests
 
             Assert.Equal(0, GetLaneConnectionTotal(disconnectedSnapshot));
             Assert.Empty(consumer.Errors);
+        }
+        finally
+        {
+            host.DisposeClient(client);
+        }
+    }
+
+    /// <summary>
+    /// Verifies phase 2 snapshot gauges track accept-pool and client-pool availability.
+    /// </summary>
+    [Fact]
+    public async Task MetricsSnapshot_TracksPhase2AvailabilityGauges()
+    {
+        RecordingConsumer consumer = new RecordingConsumer();
+
+        using ServerTestHost host = new ServerTestHost(
+            consumer,
+            settings =>
+            {
+                settings.MaxConnections = 2;
+                settings.OrderingLaneCount = 1;
+                settings.ConcurrentAccepts = 1;
+            }
+        );
+
+        TcpServerMetricsSnapshot initialSnapshot = await WaitForSnapshotAsync(
+            host,
+            candidate => candidate.AcceptPoolAvailable == 0 && candidate.AvailableClientSlots == 2,
+            MediumTimeout,
+            "Timed out waiting for the initial phase 2 availability gauges."
+        );
+
+        Assert.Equal(0, initialSnapshot.AcceptPoolAvailable);
+        Assert.Equal(2, initialSnapshot.AvailableClientSlots);
+
+        TcpClient client = await host.ConnectClientAsync();
+
+        try
+        {
+            await consumer.WaitForConnectedCountAsync(1, ShortTimeout);
+
+            TcpServerMetricsSnapshot connectedSnapshot = await WaitForSnapshotAsync(
+                host,
+                candidate =>
+                    candidate.ActiveConnections == 1
+                    && candidate.AcceptPoolAvailable == 0
+                    && candidate.AvailableClientSlots == 1,
+                MediumTimeout,
+                "Timed out waiting for the connected phase 2 availability gauges."
+            );
+
+            Assert.Equal(0, connectedSnapshot.AcceptPoolAvailable);
+            Assert.Equal(1, connectedSnapshot.AvailableClientSlots);
+
+            host.DisposeClient(client);
+
+            TcpServerMetricsSnapshot disconnectedSnapshot = await WaitForSnapshotAsync(
+                host,
+                candidate =>
+                    candidate.ActiveConnections == 0
+                    && candidate.AcceptPoolAvailable == 0
+                    && candidate.AvailableClientSlots == 2,
+                MediumTimeout,
+                "Timed out waiting for the disconnected phase 2 availability gauges."
+            );
+
+            Assert.Equal(0, disconnectedSnapshot.AcceptPoolAvailable);
+            Assert.Equal(2, disconnectedSnapshot.AvailableClientSlots);
         }
         finally
         {
@@ -316,6 +391,19 @@ public sealed class TcpServerMetricsTests
         return total;
     }
 
+    private static long GetCounterTotal(ReadOnlyMemory<long> counters)
+    {
+        long total = 0;
+        ReadOnlySpan<long> values = counters.Span;
+
+        for (int index = 0; index < values.Length; index++)
+        {
+            total += values[index];
+        }
+
+        return total;
+    }
+
     private static async Task<TcpServerMetricsSnapshot> WaitForSnapshotAsync(
         ServerTestHost host,
         Func<TcpServerMetricsSnapshot, bool> predicate,
@@ -353,6 +441,8 @@ public sealed class TcpServerMetricsTests
             $"sendOps={snapshot.SendOperations}, " +
             $"bytesReceived={snapshot.BytesReceived}, " +
             $"bytesSent={snapshot.BytesSent}, " +
+            $"acceptPoolAvailable={snapshot.AcceptPoolAvailable}, " +
+            $"availableClientSlots={snapshot.AvailableClientSlots}, " +
             $"timeoutDisconnects={GetDisconnectCount(snapshot, DisconnectReason.Timeout)}, " +
             $"overflowDisconnects={GetDisconnectCount(snapshot, DisconnectReason.SendQueueOverflow)}.";
     }

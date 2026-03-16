@@ -12,6 +12,7 @@ internal sealed class TcpServerMetricsCollector : IDisposable
     private readonly object _snapshotSync;
     private readonly TcpServerMetricsState _metricsState;
     private readonly ClientRegistry _clientRegistry;
+    private readonly AcceptPool _acceptPool;
     private readonly int _orderingLaneCount;
     private CancellationTokenSource? _cancellationTokenSource;
     private Thread? _thread;
@@ -24,6 +25,7 @@ internal sealed class TcpServerMetricsCollector : IDisposable
     internal TcpServerMetricsCollector(
         TcpServerMetricsState metricsState,
         ClientRegistry clientRegistry,
+        AcceptPool acceptPool,
         int orderingLaneCount)
     {
         if (metricsState is null)
@@ -36,6 +38,11 @@ internal sealed class TcpServerMetricsCollector : IDisposable
             throw new ArgumentNullException(nameof(clientRegistry));
         }
 
+        if (acceptPool is null)
+        {
+            throw new ArgumentNullException(nameof(acceptPool));
+        }
+
         if (orderingLaneCount <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(orderingLaneCount));
@@ -45,6 +52,7 @@ internal sealed class TcpServerMetricsCollector : IDisposable
         _snapshotSync = new object();
         _metricsState = metricsState;
         _clientRegistry = clientRegistry;
+        _acceptPool = acceptPool;
         _orderingLaneCount = orderingLaneCount;
         _latestSnapshot = CreateSnapshot(DateTime.UtcNow, 0.0d, 0.0d);
         _previousTimestampUtc = _latestSnapshot.TimestampUtc;
@@ -180,7 +188,13 @@ internal sealed class TcpServerMetricsCollector : IDisposable
     {
         long[] disconnectsByReason = new long[_metricsState.DisconnectReasonCount];
         long[] laneActiveConnections = new long[_orderingLaneCount];
+        long[] receiveSizeBuckets = new long[_metricsState.ReceiveSizeBucketCount];
+        long[] sendSizeBuckets = new long[_metricsState.SendSizeBucketCount];
+        long[] socketErrorsByCode = new long[_metricsState.SocketErrorCodeCount];
         _metricsState.CopyDisconnectsByReason(disconnectsByReason);
+        _metricsState.CopyReceiveSizeBuckets(receiveSizeBuckets);
+        _metricsState.CopySendSizeBuckets(sendSizeBuckets);
+        _metricsState.CopySocketErrorsByCode(socketErrorsByCode);
         _clientRegistry.SnapshotLaneLoads(laneActiveConnections);
 
         return new TcpServerMetricsSnapshot(
@@ -202,8 +216,14 @@ internal sealed class TcpServerMetricsCollector : IDisposable
             sendBytesPerSecond,
             _metricsState.GetInFlightAsyncCallbacks(),
             _metricsState.GetDisconnectCleanupQueueDepth(),
+            _acceptPool.CurrentCount,
+            _clientRegistry.GetAvailableClientSlotCount(),
             disconnectsByReason,
-            laneActiveConnections
+            laneActiveConnections,
+            receiveSizeBuckets,
+            sendSizeBuckets,
+            socketErrorsByCode,
+            _metricsState.SocketErrorCodeMinimum
         );
     }
 
