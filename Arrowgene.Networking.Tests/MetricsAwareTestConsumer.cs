@@ -9,6 +9,7 @@ namespace Arrowgene.Networking.Tests;
 
 internal sealed class MetricsAwareTestConsumer : IConsumer, IConsumerMetrics
 {
+    private const int HandlerDurationBucketCount = 10;
     private readonly long[] _queueDepthByLane;
     private readonly long[] _eventsProcessed;
     private int _captureEnabled;
@@ -53,6 +54,7 @@ internal sealed class MetricsAwareTestConsumer : IConsumer, IConsumerMetrics
     {
         long[] queueDepthByLane = new long[_queueDepthByLane.Length];
         long[] eventsProcessed = new long[_eventsProcessed.Length];
+        long[] handlerDurationBuckets = new long[HandlerDurationBucketCount];
 
         CopyQueueDepthByLane(queueDepthByLane);
         CopyEventsProcessed(eventsProcessed);
@@ -60,7 +62,8 @@ internal sealed class MetricsAwareTestConsumer : IConsumer, IConsumerMetrics
         return new ConsumerMetricsSnapshot(
             Interlocked.Read(ref _handlerErrors),
             queueDepthByLane,
-            eventsProcessed
+            eventsProcessed,
+            handlerDurationBuckets
         );
     }
 

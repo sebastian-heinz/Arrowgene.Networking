@@ -35,6 +35,17 @@
 | `SocketErrorsByCode` | Indexed counter | Socket errors indexed by raw `SocketError` value offset from `SocketErrorCodeMinimum`, or queried via `GetSocketErrorCount(SocketError.X)`. |
 | `SocketErrorCodeMinimum` | Scalar | Minimum raw `SocketError` value represented in `SocketErrorsByCode`. |
 
+## Consumer Metrics
+
+When `ConsumerMetrics` has a value on `TcpServerMetricsSnapshot`, the nested `ConsumerMetricsSnapshot` contains:
+
+| Field | Kind | Meaning |
+|---|---|---|
+| `HandlerErrors` | Counter | Total number of consumer handler invocations that threw. |
+| `QueueDepthByLane` | Indexed gauge | Current queued event count per ordering lane. |
+| `EventsProcessed` | Indexed counter | Successfully processed consumer events indexed by `ClientEventType`. |
+| `HandlerDurationBuckets` | Indexed counter | Successful handler durations bucketed into these ranges: `0..100us`, `100us..1ms`, `1..10ms`, `10..50ms`, `50..250ms`, `250ms..1s`, `1..5s`, `5..30s`, `30s..2m`, `2m+`. |
+
 ## DisconnectReason
 
 Use `DisconnectsByReason.Span[(int)DisconnectReason.X]` to read a specific disconnect count.

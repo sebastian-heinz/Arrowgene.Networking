@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Threading;
 using Arrowgene.Logging;
 using Arrowgene.Networking.SAEAServer.Metric;
@@ -86,13 +87,16 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
         {
             long[] queueDepthByLane = new long[_orderingLaneCount];
             long[] eventsProcessed = new long[_consumerMetricsState.ConsumerEventTypeCount];
+            long[] handlerDurationBuckets = new long[_consumerMetricsState.HandlerDurationBucketsCount];
             SnapshotQueueDepthByLane(queueDepthByLane);
             _consumerMetricsState.CopyConsumerEventsProcessed(eventsProcessed);
+            _consumerMetricsState.CopyHandlerDurationBuckets(handlerDurationBuckets);
 
             return new ConsumerMetricsSnapshot(
                 _consumerMetricsState.GetConsumerHandlerErrors(),
                 queueDepthByLane,
-                eventsProcessed
+                eventsProcessed,
+                handlerDurationBuckets
             );
         }
 
@@ -146,6 +150,8 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
 
                 try
                 {
+                    long startTimestamp = Stopwatch.GetTimestamp();
+
                     switch (clientEvent)
                     {
                         case ClientDataEvent dataEvent:
@@ -165,6 +171,8 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
                                 $"Unsupported client event type: {clientEvent.GetType().FullName}");
                     }
 
+                    long elapsedTicks = Stopwatch.GetTimestamp() - startTimestamp;
+                    _consumerMetricsState.RecordHandlerDuration(elapsedTicks);
                     _consumerMetricsState.RecordProcessedEvent(clientEvent.ClientEventType);
                 }
                 catch (Exception exception)
