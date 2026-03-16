@@ -111,6 +111,17 @@ internal sealed class Client : IDisposable
         }
     }
 
+    internal bool IsDisconnectCleanupQueued
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _disconnectCleanupQueued;
+            }
+        }
+    }
+
     internal SocketAsyncEventArgs ReceiveEventArgs { get; }
 
     internal SocketAsyncEventArgs SendEventArgs { get; }
@@ -131,9 +142,9 @@ internal sealed class Client : IDisposable
     /// <summary>
     /// Disconnects the client.
     /// </summary>
-    public void Disconnect(ClientHandle clientHandle, string reason = "")
+    public void Disconnect(ClientHandle clientHandle)
     {
-        _server.Disconnect(clientHandle, reason);
+        _server.Disconnect(clientHandle, DisconnectReason.None);
     }
 
     public ClientSnapshot Snapshot()

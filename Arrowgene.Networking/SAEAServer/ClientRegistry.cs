@@ -149,6 +149,28 @@ internal sealed class ClientRegistry : IDisposable
         }
     }
 
+    internal void SnapshotLaneLoads(long[] destination)
+    {
+        if (destination is null)
+        {
+            throw new ArgumentNullException(nameof(destination));
+        }
+
+        if (destination.Length < _laneLoadByIndex.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(destination),
+                "Destination must be at least as large as the configured ordering lane count.");
+        }
+
+        lock (_sync)
+        {
+            for (int index = 0; index < _laneLoadByIndex.Length; index++)
+            {
+                destination[index] = _laneLoadByIndex[index];
+            }
+        }
+    }
+
     public void Dispose()
     {
         lock (_sync)
