@@ -24,7 +24,6 @@ public sealed class TcpServerSettings : ICloneable
         ListenSocketSettings = new SocketSettings();
         ClientSocketTimeoutSeconds = -1;
         ClientSocketSettings = new SocketSettings();
-        DebugMode = false;
     }
 
     /// <summary>
@@ -48,7 +47,6 @@ public sealed class TcpServerSettings : ICloneable
         ListenSocketSettings = new SocketSettings(settings.ListenSocketSettings);
         ClientSocketTimeoutSeconds = settings.ClientSocketTimeoutSeconds;
         ClientSocketSettings = new SocketSettings(settings.ClientSocketSettings);
-        DebugMode = settings.DebugMode;
     }
 
     /// <summary>
@@ -110,12 +108,6 @@ public sealed class TcpServerSettings : ICloneable
     /// </summary>
     [DataMember(Order = 41)]
     public SocketSettings ClientSocketSettings { get; set; }
-
-    /// <summary>
-    /// Gets or sets whether debug logging is enabled.
-    /// </summary>
-    [DataMember(Order = 90)]
-    public bool DebugMode { get; set; }
 
     /// <summary>
     /// Validates the configuration values.

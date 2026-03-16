@@ -33,7 +33,6 @@ internal sealed class ServerTestHost : IDisposable
             MaxQueuedSendBytes = 8 * 1024 * 1024,
             ListenSocketRetries = 0,
             ClientSocketTimeoutSeconds = -1,
-            DebugMode = false
         };
 
         settings.ListenSocketSettings.Backlog = 128;
