@@ -16,7 +16,7 @@ public sealed class TcpServerSettings : ICloneable
     {
         Identity = string.Empty;
         MaxConnections = 100;
-        BufferSize = 2000;
+        BufferSize = 8192;
         OrderingLaneCount = 4;
         ConcurrentAccepts = 10;
         MaxQueuedSendBytes = 16 * 1024 * 1024;
