@@ -28,7 +28,7 @@ namespace Arrowgene.Networking
             SendBufferSize = 8192;
             SendTimeout = 0;
             DontFragment = true;
-            Ttl = 32;
+            Ttl = 64;
             LingerEnabled = false;
             LingerTime = 30;
             SocketOptions = new List<SocketOption>();

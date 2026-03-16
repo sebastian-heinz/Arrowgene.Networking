@@ -20,12 +20,12 @@ internal sealed class ThreadedDisconnectTestConsumer : ThreadedBlockingQueueCons
     private int _handlerExceptionCount;
 
     internal ThreadedDisconnectTestConsumer(
-        int maxUnitOfOrder,
+        int orderingLaneCount,
         int queueCapacityPerLane = 1024,
         bool blockFirstDisconnect = false,
         bool throwOnFirstDisconnect = false
     )
-        : base(maxUnitOfOrder, queueCapacityPerLane, nameof(ThreadedDisconnectTestConsumer))
+        : base(orderingLaneCount, queueCapacityPerLane, nameof(ThreadedDisconnectTestConsumer))
     {
         _sync = new object();
         _disconnects = new List<ClientSnapshot>();

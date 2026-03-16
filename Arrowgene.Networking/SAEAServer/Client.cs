@@ -347,7 +347,15 @@ internal sealed class Client : IDisposable
 
     internal void DecrementPendingOperations()
     {
-        Interlocked.Decrement(ref _pendingOperations);
+        int current;
+        do
+        {
+            current = Volatile.Read(ref _pendingOperations);
+            if (current <= 0)
+            {
+                return;
+            }
+        } while (Interlocked.CompareExchange(ref _pendingOperations, current - 1, current) != current);
     }
 
     internal void RecordReceive(int transferredCount)

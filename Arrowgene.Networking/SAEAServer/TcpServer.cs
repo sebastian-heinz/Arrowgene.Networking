@@ -115,6 +115,16 @@ public sealed class TcpServer : IDisposable
 
         settings.Validate();
 
+        if (consumer is ISupportsOrderingLaneCount laneAwareConsumer
+            && laneAwareConsumer.OrderingLaneCount < settings.OrderingLaneCount)
+        {
+            throw new ArgumentException(
+                $"The consumer's OrderingLaneCount ({laneAwareConsumer.OrderingLaneCount}) " +
+                $"must be >= the server's OrderingLaneCount ({settings.OrderingLaneCount}).",
+                paramName: nameof(consumer)
+            );
+        }
+
         IpAddress = ipAddress;
         Port = port;
         _consumer = consumer;
@@ -1043,7 +1053,6 @@ public sealed class TcpServer : IDisposable
         Shutdown();
         _acceptPool.Dispose();
         _clientRegistry.Dispose();
-        _cancellation.Dispose();
         _shutdownCompleted.Dispose();
         _asyncCallbacksDrained.Dispose();
         Log(LogLevel.Info, nameof(Dispose), "TcpServer resources disposed.");

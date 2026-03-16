@@ -6,7 +6,7 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
     /// <summary>
     /// Queues consumer callbacks into a single blocking collection for external processing.
     /// </summary>
-    public class BlockingQueueConsumer : IConsumer
+    public class BlockingQueueConsumer : IConsumer, IDisposable
     {
         /// <summary>
         /// Gets the queue that receives client events in callback order.
@@ -39,6 +39,11 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
         void IConsumer.OnError(ClientHandle clientHandle, Exception exception, string message)
         {
             ClientEvents.Add(new ClientErrorEvent(clientHandle, exception, message));
+        }
+        
+        public void Dispose()
+        {
+            ClientEvents.Dispose();
         }
     }
 }

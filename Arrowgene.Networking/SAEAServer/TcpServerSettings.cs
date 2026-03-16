@@ -100,7 +100,7 @@ public sealed class TcpServerSettings : ICloneable
     public SocketSettings ListenSocketSettings { get; set; }
 
     /// <summary>
-    /// Gets or sets the idle socket timeout in seconds. Use -1 to disable it.
+    /// Gets or sets the idle socket timeout in seconds. Use -1 or 0 to disable it.
     /// </summary>
     [DataMember(Order = 40)]
     public int ClientSocketTimeoutSeconds { get; set; }
@@ -154,6 +154,12 @@ public sealed class TcpServerSettings : ICloneable
         {
             throw new ArgumentOutOfRangeException(nameof(ListenSocketRetries),
                 "ListenSocketRetries must be zero or greater.");
+        }
+        
+        if (ClientSocketTimeoutSeconds < -1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(ClientSocketTimeoutSeconds),
+                "ClientSocketTimeoutSeconds must be negative one or greater.");
         }
 
         if (ListenSocketSettings is null)
