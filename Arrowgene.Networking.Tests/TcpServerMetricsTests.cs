@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 using Arrowgene.Networking.SAEAServer;
+using Arrowgene.Networking.SAEAServer.Consumer;
+using Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption;
 using Arrowgene.Networking.SAEAServer.Metric;
 using Xunit;
 
@@ -66,6 +68,7 @@ public sealed class TcpServerMetricsTests
             Assert.Equal(7, connectedSnapshot.SendSizeBuckets.Length);
             Assert.Equal(connectedSnapshot.ReceiveOperations, GetCounterTotal(connectedSnapshot.ReceiveSizeBuckets));
             Assert.Equal(connectedSnapshot.SendOperations, GetCounterTotal(connectedSnapshot.SendSizeBuckets));
+            Assert.False(connectedSnapshot.ConsumerMetrics.HasValue);
 
             host.DisposeClient(client);
 
@@ -84,6 +87,75 @@ public sealed class TcpServerMetricsTests
 
             Assert.Equal(0, GetLaneConnectionTotal(disconnectedSnapshot));
             Assert.Empty(consumer.Errors);
+        }
+        finally
+        {
+            host.DisposeClient(client);
+        }
+    }
+
+    /// <summary>
+    /// Verifies non-threaded consumers can opt in to metrics publication through <see cref="IConsumerMetrics"/>.
+    /// </summary>
+    [Fact]
+    public async Task MetricsSnapshot_UsesInterfaceDrivenConsumerMetricsForOptInConsumer()
+    {
+        MetricsAwareTestConsumer consumer = new MetricsAwareTestConsumer(metricsLaneCount: 1);
+
+        using ServerTestHost host = new ServerTestHost(
+            consumer,
+            settings =>
+            {
+                settings.MaxConnections = 1;
+                settings.OrderingLaneCount = 1;
+                settings.ConcurrentAccepts = 1;
+            }
+        );
+
+        await TestWait.UntilAsync(
+            () => consumer.EnableCaptureCount >= 1,
+            ShortTimeout,
+            "Timed out waiting for consumer metrics capture to be enabled."
+        );
+
+        consumer.SetQueueDepth(0, 7);
+        consumer.SetHandlerErrors(3);
+
+        TcpClient client = await host.ConnectClientAsync();
+
+        try
+        {
+            await TestWait.UntilAsync(
+                () => consumer.ConnectedCount >= 1,
+                ShortTimeout,
+                "Timed out waiting for the opt-in metrics consumer to observe a connection."
+            );
+
+            host.DisposeClient(client);
+
+            await TestWait.UntilAsync(
+                () => consumer.DisconnectedCount >= 1,
+                MediumTimeout,
+                "Timed out waiting for the opt-in metrics consumer to observe a disconnect."
+            );
+
+            TcpServerMetricsSnapshot snapshot = await WaitForSnapshotAsync(
+                host,
+                candidate => candidate.ConsumerMetrics is ConsumerMetricsSnapshot consumerMetrics
+                    && consumerMetrics.QueueDepthByLane.Length == 1
+                    && consumerMetrics.QueueDepthByLane.Span[0] == 7
+                    && consumerMetrics.HandlerErrors == 3
+                    && consumerMetrics.GetEventsProcessedCount(ClientEventType.Connected) >= 1
+                    && consumerMetrics.GetEventsProcessedCount(ClientEventType.Disconnected) >= 1,
+                MediumTimeout,
+                "Timed out waiting for interface-driven consumer metrics."
+            );
+
+            ConsumerMetricsSnapshot consumerMetrics = GetRequiredConsumerMetrics(snapshot);
+            Assert.Equal(7, consumerMetrics.QueueDepthByLane.Span[0]);
+            Assert.Equal(3, consumerMetrics.HandlerErrors);
+            Assert.True(consumerMetrics.GetEventsProcessedCount(ClientEventType.Connected) >= 1);
+            Assert.True(consumerMetrics.GetEventsProcessedCount(ClientEventType.Disconnected) >= 1);
         }
         finally
         {
@@ -402,6 +474,12 @@ public sealed class TcpServerMetricsTests
         }
 
         return total;
+    }
+
+    private static ConsumerMetricsSnapshot GetRequiredConsumerMetrics(TcpServerMetricsSnapshot snapshot)
+    {
+        Assert.True(snapshot.ConsumerMetrics.HasValue);
+        return snapshot.ConsumerMetrics.Value;
     }
 
     private static async Task<TcpServerMetricsSnapshot> WaitForSnapshotAsync(

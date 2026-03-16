@@ -30,6 +30,7 @@
 | `LaneActiveConnections` | Indexed gauge | Current active connection count per ordering lane. |
 | `ReceiveSizeBuckets` | Indexed counter | Receive completions bucketed into these ranges: `0..64`, `65..256`, `257..1024`, `1025..4096`, `4097..8192`, `8193..16384`, `16385+`. |
 | `SendSizeBuckets` | Indexed counter | Send completions bucketed into these ranges: `0..64`, `65..256`, `257..1024`, `1025..4096`, `4097..8192`, `8193..16384`, `16385+`. |
+| `ConsumerMetrics` | Nested snapshot | Optional consumer metrics snapshot. `null` when the consumer does not implement `IConsumerMetrics`. |
 | `SocketErrorsByCode` | Indexed counter | Socket errors indexed by raw `SocketError` value offset from `SocketErrorCodeMinimum`, or queried via `GetSocketErrorCount(SocketError.X)`. |
 | `SocketErrorCodeMinimum` | Scalar | Minimum raw `SocketError` value represented in `SocketErrorsByCode`. |
 
@@ -60,4 +61,5 @@ Use `DisconnectsByReason.Span[(int)DisconnectReason.X]` to read a specific disco
 | Rates | Derived values computed from recent counter deltas. |
 | Per-lane values | Array positions match the ordering lane index. |
 | Size buckets | Bucket positions map to the fixed ranges listed above. |
+| Consumer metrics | When `ConsumerMetrics` has a value, use `HandlerErrors`, `QueueDepthByLane`, and `GetEventsProcessedCount(ClientEventType.X)` on the nested snapshot. |
 | Socket error buckets | Use `GetSocketErrorCount(SocketError.X)` for direct lookup, or compute `((int)socketError) - SocketErrorCodeMinimum` to index `SocketErrorsByCode`. |

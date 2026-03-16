@@ -1,5 +1,6 @@
 using System;
 using System.Threading;
+using Arrowgene.Networking.SAEAServer.Consumer;
 
 namespace Arrowgene.Networking.SAEAServer.Metric;
 
@@ -13,6 +14,7 @@ internal sealed class TcpServerMetricsCollector : IDisposable
     private readonly TcpServerMetricsState _metricsState;
     private readonly ClientRegistry _clientRegistry;
     private readonly AcceptPool _acceptPool;
+    private readonly IConsumerMetrics? _consumerMetrics;
     private readonly int _orderingLaneCount;
     private CancellationTokenSource? _cancellationTokenSource;
     private Thread? _thread;
@@ -26,6 +28,7 @@ internal sealed class TcpServerMetricsCollector : IDisposable
         TcpServerMetricsState metricsState,
         ClientRegistry clientRegistry,
         AcceptPool acceptPool,
+        IConsumerMetrics? consumerMetrics,
         int orderingLaneCount)
     {
         if (metricsState is null)
@@ -53,6 +56,7 @@ internal sealed class TcpServerMetricsCollector : IDisposable
         _metricsState = metricsState;
         _clientRegistry = clientRegistry;
         _acceptPool = acceptPool;
+        _consumerMetrics = consumerMetrics;
         _orderingLaneCount = orderingLaneCount;
         _latestSnapshot = CreateSnapshot(DateTime.UtcNow, 0.0d, 0.0d);
         _previousTimestampUtc = _latestSnapshot.TimestampUtc;
@@ -186,6 +190,7 @@ internal sealed class TcpServerMetricsCollector : IDisposable
         double receiveBytesPerSecond,
         double sendBytesPerSecond)
     {
+        ConsumerMetricsSnapshot? consumerMetrics = _consumerMetrics?.CreateSnapshot();
         long[] disconnectsByReason = new long[_metricsState.DisconnectReasonCount];
         long[] laneActiveConnections = new long[_orderingLaneCount];
         long[] receiveSizeBuckets = new long[_metricsState.ReceiveSizeBucketCount];
@@ -218,6 +223,7 @@ internal sealed class TcpServerMetricsCollector : IDisposable
             _metricsState.GetDisconnectCleanupQueueDepth(),
             _acceptPool.CurrentCount,
             _clientRegistry.GetAvailableClientSlotCount(),
+            consumerMetrics,
             disconnectsByReason,
             laneActiveConnections,
             receiveSizeBuckets,

@@ -115,6 +115,7 @@ The snapshot includes:
 - Failure and backpressure counters: socket errors, timeouts, send queue overflows.
 - Current server state: accept-pool availability, available client slots, in-flight async callbacks, deferred disconnect cleanup depth, per-lane active connections.
 - Optional low-cost detail: receive/send size buckets and per-socket-error-code counters via `GetSocketErrorCount(SocketError.X)`.
+- Optional consumer detail via `ConsumerMetrics` when the consumer implements `IConsumerMetrics`; for `ThreadedBlockingQueueConsumer` this includes per-lane queue depth, processed event counts, and handler error totals.
 - Disconnect reason counters indexed by `DisconnectReason`.
 
 Use `GetMetricsSnapshot()` from your own timer, background service, or health endpoint.

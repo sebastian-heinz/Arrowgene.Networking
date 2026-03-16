@@ -1,6 +1,7 @@
 using System;
 using System.Net.Sockets;
 using Arrowgene.Networking.SAEAServer;
+using Arrowgene.Networking.SAEAServer.Consumer;
 
 namespace Arrowgene.Networking.SAEAServer.Metric;
 
@@ -32,6 +33,7 @@ public readonly struct TcpServerMetricsSnapshot
     /// <param name="disconnectCleanupQueueDepth">The current number of queued deferred disconnect cleanups.</param>
     /// <param name="acceptPoolAvailable">The current number of available accept event args in the accept pool.</param>
     /// <param name="availableClientSlots">The current number of available pooled client slots.</param>
+    /// <param name="consumerMetrics">The optional consumer metrics snapshot captured with the server metrics.</param>
     /// <param name="disconnectsByReason">Disconnect counters indexed by <see cref="DisconnectReason"/>.</param>
     /// <param name="laneActiveConnections">Current connection counts indexed by ordering lane.</param>
     /// <param name="receiveSizeBuckets">Receive-size histogram buckets.</param>
@@ -59,6 +61,7 @@ public readonly struct TcpServerMetricsSnapshot
         long disconnectCleanupQueueDepth,
         long acceptPoolAvailable,
         long availableClientSlots,
+        ConsumerMetricsSnapshot? consumerMetrics,
         long[] disconnectsByReason,
         long[] laneActiveConnections,
         long[] receiveSizeBuckets,
@@ -86,6 +89,7 @@ public readonly struct TcpServerMetricsSnapshot
         DisconnectCleanupQueueDepth = disconnectCleanupQueueDepth;
         AcceptPoolAvailable = acceptPoolAvailable;
         AvailableClientSlots = availableClientSlots;
+        ConsumerMetrics = consumerMetrics;
         DisconnectsByReason = disconnectsByReason ?? throw new ArgumentNullException(nameof(disconnectsByReason));
         LaneActiveConnections = laneActiveConnections ?? throw new ArgumentNullException(nameof(laneActiveConnections));
         ReceiveSizeBuckets = receiveSizeBuckets ?? throw new ArgumentNullException(nameof(receiveSizeBuckets));
@@ -193,6 +197,11 @@ public readonly struct TcpServerMetricsSnapshot
     /// Gets the current number of available pooled client slots.
     /// </summary>
     public long AvailableClientSlots { get; }
+
+    /// <summary>
+    /// Gets the optional consumer metrics snapshot captured with the server metrics.
+    /// </summary>
+    public ConsumerMetricsSnapshot? ConsumerMetrics { get; }
 
     /// <summary>
     /// Gets disconnect counters indexed by <see cref="DisconnectReason"/>.

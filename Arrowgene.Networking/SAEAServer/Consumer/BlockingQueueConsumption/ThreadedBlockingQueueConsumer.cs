@@ -2,13 +2,14 @@ using System;
 using System.Collections.Concurrent;
 using System.Threading;
 using Arrowgene.Logging;
+using Arrowgene.Networking.SAEAServer.Metric;
 
 namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
 {
     /// <summary>
     /// Dispatches consumer callbacks onto one worker thread per ordering lane while preserving lane order.
     /// </summary>
-    public abstract class ThreadedBlockingQueueConsumer : IConsumer, ISupportsOrderingLaneCount, IDisposable
+    public abstract class ThreadedBlockingQueueConsumer : IConsumer, ISupportsOrderingLaneCount, IConsumerMetrics, IDisposable
     {
         private const int DefaultQueueCapacityPerLane = 1024;
         private const int ThreadJoinTimeoutMs = 10000;
@@ -20,6 +21,7 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
         private readonly Thread?[] _threads;
         private readonly int _orderingLaneCount;
         private readonly int _queueCapacityPerLane;
+        private readonly ConsumerMetricsState _consumerMetricsState;
         private volatile bool _isRunning;
         private readonly string _identity;
         private bool _disposed;
@@ -64,9 +66,35 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
             _identity = identity;
             _queues = new BlockingCollection<IClientEvent>[_orderingLaneCount];
             _threads = new Thread[_orderingLaneCount];
+            _consumerMetricsState = new ConsumerMetricsState();
         }
-        
+
+        /// <inheritdoc />
         public int OrderingLaneCount => _orderingLaneCount;
+
+        void IConsumerMetrics.EnableCapture()
+        {
+            _consumerMetricsState.EnableCapture();
+        }
+
+        void IConsumerMetrics.DisableCapture()
+        {
+            _consumerMetricsState.DisableCapture();
+        }
+
+        ConsumerMetricsSnapshot IConsumerMetrics.CreateSnapshot()
+        {
+            long[] queueDepthByLane = new long[_orderingLaneCount];
+            long[] eventsProcessed = new long[_consumerMetricsState.ConsumerEventTypeCount];
+            SnapshotQueueDepthByLane(queueDepthByLane);
+            _consumerMetricsState.CopyConsumerEventsProcessed(eventsProcessed);
+
+            return new ConsumerMetricsSnapshot(
+                _consumerMetricsState.GetConsumerHandlerErrors(),
+                queueDepthByLane,
+                eventsProcessed
+            );
+        }
 
         /// <summary>
         /// Handles a received payload on the worker thread assigned to the client's ordering lane.
@@ -136,13 +164,41 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
                             throw new InvalidOperationException(
                                 $"Unsupported client event type: {clientEvent.GetType().FullName}");
                     }
+
+                    _consumerMetricsState.RecordProcessedEvent(clientEvent.ClientEventType);
                 }
                 catch (Exception exception)
                 {
+                    _consumerMetricsState.IncrementConsumerHandlerErrors();
                     Logger.Error(
                         $"[{_identity}] Consumer handler failed on lane {unitOfOrder} for event {clientEvent.GetType().Name}."
                     );
                     Logger.Exception(exception);
+                }
+            }
+        }
+
+        internal void SnapshotQueueDepthByLane(long[] destination)
+        {
+            if (destination is null)
+            {
+                throw new ArgumentNullException(nameof(destination));
+            }
+
+            if (destination.Length < _queues.Length)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(destination),
+                    "Destination must be at least as large as the configured ordering lane count."
+                );
+            }
+
+            lock (_lifecycleSync)
+            {
+                for (int index = 0; index < _queues.Length; index++)
+                {
+                    BlockingCollection<IClientEvent>? queue = _queues[index];
+                    destination[index] = queue is null ? 0 : queue.Count;
                 }
             }
         }

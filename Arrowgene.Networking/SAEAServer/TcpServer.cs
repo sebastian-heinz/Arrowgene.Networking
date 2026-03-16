@@ -65,6 +65,7 @@ public sealed class TcpServer : IDisposable
     private readonly AcceptPool _acceptPool;
     private readonly BufferSlab _bufferSlab;
     private readonly ClientRegistry _clientRegistry;
+    private readonly IConsumerMetrics? _consumerMetrics;
     private readonly TcpServerMetricsState _metricsState;
     private readonly TcpServerMetricsCollector _metricsCollector;
     private readonly TimeSpan _socketTimeout;
@@ -133,6 +134,7 @@ public sealed class TcpServer : IDisposable
         IpAddress = ipAddress;
         Port = port;
         _consumer = consumer;
+        _consumerMetrics = consumer as IConsumerMetrics;
         _settings = new TcpServerSettings(settings);
         _bufferSize = settings.BufferSize;
 
@@ -155,6 +157,7 @@ public sealed class TcpServer : IDisposable
             _metricsState,
             _clientRegistry,
             _acceptPool,
+            _consumerMetrics,
             _settings.OrderingLaneCount
         );
 
@@ -1364,11 +1367,13 @@ public sealed class TcpServer : IDisposable
     private void EnableMetricsCapture()
     {
         _metricsState.EnableCapture();
+        _consumerMetrics?.EnableCapture();
     }
 
     private void DisableMetricsCapture()
     {
         _metricsState.DisableCapture();
+        _consumerMetrics?.DisableCapture();
     }
 
     private bool IsMetricsCaptureEnabled()
