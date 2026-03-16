@@ -105,6 +105,7 @@ Console.WriteLine(
 
 long timeoutDisconnects = metrics.DisconnectsByReason.Span[(int)DisconnectReason.Timeout];
 long laneZeroConnections = metrics.LaneActiveConnections.Span[0];
+long shortLivedConnections = metrics.ConnectionDurationBuckets.Span[0];
 long smallReceives = metrics.ReceiveSizeBuckets.Span[0];
 ```
 
@@ -114,7 +115,7 @@ The snapshot includes:
 - Throughput totals and rates: receive/send operations, bytes, bytes per second.
 - Failure and backpressure counters: socket errors, timeouts, send queue overflows.
 - Current server state: accept-pool availability, available client slots, in-flight async callbacks, deferred disconnect cleanup depth, per-lane active connections.
-- Optional low-cost detail: receive/send size buckets and per-socket-error-code counters via `GetSocketErrorCount(SocketError.X)`.
+- Optional low-cost detail: connection-duration buckets, receive/send size buckets, and per-socket-error-code counters via `GetSocketErrorCount(SocketError.X)`.
 - Optional consumer detail via `ConsumerMetrics` when the consumer implements `IConsumerMetrics`; for `ThreadedBlockingQueueConsumer` this includes per-lane queue depth, processed event counts, and handler error totals.
 - Disconnect reason counters indexed by `DisconnectReason`.
 

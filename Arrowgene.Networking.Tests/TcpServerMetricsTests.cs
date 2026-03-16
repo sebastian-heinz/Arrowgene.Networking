@@ -64,10 +64,12 @@ public sealed class TcpServerMetricsTests
                 "Timed out waiting for the connected traffic metrics snapshot."
             );
 
-            Assert.Equal(7, connectedSnapshot.ReceiveSizeBuckets.Length);
-            Assert.Equal(7, connectedSnapshot.SendSizeBuckets.Length);
+            Assert.Equal(10, connectedSnapshot.ReceiveSizeBuckets.Length);
+            Assert.Equal(10, connectedSnapshot.SendSizeBuckets.Length);
+            Assert.Equal(10, connectedSnapshot.ConnectionDurationBuckets.Length);
             Assert.Equal(connectedSnapshot.ReceiveOperations, GetCounterTotal(connectedSnapshot.ReceiveSizeBuckets));
             Assert.Equal(connectedSnapshot.SendOperations, GetCounterTotal(connectedSnapshot.SendSizeBuckets));
+            Assert.Equal(0, GetCounterTotal(connectedSnapshot.ConnectionDurationBuckets));
             Assert.False(connectedSnapshot.ConsumerMetrics.HasValue);
 
             host.DisposeClient(client);
@@ -86,6 +88,12 @@ public sealed class TcpServerMetricsTests
             );
 
             Assert.Equal(0, GetLaneConnectionTotal(disconnectedSnapshot));
+            Assert.Equal(10, disconnectedSnapshot.ConnectionDurationBuckets.Length);
+            Assert.Equal(
+                disconnectedSnapshot.DisconnectedConnections,
+                GetCounterTotal(disconnectedSnapshot.ConnectionDurationBuckets)
+            );
+            Assert.True(GetCounterTotal(disconnectedSnapshot.ConnectionDurationBuckets) >= 1);
             Assert.Empty(consumer.Errors);
         }
         finally

@@ -989,11 +989,13 @@ public sealed class TcpServer : IDisposable
             return false;
         }
 
-        _metricsState.FinalizeDisconnect(disconnectReason);
-
         TimeSpan duration = snapshot.ConnectedAt == DateTime.MinValue
             ? TimeSpan.Zero
             : DateTime.UtcNow - snapshot.ConnectedAt;
+
+        _metricsState.FinalizeDisconnect(disconnectReason);
+        _metricsState.RecordConnectionDuration(duration);
+
         string disconnectReasonText = disconnectReason == DisconnectReason.None
             ? string.Empty
             : disconnectReason.ToString();

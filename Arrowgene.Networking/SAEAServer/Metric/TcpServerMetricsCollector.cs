@@ -193,10 +193,12 @@ internal sealed class TcpServerMetricsCollector : IDisposable
         ConsumerMetricsSnapshot? consumerMetrics = _consumerMetrics?.CreateSnapshot();
         long[] disconnectsByReason = new long[_metricsState.DisconnectReasonCount];
         long[] laneActiveConnections = new long[_orderingLaneCount];
+        long[] connectionDurationBuckets = new long[_metricsState.ConnectionDurationBucketsCount];
         long[] receiveSizeBuckets = new long[_metricsState.ReceiveSizeBucketCount];
         long[] sendSizeBuckets = new long[_metricsState.SendSizeBucketCount];
         long[] socketErrorsByCode = new long[_metricsState.SocketErrorCodeCount];
         _metricsState.CopyDisconnectsByReason(disconnectsByReason);
+        _metricsState.CopyConnectionDurationBuckets(connectionDurationBuckets);
         _metricsState.CopyReceiveSizeBuckets(receiveSizeBuckets);
         _metricsState.CopySendSizeBuckets(sendSizeBuckets);
         _metricsState.CopySocketErrorsByCode(socketErrorsByCode);
@@ -226,6 +228,7 @@ internal sealed class TcpServerMetricsCollector : IDisposable
             consumerMetrics,
             disconnectsByReason,
             laneActiveConnections,
+            connectionDurationBuckets,
             receiveSizeBuckets,
             sendSizeBuckets,
             socketErrorsByCode,

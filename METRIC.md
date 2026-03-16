@@ -28,8 +28,9 @@
 | `DisconnectCleanupQueueDepth` | Gauge | Current number of disconnected clients waiting for deferred cleanup finalization. |
 | `DisconnectsByReason` | Indexed counter | Disconnect totals indexed by `DisconnectReason`. |
 | `LaneActiveConnections` | Indexed gauge | Current active connection count per ordering lane. |
-| `ReceiveSizeBuckets` | Indexed counter | Receive completions bucketed into these ranges: `0..64`, `65..256`, `257..1024`, `1025..4096`, `4097..8192`, `8193..16384`, `16385+`. |
-| `SendSizeBuckets` | Indexed counter | Send completions bucketed into these ranges: `0..64`, `65..256`, `257..1024`, `1025..4096`, `4097..8192`, `8193..16384`, `16385+`. |
+| `ConnectionDurationBuckets` | Indexed counter | Connection lifetime histogram recorded at disconnect time using these ranges: `0..1s`, `1..5s`, `5..30s`, `30s..2m`, `2..10m`, `10..60m`, `60m..6h`, `6h..24h`, `24h..72h`, `72h+`. |
+| `ReceiveSizeBuckets` | Indexed counter | Receive completions bucketed into these ranges: `0..64`, `65..256`, `257..1024`, `1025..4096`, `4097..8192`, `8193..16384`, `16385..65536`, `65537..262144`, `262145..1048576`, `1048577+`. |
+| `SendSizeBuckets` | Indexed counter | Send completions bucketed into these ranges: `0..64`, `65..256`, `257..1024`, `1025..4096`, `4097..8192`, `8193..16384`, `16385..65536`, `65537..262144`, `262145..1048576`, `1048577+`. |
 | `ConsumerMetrics` | Nested snapshot | Optional consumer metrics snapshot. `null` when the consumer does not implement `IConsumerMetrics`. |
 | `SocketErrorsByCode` | Indexed counter | Socket errors indexed by raw `SocketError` value offset from `SocketErrorCodeMinimum`, or queried via `GetSocketErrorCount(SocketError.X)`. |
 | `SocketErrorCodeMinimum` | Scalar | Minimum raw `SocketError` value represented in `SocketErrorsByCode`. |
@@ -60,6 +61,7 @@ Use `DisconnectsByReason.Span[(int)DisconnectReason.X]` to read a specific disco
 | Gauges | Current values at snapshot time. |
 | Rates | Derived values computed from recent counter deltas. |
 | Per-lane values | Array positions match the ordering lane index. |
+| Connection duration buckets | Bucket positions map to the fixed connection lifetime ranges listed above. |
 | Size buckets | Bucket positions map to the fixed ranges listed above. |
 | Consumer metrics | When `ConsumerMetrics` has a value, use `HandlerErrors`, `QueueDepthByLane`, and `GetEventsProcessedCount(ClientEventType.X)` on the nested snapshot. |
 | Socket error buckets | Use `GetSocketErrorCount(SocketError.X)` for direct lookup, or compute `((int)socketError) - SocketErrorCodeMinimum` to index `SocketErrorsByCode`. |

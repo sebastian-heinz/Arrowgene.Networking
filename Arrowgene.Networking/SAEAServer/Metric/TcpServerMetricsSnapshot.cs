@@ -36,6 +36,7 @@ public readonly struct TcpServerMetricsSnapshot
     /// <param name="consumerMetrics">The optional consumer metrics snapshot captured with the server metrics.</param>
     /// <param name="disconnectsByReason">Disconnect counters indexed by <see cref="DisconnectReason"/>.</param>
     /// <param name="laneActiveConnections">Current connection counts indexed by ordering lane.</param>
+    /// <param name="connectionDurationBuckets">Disconnect-time connection duration histogram buckets.</param>
     /// <param name="receiveSizeBuckets">Receive-size histogram buckets.</param>
     /// <param name="sendSizeBuckets">Send-size histogram buckets.</param>
     /// <param name="socketErrorsByCode">Socket error counters indexed by the raw <see cref="SocketError"/> value offset from <paramref name="socketErrorCodeMinimum"/>.</param>
@@ -64,6 +65,7 @@ public readonly struct TcpServerMetricsSnapshot
         ConsumerMetricsSnapshot? consumerMetrics,
         long[] disconnectsByReason,
         long[] laneActiveConnections,
+        long[] connectionDurationBuckets,
         long[] receiveSizeBuckets,
         long[] sendSizeBuckets,
         long[] socketErrorsByCode,
@@ -92,6 +94,7 @@ public readonly struct TcpServerMetricsSnapshot
         ConsumerMetrics = consumerMetrics;
         DisconnectsByReason = disconnectsByReason ?? throw new ArgumentNullException(nameof(disconnectsByReason));
         LaneActiveConnections = laneActiveConnections ?? throw new ArgumentNullException(nameof(laneActiveConnections));
+        ConnectionDurationBuckets = connectionDurationBuckets ?? throw new ArgumentNullException(nameof(connectionDurationBuckets));
         ReceiveSizeBuckets = receiveSizeBuckets ?? throw new ArgumentNullException(nameof(receiveSizeBuckets));
         SendSizeBuckets = sendSizeBuckets ?? throw new ArgumentNullException(nameof(sendSizeBuckets));
         SocketErrorsByCode = socketErrorsByCode ?? throw new ArgumentNullException(nameof(socketErrorsByCode));
@@ -214,12 +217,17 @@ public readonly struct TcpServerMetricsSnapshot
     public ReadOnlyMemory<long> LaneActiveConnections { get; }
 
     /// <summary>
-    /// Gets receive-size histogram buckets using the ranges 0..64, 65..256, 257..1024, 1025..4096, 4097..8192, 8193..16384, and 16385+.
+    /// Gets disconnect-time connection duration histogram buckets using the ranges 0..1s, 1..5s, 5..30s, 30s..2m, 2..10m, 10..60m, 60m..6h, 6h..24h, 24h..72h, and 72h+.
+    /// </summary>
+    public ReadOnlyMemory<long> ConnectionDurationBuckets { get; }
+
+    /// <summary>
+    /// Gets receive-size histogram buckets using the ranges 0..64, 65..256, 257..1024, 1025..4096, 4097..8192, 8193..16384, 16385..65536, 65537..262144, 262145..1048576, and 1048577+.
     /// </summary>
     public ReadOnlyMemory<long> ReceiveSizeBuckets { get; }
 
     /// <summary>
-    /// Gets send-size histogram buckets using the ranges 0..64, 65..256, 257..1024, 1025..4096, 4097..8192, 8193..16384, and 16385+.
+    /// Gets send-size histogram buckets using the ranges 0..64, 65..256, 257..1024, 1025..4096, 4097..8192, 8193..16384, 16385..65536, 65537..262144, 262145..1048576, and 1048577+.
     /// </summary>
     public ReadOnlyMemory<long> SendSizeBuckets { get; }
 

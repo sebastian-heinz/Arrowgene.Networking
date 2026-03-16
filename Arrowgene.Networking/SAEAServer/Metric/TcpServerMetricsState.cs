@@ -6,8 +6,10 @@ namespace Arrowgene.Networking.SAEAServer.Metric;
 
 internal sealed class TcpServerMetricsState
 {
-    private const int TransferSizeBucketCount = 7;
+    private const int TransferSizeBucketCount = 10;
+    private const int ConnectionDurationBucketCount = 10;
     private readonly long[] _disconnectsByReason;
+    private readonly long[] _connectionDurationBuckets;
     private readonly long[] _receiveSizeBuckets;
     private readonly long[] _sendSizeBuckets;
     private readonly long[] _socketErrorsByCode;
@@ -50,6 +52,7 @@ internal sealed class TcpServerMetricsState
         }
 
         _disconnectsByReason = new long[Enum.GetValues<DisconnectReason>().Length];
+        _connectionDurationBuckets = new long[ConnectionDurationBucketCount];
         _receiveSizeBuckets = new long[TransferSizeBucketCount];
         _sendSizeBuckets = new long[TransferSizeBucketCount];
         _socketErrorCodeMinimum = socketErrorCodeMinimum;
@@ -57,6 +60,8 @@ internal sealed class TcpServerMetricsState
     }
 
     internal int DisconnectReasonCount => _disconnectsByReason.Length;
+
+    internal int ConnectionDurationBucketsCount => _connectionDurationBuckets.Length;
 
     internal int ReceiveSizeBucketCount => _receiveSizeBuckets.Length;
 
@@ -174,6 +179,16 @@ internal sealed class TcpServerMetricsState
         Interlocked.Increment(ref _sendOperations);
         Interlocked.Add(ref _bytesSent, bytesTransferred);
         Interlocked.Increment(ref _sendSizeBuckets[GetTransferSizeBucketIndex(bytesTransferred)]);
+    }
+
+    internal void RecordConnectionDuration(TimeSpan duration)
+    {
+        if (!IsCaptureEnabled())
+        {
+            return;
+        }
+
+        Interlocked.Increment(ref _connectionDurationBuckets[GetConnectionDurationBucketIndex(duration)]);
     }
 
     internal void FinalizeDisconnect(DisconnectReason disconnectReason)
@@ -335,6 +350,15 @@ internal sealed class TcpServerMetricsState
         );
     }
 
+    internal void CopyConnectionDurationBuckets(long[] destination)
+    {
+        CopyCounterArray(
+            _connectionDurationBuckets,
+            destination,
+            "Destination must be at least as large as the connection-duration counter array."
+        );
+    }
+
     internal void CopyReceiveSizeBuckets(long[] destination)
     {
         CopyCounterArray(
@@ -399,6 +423,58 @@ internal sealed class TcpServerMetricsState
         Interlocked.Increment(ref _socketErrorsByCode[index]);
     }
 
+    private static int GetConnectionDurationBucketIndex(TimeSpan duration)
+    {
+        double totalSeconds = duration.TotalSeconds;
+
+        if (totalSeconds <= 1.0d)
+        {
+            return 0;
+        }
+
+        if (totalSeconds <= 5.0d)
+        {
+            return 1;
+        }
+
+        if (totalSeconds <= 30.0d)
+        {
+            return 2;
+        }
+
+        if (totalSeconds <= 120.0d)
+        {
+            return 3;
+        }
+
+        if (totalSeconds <= 600.0d)
+        {
+            return 4;
+        }
+
+        if (totalSeconds <= 3600.0d)
+        {
+            return 5;
+        }
+
+        if (totalSeconds <= 21600.0d)
+        {
+            return 6;
+        }
+
+        if (totalSeconds <= 86400.0d)
+        {
+            return 7;
+        }
+
+        if (totalSeconds <= 259200.0d)
+        {
+            return 8;
+        }
+
+        return 9;
+    }
+
     private static int GetTransferSizeBucketIndex(int bytesTransferred)
     {
         if (bytesTransferred <= 64)
@@ -431,7 +507,22 @@ internal sealed class TcpServerMetricsState
             return 5;
         }
 
-        return 6;
+        if (bytesTransferred <= 65536)
+        {
+            return 6;
+        }
+
+        if (bytesTransferred <= 262144)
+        {
+            return 7;
+        }
+
+        if (bytesTransferred <= 1048576)
+        {
+            return 8;
+        }
+
+        return 9;
     }
 
     private static void CopyCounterArray(long[] source, long[] destination, string lengthErrorMessage)

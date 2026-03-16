@@ -1,3 +1,4 @@
+using System;
 using System.Net.Sockets;
 using Arrowgene.Networking.SAEAServer.Metric;
 using Xunit;
@@ -33,7 +34,13 @@ public sealed class TcpServerMetricsStateTests
             8193,
             16384,
             16385,
-            20000
+            65536,
+            65537,
+            262144,
+            262145,
+            1048576,
+            1048577,
+            2000000
         };
         int[] sendSamples = new int[]
         {
@@ -43,7 +50,10 @@ public sealed class TcpServerMetricsStateTests
             4096,
             8192,
             16384,
-            16385
+            65536,
+            262144,
+            1048576,
+            1048577
         };
 
         state.RecordReceive(0);
@@ -66,11 +76,68 @@ public sealed class TcpServerMetricsStateTests
 
         Assert.Equal(receiveSamples.Length, state.GetReceiveOperations());
         Assert.Equal(Sum(receiveSamples), state.GetBytesReceived());
-        Assert.Equal(new long[] { 2, 2, 2, 2, 2, 2, 2 }, receiveBuckets);
+        Assert.Equal(new long[] { 2, 2, 2, 2, 2, 2, 2, 2, 2, 2 }, receiveBuckets);
 
         Assert.Equal(sendSamples.Length, state.GetSendOperations());
         Assert.Equal(Sum(sendSamples), state.GetBytesSent());
-        Assert.Equal(new long[] { 1, 1, 1, 1, 1, 1, 1 }, sendBuckets);
+        Assert.Equal(new long[] { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 }, sendBuckets);
+    }
+
+    /// <summary>
+    /// Verifies disconnect durations are bucketed at the documented boundaries.
+    /// </summary>
+    [Fact]
+    public void RecordConnectionDuration_TracksBucketBoundaries()
+    {
+        TcpServerMetricsState state = new TcpServerMetricsState();
+        state.EnableCapture();
+
+        TimeSpan[] samples = new TimeSpan[]
+        {
+            TimeSpan.FromMilliseconds(500),
+            TimeSpan.FromSeconds(1),
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromSeconds(30),
+            TimeSpan.FromSeconds(120),
+            TimeSpan.FromSeconds(600),
+            TimeSpan.FromSeconds(3600),
+            TimeSpan.FromHours(6),
+            TimeSpan.FromHours(24),
+            TimeSpan.FromDays(3),
+            TimeSpan.FromDays(7)
+        };
+
+        for (int index = 0; index < samples.Length; index++)
+        {
+            state.RecordConnectionDuration(samples[index]);
+        }
+
+        long[] connectionDurationBuckets = new long[state.ConnectionDurationBucketsCount];
+        state.CopyConnectionDurationBuckets(connectionDurationBuckets);
+
+        Assert.Equal(new long[] { 2, 1, 1, 1, 1, 1, 1, 1, 1, 1 }, connectionDurationBuckets);
+        Assert.Equal(samples.Length, GetCounterTotal(connectionDurationBuckets));
+    }
+
+    /// <summary>
+    /// Verifies disconnect durations are ignored when metrics capture is disabled.
+    /// </summary>
+    [Fact]
+    public void RecordConnectionDuration_DoesNotTrackWhenCaptureIsDisabled()
+    {
+        TcpServerMetricsState state = new TcpServerMetricsState();
+
+        state.RecordConnectionDuration(TimeSpan.FromMinutes(2));
+        state.EnableCapture();
+        state.RecordConnectionDuration(TimeSpan.FromMinutes(2));
+        state.DisableCapture();
+        state.RecordConnectionDuration(TimeSpan.FromHours(2));
+
+        long[] connectionDurationBuckets = new long[state.ConnectionDurationBucketsCount];
+        state.CopyConnectionDurationBuckets(connectionDurationBuckets);
+
+        Assert.Equal(new long[] { 0, 0, 0, 1, 0, 0, 0, 0, 0, 0 }, connectionDurationBuckets);
+        Assert.Equal(1, GetCounterTotal(connectionDurationBuckets));
     }
 
     /// <summary>
@@ -107,6 +174,18 @@ public sealed class TcpServerMetricsStateTests
         for (int index = 0; index < values.Length; index++)
         {
             total += values[index];
+        }
+
+        return total;
+    }
+
+    private static long GetCounterTotal(long[] counters)
+    {
+        long total = 0;
+
+        for (int index = 0; index < counters.Length; index++)
+        {
+            total += counters[index];
         }
 
         return total;
