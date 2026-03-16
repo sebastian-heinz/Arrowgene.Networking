@@ -20,12 +20,12 @@ internal sealed class ThreadedEchoRecordingConsumer : ThreadedBlockingQueueConsu
     private int _maxConcurrentHandlers;
 
     internal ThreadedEchoRecordingConsumer(
-        int maxUnitOfOrder,
+        int orderingLaneCount,
         bool echoReceivedData = false,
         int queueCapacityPerLane = 1024,
         int receiveDelayMs = 0
     )
-        : base(maxUnitOfOrder, queueCapacityPerLane, nameof(ThreadedEchoRecordingConsumer))
+        : base(orderingLaneCount, queueCapacityPerLane, nameof(ThreadedEchoRecordingConsumer))
     {
         _sync = new object();
         _connectedClients = new List<ConnectedClientRecord>();
@@ -138,7 +138,7 @@ internal sealed class ThreadedEchoRecordingConsumer : ThreadedBlockingQueueConsu
         }
     }
 
-    protected override void HandleError(ClientHandle clientHandle, Exception exception, string message)
+    protected override void HandleError(ClientSnapshot clientSnapshot, Exception exception, string message)
     {
         lock (_sync)
         {

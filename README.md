@@ -1,203 +1,228 @@
 # Arrowgene.Networking
 
-A high-performance, pooled TCP server library for .NET built on `SocketAsyncEventArgs` (SAEA). Designed for scalable, event-driven networking with efficient resource management.
+A pooled TCP server library for .NET built on `SocketAsyncEventArgs` (SAEA).
+
+Client slots are pre-allocated and recycled, send/receive buffers come from a shared pinned slab, payloads are copied for isolation, and connected clients are assigned to the least-loaded ordering lane.
 
 [![NuGet](https://img.shields.io/nuget/v/Arrowgene.Networking.svg)](https://www.nuget.org/packages/Arrowgene.Networking)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.md)
 
-## Features
-
-- **SAEA-based architecture** - Built on .NET's `SocketAsyncEventArgs` for high-throughput, low-allocation I/O
-- **Connection pooling** - Pre-allocated client slots with generation tracking to detect stale references
-- **Pinned buffer management** - Single pinned memory slab shared across all clients, avoiding GC pressure
-- **Ordering lanes** - Distributes clients across configurable lanes for deterministic per-lane FIFO event ordering
-- **Bounded send queues** - Per-client outbound queue with configurable byte limits and overflow protection
-- **Idle timeout** - Automatic disconnection of idle clients with configurable timeout
-- **Pluggable consumers** - Choose between event-based or blocking-queue-based callback models
-
 ## Requirements
 
-- [.NET 10.0](https://dotnet.microsoft.com/download) or later
+- .NET 10.0
 
 ## Installation
 
-### NuGet
-
-```
+```bash
 dotnet add package Arrowgene.Networking
 ```
 
-### Build from source
+## Core Types
 
-```bash
-git clone https://github.com/sebastian-heinz/Arrowgene.Networking.git
-cd Arrowgene.Networking
-dotnet build
-```
+| Type | Purpose |
+|---|---|
+| `TcpServer` | Owns the listener, client pool, send queues, timeout checks, and shutdown lifecycle. |
+| `TcpServerSettings` | Server configuration: connection caps, buffer size, ordering lanes, timeouts. |
+| `SocketSettings` | Socket-level tuning applied via `ListenSocketSettings` and `ClientSocketSettings`. |
+| `ClientHandle` | Generation-checked struct to `Send`, `Disconnect`, or inspect a live client. |
+| `ClientSnapshot` | Immutable state captured at disconnect or error time (ID, endpoint, bytes, timestamps). |
 
-## Quick start
+## Quick Start
+
+Event-driven echo server:
 
 ```csharp
+using System;
 using System.Net;
 using Arrowgene.Networking.SAEAServer;
 using Arrowgene.Networking.SAEAServer.Consumer.EventConsumption;
 
-// Configure the server
-var settings = new ServerSettings
+TcpServerSettings settings = new TcpServerSettings
 {
+    Identity = "Echo",
     MaxConnections = 100,
-    BufferSize = 2000,
+    BufferSize = 2048,
     OrderingLaneCount = 4,
-    ConcurrentAccepts = 10,
+    ConcurrentAccepts = 8,
     MaxQueuedSendBytes = 16 * 1024 * 1024,
-    ClientSocketTimeoutSeconds = -1 // disabled
+    ClientSocketTimeoutSeconds = -1
 };
 
-// Use the event-based consumer
-var consumer = new EventConsumer();
-consumer.ClientConnected += (s, e) =>
+settings.ListenSocketSettings.Backlog = 128;
+settings.ClientSocketSettings.NoDelay = true;
+
+EventConsumer consumer = new EventConsumer();
+consumer.ClientConnected += (_, e) =>
 {
-    Console.WriteLine($"Client connected: {e.Socket.Identity}");
+    Console.WriteLine($"Connected: {e.Socket.Identity} lane={e.Socket.UnitOfOrder}");
 };
-consumer.ClientDisconnected += (s, e) =>
+consumer.ReceivedPacket += (_, e) =>
 {
-    Console.WriteLine($"Client disconnected: {e.ClientSnapshot.Identity}");
-};
-consumer.ReceivedPacket += (s, e) =>
-{
-    // Echo received data back to the client
     e.Socket.Send(e.Data);
 };
+consumer.ClientDisconnected += (_, e) =>
+{
+    Console.WriteLine(
+        $"Disconnected: {e.ClientSnapshot.Identity} recv={e.ClientSnapshot.BytesReceived} sent={e.ClientSnapshot.BytesSent}"
+    );
+};
+consumer.Error += (_, e) =>
+{
+    Console.WriteLine($"Consumer error for {e.ClientSnapshot.Identity}: {e.Exception.Message}");
+};
 
-// Start listening
-var server = new TcpServer(IPAddress.Any, 2345, consumer, settings);
+using TcpServer server = new TcpServer(IPAddress.Any, 2345, consumer, settings);
 server.Start();
+
+Console.WriteLine("Press Enter to stop.");
+Console.ReadLine();
+
+server.Stop();
 ```
 
-## Architecture
-
-```
-TcpServer
-├── AcceptPool           - Reusable SocketAsyncEventArgs for accept operations
-├── BufferSlab           - Single pinned byte[] divided among all client slots
-├── ClientRegistry       - Client pool manager with ordering lane assignment
-│   └── Client[]         - Pre-allocated, reusable client slots
-│       ├── SendQueue    - Per-client bounded outbound queue
-│       └── ClientHandle - Generation-checked reference for consumers
-└── IConsumer            - Callback interface for server events
-    ├── EventConsumer               - .NET event-based callbacks
-    ├── BlockingQueueConsumer       - BlockingCollection-based queue
-    └── ThreadedBlockingQueueConsumer - Dedicated processing thread
-```
-
-### Key concepts
-
-| Concept | Description |
-|---|---|
-| **ClientHandle** | A lightweight `readonly struct` that consumers use to reference connected clients. Includes generation tracking so stale handles are safely rejected. |
-| **ClientSnapshot** | An immutable `record struct` capturing complete client state at disconnection (ID, IP, bytes sent/received, connection duration). |
-| **Ordering lanes** | Clients are assigned to the least-loaded lane on connection. Events within a lane are processed in FIFO order. |
-| **BufferSlab** | A single `GC.AllocateArray<byte>(pinned: true)` allocation divided into per-client receive and send regions, eliminating per-operation allocations. |
-
-## Configuration
-
-`ServerSettings` provides the following options:
-
-| Property | Default | Description |
-|---|---|---|
-| `MaxConnections` | `100` | Maximum concurrent connections |
-| `BufferSize` | `2000` | Receive/send buffer size per direction per client |
-| `OrderingLaneCount` | `4` | Number of ordering lanes for event dispatch |
-| `ConcurrentAccepts` | `10` | Simultaneous pending accept operations |
-| `MaxQueuedSendBytes` | `16 MB` | Maximum queued outbound bytes per client before overflow |
-| `ClientSocketTimeoutSeconds` | `-1` | Idle timeout in seconds (`-1` = disabled) |
-| `ListenSocketRetries` | `5` | Number of bind retries for the listen socket |
-| `DebugMode` | `false` | Enable verbose debug logging |
-
-Socket-level settings (backlog, buffer sizes, timeouts, NoDelay, TTL, linger) are configurable via `ListenSocketSettings` and `ClientSocketSettings`.
-
-## Consumer models
+## Consumer Models
 
 ### EventConsumer
 
-Raises .NET events for each server callback. Suitable for simple use cases.
-
-```csharp
-var consumer = new EventConsumer();
-consumer.ClientConnected += (s, e) => { /* handle */ };
-consumer.ClientDisconnected += (s, e) => { /* handle */ };
-consumer.ReceivedPacket += (s, e) => { /* handle */ };
-```
+Simple callback wiring without implementing `IConsumer`. Exposes `ClientConnected`, `ReceivedPacket`, `ClientDisconnected`, and `Error` events. See the Quick Start above.
 
 ### BlockingQueueConsumer
 
-Enqueues all events into a `BlockingCollection<ClientEvent>` for external processing loops.
+Read server events from your own processing loop:
 
 ```csharp
-var consumer = new BlockingQueueConsumer();
-// Process events on your own thread
-foreach (var evt in consumer.ClientEvents.GetConsumingEnumerable())
+using System;
+using Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption;
+
+BlockingQueueConsumer consumer = new BlockingQueueConsumer();
+
+foreach (IClientEvent clientEvent in consumer.ClientEvents.GetConsumingEnumerable())
 {
-    // handle evt
+    switch (clientEvent)
+    {
+        case ClientConnectedEvent connected:
+            Console.WriteLine($"Connected: {connected.ClientHandle.Identity}");
+            break;
+        case ClientDataEvent data:
+            data.ClientHandle.Send(data.Data);
+            break;
+        case ClientDisconnectedEvent disconnected:
+            Console.WriteLine($"Disconnected: {disconnected.ClientSnapshot.Identity}");
+            break;
+        case ClientErrorEvent error:
+            Console.WriteLine($"Error for {error.ClientSnapshot.Identity}: {error.Exception.Message}");
+            break;
+    }
 }
 ```
 
 ### ThreadedBlockingQueueConsumer
 
-Extends `BlockingQueueConsumer` with a dedicated background thread for event processing.
+One worker thread per ordering lane with FIFO ordering preserved inside each lane. The type is abstract -- implement the four handlers then call `Start()` before handing it to `TcpServer`.
 
-## Testing
+```csharp
+using System;
+using Arrowgene.Networking.SAEAServer;
+using Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption;
 
-```bash
-dotnet test
+public sealed class EchoConsumer : ThreadedBlockingQueueConsumer
+{
+    public EchoConsumer(int orderingLaneCount)
+        : base(orderingLaneCount, queueCapacityPerLane: 1024, identity: nameof(EchoConsumer))
+    {
+    }
+
+    protected override void HandleReceived(ClientHandle clientHandle, byte[] data)
+    {
+        clientHandle.Send(data);
+    }
+
+    protected override void HandleDisconnected(ClientSnapshot clientSnapshot)
+    {
+        Console.WriteLine($"Disconnected: {clientSnapshot.Identity}");
+    }
+
+    protected override void HandleConnected(ClientHandle clientHandle)
+    {
+        Console.WriteLine($"Connected: {clientHandle.Identity} lane={clientHandle.UnitOfOrder}");
+    }
+
+    protected override void HandleError(ClientSnapshot clientSnapshot, Exception exception, string message)
+    {
+        Console.WriteLine($"Error for {clientSnapshot.Identity}: {message} / {exception.Message}");
+    }
+}
 ```
 
-With detailed output:
+Setup:
+
+```csharp
+using System.Net;
+using Arrowgene.Networking.SAEAServer;
+
+TcpServerSettings settings = new TcpServerSettings
+{
+    MaxConnections = 200,
+    OrderingLaneCount = 4,
+    ConcurrentAccepts = 8
+};
+
+using EchoConsumer consumer = new EchoConsumer(settings.OrderingLaneCount);
+consumer.Start();
+
+using TcpServer server = new TcpServer(IPAddress.Any, 2345, consumer, settings);
+server.Start();
+```
+
+## Configuration
+
+### TcpServerSettings
+
+| Option | Default | Purpose | When to change |
+|---|---|---|---|
+| `Identity` | `""` | Label prefixed to all log lines and thread names for this server instance. | Set when running multiple `TcpServer` instances in the same process so logs and thread dumps are distinguishable. |
+| `MaxConnections` | `100` | Upper bound on simultaneous connected clients. Determines the size of the client pool and the pinned buffer slab (`MaxConnections * BufferSize * 2` bytes). | Raise for high-concurrency services (game servers, chat). Lower to cap memory on resource-constrained hosts. Connections beyond this limit are refused at accept time. |
+| `BufferSize` | `2000` | Size in bytes of the pinned receive and send buffer allocated per client per direction. Receive completions copy at most this many bytes per callback; outbound sends are chunked to this size. | Increase when your protocol frames are large (file transfer, media streaming) to reduce per-message callback overhead. Decrease for many small-message workloads (chat, telemetry) to reduce pinned memory. |
+| `OrderingLaneCount` | `4` | Number of ordering lanes. Each connected client is assigned to the least-loaded lane. `ThreadedBlockingQueueConsumer` creates one worker thread per lane and guarantees FIFO within a lane. | Match to the number of consumer worker threads. More lanes = more parallelism but less ordering guarantee across clients. Fewer lanes = stronger cross-client ordering but higher head-of-line blocking risk. |
+| `ConcurrentAccepts` | `10` | Maximum simultaneous pending `AcceptAsync` operations. Controls how many accept event args are pooled and handed to the OS at once. | Raise under burst-connect workloads (load tests, game lobby joins) where many clients connect within milliseconds. Lower if accept throughput is not a bottleneck to save a few allocations. |
+| `MaxQueuedSendBytes` | `16 MB` | Per-client outbound queue byte limit. When a client's queued send data exceeds this, the client is disconnected. | Raise for clients that receive large bursts (bulk data push, replay streaming). Lower to shed slow consumers faster and protect server memory. |
+| `ListenSocketRetries` | `5` | Number of times the server retries `Bind`+`Listen` (with a 1-second delay) before giving up on startup. | Raise in environments where port release is slow (container restarts, CI). Set to `0` for fail-fast startup. |
+| `ClientSocketTimeoutSeconds` | `-1` | Idle timeout in seconds. Clients with no send or receive activity for this long are disconnected. `-1` or `0` disables the timeout. | Enable (`30`-`300`) for public-facing servers to reclaim slots from idle or half-open connections. Leave disabled for trusted internal services or long-lived connections. |
+| `ListenSocketSettings` | *(default `SocketSettings`)* | `SocketSettings` instance applied to the listener socket before `Bind`. | Configure `Backlog`, `ExclusiveAddressUse`, `DualMode`, or raw socket options for the listening socket. |
+| `ClientSocketSettings` | *(default `SocketSettings`)* | `SocketSettings` instance applied to each accepted client socket. | Set `NoDelay = true` for low-latency protocols, tune `ReceiveBufferSize`/`SendBufferSize` for throughput, or enable `LingerEnabled` for graceful close. |
+
+### SocketSettings
+
+Applied via `ListenSocketSettings` (listener socket) and `ClientSocketSettings` (accepted sockets).
+
+| Option | Default | Purpose | When to change |
+|---|---|---|---|
+| `Backlog` | `128` | Maximum pending connection queue length passed to `Socket.Listen`. | Raise under high-burst connect rates. Only applies to `ListenSocketSettings`. |
+| `NoDelay` | `false` | Disables the Nagle algorithm when `true`, sending data immediately without buffering small writes. | Set `true` on `ClientSocketSettings` for latency-sensitive protocols (games, real-time). Leave `false` for throughput-oriented workloads. |
+| `ReceiveBufferSize` | `8192` | OS-level socket receive buffer size in bytes. | Increase for high-throughput streams. Decrease to limit per-socket kernel memory. |
+| `SendBufferSize` | `8192` | OS-level socket send buffer size in bytes. | Increase for bursty outbound traffic. Decrease to apply tighter backpressure to the send path. |
+| `ReceiveTimeout` | `0` | Synchronous receive timeout in milliseconds. `0` means infinite. | Rarely needed since the server uses async I/O. Useful if synchronous reads are added externally. |
+| `SendTimeout` | `0` | Synchronous send timeout in milliseconds. `0` means infinite. | Same as `ReceiveTimeout`. |
+| `Ttl` | `64` | IP Time To Live. Decremented at each router hop; packets are dropped when it reaches zero. | Raise (`128`) for cross-region or multi-hop cloud deployments. Lower for LAN-only services. |
+| `DualMode` | `false` | Enables IPv4+IPv6 dual-stack on an `InterNetworkV6` socket. | Set `true` when binding to `IPAddress.IPv6Any` and you want to accept both IPv4 and IPv6 clients. |
+| `ExclusiveAddressUse` | `false` | Prevents other sockets from binding to the same port. | Set `true` on `ListenSocketSettings` to prevent port hijacking in production. |
+| `DontFragment` | `true` | Sets the IP Don't Fragment flag. Only applied to datagram sockets. | Not relevant for TCP. Applies if `SocketSettings` is reused for UDP sockets. |
+| `LingerEnabled` | `false` | Enables the linger option on socket close. When `true`, `Close` blocks for up to `LingerTime` seconds to flush queued data. | Enable for protocols that require guaranteed delivery of the final bytes before disconnect. |
+| `LingerTime` | `30` | Linger duration in seconds when `LingerEnabled` is `true`. | Shorten for faster teardown. Lengthen if the remote peer is slow to acknowledge. |
+| `SocketOptions` | `[ReuseAddress=false]` | Additional raw `SetSocketOption` calls applied after the typed settings above. | Use for platform-specific or uncommon socket options not covered by the typed properties. |
+
+## Build and Test
 
 ```bash
+dotnet build
+dotnet test
 dotnet test --logger "console;verbosity=detailed"
 ```
 
-The test suite covers server lifecycle, connection caps, ordering lanes, pooling behavior, buffer handling, and disconnect/timeout scenarios.
+## Dependency
 
-## Project structure
-
-```
-Arrowgene.Networking/
-├── SAEAServer/
-│   ├── TcpServer.cs           # Core TCP server
-│   ├── Client.cs              # Pooled client connection
-│   ├── ClientHandle.cs        # Generation-checked client reference
-│   ├── ClientSnapshot.cs      # Immutable disconnect snapshot
-│   ├── ClientRegistry.cs      # Client pool + ordering lanes
-│   ├── AcceptPool.cs          # Accept operation pool
-│   ├── BufferSlab.cs          # Pinned buffer allocation
-│   ├── SendQueue.cs           # Per-client send queue
-│   ├── ServerSettings.cs      # Configuration
-│   └── Consumer/
-│       ├── IConsumer.cs           # Consumer callback interface
-│       ├── EventConsumption/      # Event-based consumer
-│       └── BlockingQueueConsumption/  # Queue-based consumers
-├── Service.cs                 # Utility methods
-├── SocketSettings.cs          # Socket configuration
-└── SocketOption.cs            # Raw socket options
-Arrowgene.Networking.Tests/    # xUnit integration tests
-```
-
-## Dependencies
-
-- [Arrowgene.Logging](https://github.com/sebastian-heinz/Arrowgene.Logging) v1.2.1
-
-## Platform support
-
-Published builds are available for:
-- `win-x86`
-- `win-x64`
-- `linux-x64`
-- `osx-x64`
+- [Arrowgene.Logging](https://github.com/sebastian-heinz/Arrowgene.Logging)
 
 ## License
 
-MIT License - Copyright 2017-2026 Sebastian Heinz
-
-See [LICENSE.md](LICENSE.md) for details.
+MIT License. See [LICENSE.md](LICENSE.md).

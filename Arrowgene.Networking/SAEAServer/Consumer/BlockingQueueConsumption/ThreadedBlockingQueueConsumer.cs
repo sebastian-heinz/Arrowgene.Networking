@@ -8,7 +8,7 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
     /// <summary>
     /// Dispatches consumer callbacks onto one worker thread per ordering lane while preserving lane order.
     /// </summary>
-    public abstract class ThreadedBlockingQueueConsumer : IConsumer, IDisposable
+    public abstract class ThreadedBlockingQueueConsumer : IConsumer, ISupportsOrderingLaneCount, IDisposable
     {
         private const int DefaultQueueCapacityPerLane = 1024;
         private const int ThreadJoinTimeoutMs = 10000;
@@ -18,7 +18,7 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
         private readonly object _lifecycleSync;
         private readonly BlockingCollection<IClientEvent>?[] _queues;
         private readonly Thread?[] _threads;
-        private readonly int _maxUnitOfOrder;
+        private readonly int _orderingLaneCount;
         private readonly int _queueCapacityPerLane;
         private volatile bool _isRunning;
         private readonly string _identity;
@@ -29,28 +29,28 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
         /// <summary>
         /// Initializes a threaded queue consumer.
         /// </summary>
-        /// <param name="maxUnitOfOrder">The number of ordering lanes to process in parallel.</param>
+        /// <param name="orderingLaneCount">The number of ordering lanes to process in parallel.</param>
         /// <param name="identity">The log identity used for worker threads.</param>
-        public ThreadedBlockingQueueConsumer(int maxUnitOfOrder, string identity = "ThreadedBlockingQueueConsumer")
-            : this(maxUnitOfOrder, DefaultQueueCapacityPerLane, identity)
+        public ThreadedBlockingQueueConsumer(int orderingLaneCount, string identity = "ThreadedBlockingQueueConsumer")
+            : this(orderingLaneCount, DefaultQueueCapacityPerLane, identity)
         {
         }
 
         /// <summary>
         /// Initializes a threaded queue consumer.
         /// </summary>
-        /// <param name="maxUnitOfOrder">The number of ordering lanes to process in parallel.</param>
+        /// <param name="orderingLaneCount">The number of ordering lanes to process in parallel.</param>
         /// <param name="queueCapacityPerLane">The maximum queued events allowed per ordering lane before producers backpressure.</param>
         /// <param name="identity">The log identity used for worker threads.</param>
         public ThreadedBlockingQueueConsumer(
-            int maxUnitOfOrder,
+            int orderingLaneCount,
             int queueCapacityPerLane,
             string identity = "ThreadedBlockingQueueConsumer"
         )
         {
-            if (maxUnitOfOrder <= 0)
+            if (orderingLaneCount <= 0)
             {
-                throw new ArgumentOutOfRangeException(nameof(maxUnitOfOrder));
+                throw new ArgumentOutOfRangeException(nameof(orderingLaneCount));
             }
 
             if (queueCapacityPerLane <= 0)
@@ -59,12 +59,14 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
             }
 
             _lifecycleSync = new object();
-            _maxUnitOfOrder = maxUnitOfOrder;
+            _orderingLaneCount = orderingLaneCount;
             _queueCapacityPerLane = queueCapacityPerLane;
             _identity = identity;
-            _queues = new BlockingCollection<IClientEvent>[_maxUnitOfOrder];
-            _threads = new Thread[_maxUnitOfOrder];
+            _queues = new BlockingCollection<IClientEvent>[_orderingLaneCount];
+            _threads = new Thread[_orderingLaneCount];
         }
+        
+        public int OrderingLaneCount => _orderingLaneCount;
 
         /// <summary>
         /// Handles a received payload on the worker thread assigned to the client's ordering lane.
@@ -88,10 +90,10 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
         /// <summary>
         /// Handles a consumer error on the worker thread assigned to the client's ordering lane.
         /// </summary>
-        /// <param name="clientHandle">The client associated with the error.</param>
+        /// <param name="clientSnapshot">The immutable client snapshot associated with the error.</param>
         /// <param name="exception">The exception that was thrown.</param>
         /// <param name="message">Additional context about where the error occurred.</param>
-        protected abstract void HandleError(ClientHandle clientHandle, Exception exception, string message);
+        protected abstract void HandleError(ClientSnapshot clientSnapshot, Exception exception, string message);
 
         private void Consume(int unitOfOrder, CancellationToken cancellationToken)
         {
@@ -128,7 +130,7 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
                             HandleDisconnected(disconnectedEvent.ClientSnapshot);
                             break;
                         case ClientErrorEvent errorEvent:
-                            HandleError(errorEvent.ClientHandle, errorEvent.Exception, errorEvent.Message);
+                            HandleError(errorEvent.ClientSnapshot, errorEvent.Exception, errorEvent.Message);
                             break;
                         default:
                             throw new InvalidOperationException(
@@ -163,7 +165,7 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
                 CancellationTokenSource cancellationTokenSource = new CancellationTokenSource();
                 _cancellationTokenSource = cancellationTokenSource;
 
-                for (int i = 0; i < _maxUnitOfOrder; i++)
+                for (int i = 0; i < _orderingLaneCount; i++)
                 {
                     int unitOfOrder = i;
                     _queues[i] = new BlockingCollection<IClientEvent>(
@@ -181,7 +183,7 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
 
                 try
                 {
-                    for (int i = 0; i < _maxUnitOfOrder; i++)
+                    for (int i = 0; i < _orderingLaneCount; i++)
                     {
                         Thread? thread = _threads[i];
                         if (thread is null)
@@ -200,7 +202,7 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
                     cancellationTokenSource.Cancel();
                     cancellationTokenSource.Dispose();
 
-                    for (int i = 0; i < _maxUnitOfOrder; i++)
+                    for (int i = 0; i < _orderingLaneCount; i++)
                     {
                         _queues[i]?.Dispose();
                         _queues[i] = null;
@@ -231,11 +233,11 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
             EnqueueForHandle(clientHandle, new ClientConnectedEvent(clientHandle), nameof(IConsumer.OnClientConnected));
         }
 
-        void IConsumer.OnError(ClientHandle clientHandle, Exception exception, string message)
+        void IConsumer.OnError(ClientSnapshot clientSnapshot, Exception exception, string message)
         {
-            EnqueueForHandle(
-                clientHandle,
-                new ClientErrorEvent(clientHandle, exception, message),
+            EnqueueForLane(
+                clientSnapshot.UnitOfOrder,
+                new ClientErrorEvent(clientSnapshot, exception, message),
                 nameof(IConsumer.OnError)
             );
         }
@@ -272,7 +274,7 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
 
             cancellationTokenSource?.Cancel();
 
-            for (int i = 0; i < _maxUnitOfOrder; i++)
+            for (int i = 0; i < _orderingLaneCount; i++)
             {
                 Thread? consumerThread = threadsToJoin[i];
                 Logger.Info($"[{_identity}] Shutting Consumer: {i} down...");

@@ -158,7 +158,7 @@ internal sealed class RecordingConsumer : IConsumer
         }
     }
 
-    public void OnError(ClientHandle clientHandle, Exception exception, string message)
+    public void OnError(ClientSnapshot clientSnapshot, Exception exception, string message)
     {
         lock (_sync)
         {

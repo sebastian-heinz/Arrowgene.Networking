@@ -24,7 +24,6 @@ public sealed class TcpServerSettings : ICloneable
         ListenSocketSettings = new SocketSettings();
         ClientSocketTimeoutSeconds = -1;
         ClientSocketSettings = new SocketSettings();
-        DebugMode = false;
     }
 
     /// <summary>
@@ -48,7 +47,6 @@ public sealed class TcpServerSettings : ICloneable
         ListenSocketSettings = new SocketSettings(settings.ListenSocketSettings);
         ClientSocketTimeoutSeconds = settings.ClientSocketTimeoutSeconds;
         ClientSocketSettings = new SocketSettings(settings.ClientSocketSettings);
-        DebugMode = settings.DebugMode;
     }
 
     /// <summary>
@@ -94,28 +92,22 @@ public sealed class TcpServerSettings : ICloneable
     public int ListenSocketRetries { get; set; }
 
     /// <summary>
-    /// Gets or sets the socket configuration applied to listener and accepted sockets.
+    /// Gets or sets the socket configuration applied to listener sockets.
     /// </summary>
     [DataMember(Order = 21)]
     public SocketSettings ListenSocketSettings { get; set; }
 
     /// <summary>
-    /// Gets or sets the idle socket timeout in seconds. Use -1 to disable it.
+    /// Gets or sets the idle socket timeout in seconds. Use -1 or 0 to disable it.
     /// </summary>
     [DataMember(Order = 40)]
     public int ClientSocketTimeoutSeconds { get; set; }
 
     /// <summary>
-    /// Gets or sets the socket configuration applied to listener and accepted sockets.
+    /// Gets or sets the socket configuration applied to client sockets.
     /// </summary>
     [DataMember(Order = 41)]
     public SocketSettings ClientSocketSettings { get; set; }
-
-    /// <summary>
-    /// Gets or sets whether debug logging is enabled.
-    /// </summary>
-    [DataMember(Order = 90)]
-    public bool DebugMode { get; set; }
 
     /// <summary>
     /// Validates the configuration values.
@@ -154,6 +146,12 @@ public sealed class TcpServerSettings : ICloneable
         {
             throw new ArgumentOutOfRangeException(nameof(ListenSocketRetries),
                 "ListenSocketRetries must be zero or greater.");
+        }
+        
+        if (ClientSocketTimeoutSeconds < -1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(ClientSocketTimeoutSeconds),
+                "ClientSocketTimeoutSeconds must be negative one or greater.");
         }
 
         if (ListenSocketSettings is null)

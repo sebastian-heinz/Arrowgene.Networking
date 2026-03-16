@@ -13,9 +13,9 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
         public ClientEventType ClientEventType => ClientEventType.Error;
 
         /// <summary>
-        /// Gets the live client handle for connection or receive events.
+        /// Gets the immutable client snapshot associated with the error.
         /// </summary>
-        public ClientHandle ClientHandle { get; }
+        public ClientSnapshot ClientSnapshot { get; }
 
         /// <summary>
         /// Gets the exception that was thrown.
@@ -27,9 +27,9 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
         /// </summary>
         public string Message { get; }
 
-        internal ClientErrorEvent(ClientHandle clientHandle, Exception exception, string message)
+        internal ClientErrorEvent(ClientSnapshot clientSnapshot, Exception exception, string message)
         {
-            ClientHandle = clientHandle;
+            ClientSnapshot = clientSnapshot;
             Exception = exception;
             Message = message;
         }

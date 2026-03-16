@@ -31,7 +31,7 @@ public sealed class ThreadedBlockingQueueConsumerTests
     public async Task BoundedLaneQueue_BackpressuresProducerUntilWorkerDrains()
     {
         using ThreadedDisconnectTestConsumer consumer = new ThreadedDisconnectTestConsumer(
-            maxUnitOfOrder: 1,
+            orderingLaneCount: 1,
             queueCapacityPerLane: 1,
             blockFirstDisconnect: true
         );
@@ -62,7 +62,7 @@ public sealed class ThreadedBlockingQueueConsumerTests
     public async Task HandlerException_DoesNotKillLaneThread()
     {
         using ThreadedDisconnectTestConsumer consumer = new ThreadedDisconnectTestConsumer(
-            maxUnitOfOrder: 1,
+            orderingLaneCount: 1,
             throwOnFirstDisconnect: true
         );
         IConsumer queuedConsumer = consumer;
@@ -98,7 +98,7 @@ public sealed class ThreadedBlockingQueueConsumerTests
     [Fact]
     public async Task LaneOrdering_PreservesPerLaneDisconnectSequence()
     {
-        using ThreadedDisconnectTestConsumer consumer = new ThreadedDisconnectTestConsumer(maxUnitOfOrder: 2);
+        using ThreadedDisconnectTestConsumer consumer = new ThreadedDisconnectTestConsumer(orderingLaneCount: 2);
         IConsumer queuedConsumer = consumer;
 
         consumer.Start();
@@ -135,7 +135,7 @@ public sealed class ThreadedBlockingQueueConsumerTests
     [Fact]
     public async Task Disconnection_PreservesAssignedLane()
     {
-        ThreadedEchoRecordingConsumer consumer = new ThreadedEchoRecordingConsumer(maxUnitOfOrder: 2);
+        ThreadedEchoRecordingConsumer consumer = new ThreadedEchoRecordingConsumer(orderingLaneCount: 2);
 
         using ThreadedConsumerTestHost host = new ThreadedConsumerTestHost(
             consumer,
@@ -172,7 +172,7 @@ public sealed class ThreadedBlockingQueueConsumerTests
     public async Task StressLoad_CanEchoAcrossMultipleLanes()
     {
         ThreadedEchoRecordingConsumer consumer = new ThreadedEchoRecordingConsumer(
-            maxUnitOfOrder: 4,
+            orderingLaneCount: 4,
             echoReceivedData: true,
             receiveDelayMs: 1
         );
@@ -231,7 +231,7 @@ public sealed class ThreadedBlockingQueueConsumerTests
     public async Task LoadWaves_CanConnectRoundTripAndDisconnectAcrossBursts()
     {
         ThreadedEchoRecordingConsumer consumer = new ThreadedEchoRecordingConsumer(
-            maxUnitOfOrder: 4,
+            orderingLaneCount: 4,
             echoReceivedData: true,
             receiveDelayMs: 1
         );

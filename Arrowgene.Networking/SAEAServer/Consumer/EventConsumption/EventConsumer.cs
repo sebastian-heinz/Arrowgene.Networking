@@ -25,7 +25,7 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.EventConsumption
         /// <summary>
         /// Occurs when a consumer error is raised.
         /// </summary>
-        public event EventHandler<ErrorEventArgs>? OnError;
+        public event EventHandler<ErrorEventArgs>? Error;
 
 
         void IConsumer.OnReceivedData(ClientHandle socket, byte[] data)
@@ -59,13 +59,13 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.EventConsumption
             }
         }
 
-        void IConsumer.OnError(ClientHandle clientHandle, Exception exception, string message)
+        void IConsumer.OnError(ClientSnapshot clientSnapshot, Exception exception, string message)
         {
-            EventHandler<ErrorEventArgs>? onError = OnError;
-            if (onError != null)
+            EventHandler<ErrorEventArgs>? error = Error;
+            if (error != null)
             {
-                ErrorEventArgs errorEventArgs = new ErrorEventArgs(clientHandle, exception, message);
-                onError(this, errorEventArgs);
+                ErrorEventArgs errorEventArgs = new ErrorEventArgs(clientSnapshot, exception, message);
+                error(this, errorEventArgs);
             }
         }
     }

@@ -149,11 +149,11 @@ internal sealed class Client : IDisposable
                 Port,
                 _isAlive,
                 ConnectedAt,
-                Volatile.Read(ref _lastReadMs),
-                Volatile.Read(ref _lastWriteMs),
-                unchecked((ulong)Interlocked.Read(ref _bytesReceived)),
-                unchecked((ulong)Interlocked.Read(ref _bytesSent)),
-                Volatile.Read(ref _pendingOperations),
+                _lastReadMs,
+                _lastWriteMs,
+                unchecked((ulong)_bytesReceived),
+                unchecked((ulong)_bytesSent),
+                _pendingOperations,
                 UnitOfOrder
             );
         }
@@ -347,7 +347,15 @@ internal sealed class Client : IDisposable
 
     internal void DecrementPendingOperations()
     {
-        Interlocked.Decrement(ref _pendingOperations);
+        int current;
+        do
+        {
+            current = Volatile.Read(ref _pendingOperations);
+            if (current <= 0)
+            {
+                return;
+            }
+        } while (Interlocked.CompareExchange(ref _pendingOperations, current - 1, current) != current);
     }
 
     internal void RecordReceive(int transferredCount)

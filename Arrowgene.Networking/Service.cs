@@ -97,11 +97,18 @@ namespace Arrowgene.Networking
         {
             if (value == 0)
             {
-                return "0.0 bytes"; // Handles zero bytes
+                return "0.0 bytes";
             }
 
-            int mag = (int)Math.Log(value, 1024);
-            decimal adjustedSize = (decimal)value / (1L << (mag * 10));
+            int mag = 0;
+            ulong divisor = 1;
+            while (mag + 1 < SizeSuffixes.Length && value >= divisor * 1024)
+            {
+                divisor *= 1024;
+                mag++;
+            }
+
+            decimal adjustedSize = (decimal)value / divisor;
 
             return $"{adjustedSize:n2} {SizeSuffixes[mag]}";
         }

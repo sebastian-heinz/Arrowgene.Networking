@@ -6,6 +6,7 @@ using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using Arrowgene.Networking.SAEAServer;
+using Arrowgene.Networking.SAEAServer.Consumer;
 
 namespace Arrowgene.Networking.Tests;
 
@@ -16,7 +17,7 @@ internal sealed class ServerTestHost : IDisposable
     private bool _disposed;
 
     internal ServerTestHost(
-        RecordingConsumer consumer,
+        IConsumer consumer,
         Action<TcpServerSettings>? configureSettings = null
     )
     {
@@ -32,7 +33,6 @@ internal sealed class ServerTestHost : IDisposable
             MaxQueuedSendBytes = 8 * 1024 * 1024,
             ListenSocketRetries = 0,
             ClientSocketTimeoutSeconds = -1,
-            DebugMode = false
         };
 
         settings.ListenSocketSettings.Backlog = 128;
@@ -45,7 +45,7 @@ internal sealed class ServerTestHost : IDisposable
         TcpServer.Start();
     }
 
-    internal RecordingConsumer Consumer { get; }
+    internal IConsumer Consumer { get; }
 
     internal TcpServer TcpServer { get; }
 

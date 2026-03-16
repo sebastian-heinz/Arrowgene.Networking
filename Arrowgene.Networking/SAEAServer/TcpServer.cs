@@ -48,8 +48,8 @@ public sealed class TcpServer : IDisposable
 
     private const string UnknownIdentity = "[Unknown Client]";
     private const string AcceptThreadName = "TcpServer";
-    private const string TimeoutThreadName = "AsyncEventServer_Timeout";
-    private const string DisconnectCleanupThreadName = "AsyncEventServer_DisconnectCleanup";
+    private const string TimeoutThreadName = "TcpServer_Timeout";
+    private const string DisconnectCleanupThreadName = "TcpServer_DisconnectCleanup";
     private const int ThreadTimeoutMs = 10000;
     private const int MinSocketTimeoutDelayMs = 1000;
     private const int MaxSocketTimeoutDelayMs = 30000;
@@ -114,6 +114,16 @@ public sealed class TcpServer : IDisposable
         }
 
         settings.Validate();
+
+        if (consumer is ISupportsOrderingLaneCount laneAwareConsumer
+            && laneAwareConsumer.OrderingLaneCount < settings.OrderingLaneCount)
+        {
+            throw new ArgumentException(
+                $"The consumer's OrderingLaneCount ({laneAwareConsumer.OrderingLaneCount}) " +
+                $"must be >= the server's OrderingLaneCount ({settings.OrderingLaneCount}).",
+                paramName: nameof(consumer)
+            );
+        }
 
         IpAddress = ipAddress;
         Port = port;
@@ -889,7 +899,7 @@ public sealed class TcpServer : IDisposable
         catch (Exception exception)
         {
             OnConsumerError(
-                clientHandle,
+                snapshot,
                 exception,
                 nameof(Disconnect),
                 "Error during consumer code."
@@ -1043,7 +1053,6 @@ public sealed class TcpServer : IDisposable
         Shutdown();
         _acceptPool.Dispose();
         _clientRegistry.Dispose();
-        _cancellation.Dispose();
         _shutdownCompleted.Dispose();
         _asyncCallbacksDrained.Dispose();
         Log(LogLevel.Info, nameof(Dispose), "TcpServer resources disposed.");
@@ -1057,24 +1066,27 @@ public sealed class TcpServer : IDisposable
         }
     }
 
-    private void OnConsumerError(
-        ClientHandle clientHandle,
-        Exception exception,
-        string function,
-        string message
-    )
+    private void OnConsumerError(ClientHandle clientHandle, Exception exception, string function, string message)
     {
-        string clientIdentity = UnknownIdentity;
-        if (clientHandle.TryGetClient(out Client client))
+        if (!clientHandle.TrySnapshot(out ClientSnapshot snapshot))
         {
-            clientIdentity = client.Identity;
+            snapshot = default;
         }
+
+        OnConsumerError(snapshot, exception, function, message);
+    }
+
+    private void OnConsumerError(ClientSnapshot clientSnapshot, Exception exception, string function, string message)
+    {
+        string clientIdentity = string.IsNullOrEmpty(clientSnapshot.Identity)
+            ? UnknownIdentity
+            : clientSnapshot.Identity;
 
         Log(LogLevel.Error, function, message, clientIdentity);
         Logger.Exception(exception);
         try
         {
-            _consumer.OnError(clientHandle, exception, message);
+            _consumer.OnError(clientSnapshot, exception, message);
         }
         catch (Exception e)
         {
@@ -1198,6 +1210,11 @@ public sealed class TcpServer : IDisposable
         _asyncCallbacksDrained.Set();
         _shutdownStarted = 0;
         _inFlightAsyncCallbacks = 0;
+        lock (_disconnectCleanupSync)
+        {
+            _disconnectCleanupQueue.Clear();
+        }
+
         _acceptThread = CreateBackgroundThread(Run, AcceptThreadName);
         _timeoutThread = CreateBackgroundThread(CheckSocketTimeout, TimeoutThreadName);
         _disconnectCleanupThread = CreateBackgroundThread(CleanupDisconnectedClients, DisconnectCleanupThreadName);

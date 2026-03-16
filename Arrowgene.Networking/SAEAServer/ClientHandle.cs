@@ -123,12 +123,6 @@ public readonly struct ClientHandle : IEquatable<ClientHandle>
     public ulong BytesSent => Client.BytesSent;
 
     /// <summary>
-    /// Gets the total bytes sent to the client.
-    /// </summary>
-    /// <remarks>This property is retained as a compatibility alias for <see cref="BytesSent"/>.</remarks>
-    public ulong BytesSend => Client.BytesSent;
-
-    /// <summary>
     /// Gets a value indicating whether the client is still connected and active.
     /// </summary>
     public bool IsAlive => Client.IsAlive;
