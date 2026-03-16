@@ -48,8 +48,8 @@ public sealed class TcpServer : IDisposable
 
     private const string UnknownIdentity = "[Unknown Client]";
     private const string AcceptThreadName = "TcpServer";
-    private const string TimeoutThreadName = "AsyncEventServer_Timeout";
-    private const string DisconnectCleanupThreadName = "AsyncEventServer_DisconnectCleanup";
+    private const string TimeoutThreadName = "TcpServer_Timeout";
+    private const string DisconnectCleanupThreadName = "TcpServer_DisconnectCleanup";
     private const int ThreadTimeoutMs = 10000;
     private const int MinSocketTimeoutDelayMs = 1000;
     private const int MaxSocketTimeoutDelayMs = 30000;
@@ -1207,6 +1207,10 @@ public sealed class TcpServer : IDisposable
         _asyncCallbacksDrained.Set();
         _shutdownStarted = 0;
         _inFlightAsyncCallbacks = 0;
+        lock (_disconnectCleanupSync)
+        {
+            _disconnectCleanupQueue.Clear();
+        }
         _acceptThread = CreateBackgroundThread(Run, AcceptThreadName);
         _timeoutThread = CreateBackgroundThread(CheckSocketTimeout, TimeoutThreadName);
         _disconnectCleanupThread = CreateBackgroundThread(CleanupDisconnectedClients, DisconnectCleanupThreadName);

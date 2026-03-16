@@ -94,7 +94,7 @@ public sealed class TcpServerSettings : ICloneable
     public int ListenSocketRetries { get; set; }
 
     /// <summary>
-    /// Gets or sets the socket configuration applied to listener and accepted sockets.
+    /// Gets or sets the socket configuration applied to listener sockets.
     /// </summary>
     [DataMember(Order = 21)]
     public SocketSettings ListenSocketSettings { get; set; }
@@ -106,7 +106,7 @@ public sealed class TcpServerSettings : ICloneable
     public int ClientSocketTimeoutSeconds { get; set; }
 
     /// <summary>
-    /// Gets or sets the socket configuration applied to listener and accepted sockets.
+    /// Gets or sets the socket configuration applied to client sockets.
     /// </summary>
     [DataMember(Order = 41)]
     public SocketSettings ClientSocketSettings { get; set; }

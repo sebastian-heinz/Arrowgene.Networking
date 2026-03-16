@@ -149,11 +149,11 @@ internal sealed class Client : IDisposable
                 Port,
                 _isAlive,
                 ConnectedAt,
-                Volatile.Read(ref _lastReadMs),
-                Volatile.Read(ref _lastWriteMs),
-                unchecked((ulong)Interlocked.Read(ref _bytesReceived)),
-                unchecked((ulong)Interlocked.Read(ref _bytesSent)),
-                Volatile.Read(ref _pendingOperations),
+                _lastReadMs,
+                _lastWriteMs,
+                unchecked((ulong)_bytesReceived),
+                unchecked((ulong)_bytesSent),
+                _pendingOperations,
                 UnitOfOrder
             );
         }
