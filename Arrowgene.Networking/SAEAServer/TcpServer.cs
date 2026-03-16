@@ -168,12 +168,15 @@ public sealed class TcpServer : IDisposable
     /// <returns>The latest published <see cref="TcpServerMetricsSnapshot"/>.</returns>
     public TcpServerMetricsSnapshot GetMetricsSnapshot()
     {
-        try
+        if (IsMetricsCaptureEnabled())
         {
-            _metricsCollector.CaptureSnapshot();
-        }
-        catch (ObjectDisposedException)
-        {
+            try
+            {
+                _metricsCollector.CaptureSnapshot();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
         }
 
         return _metricsCollector.GetSnapshot();
@@ -214,6 +217,7 @@ public sealed class TcpServer : IDisposable
             }
 
             _state = ServerState.Running;
+            EnableMetricsCapture();
             startTimeoutThread = _socketTimeout > TimeSpan.Zero;
         }
 
@@ -238,6 +242,7 @@ public sealed class TcpServer : IDisposable
                 if (_state == ServerState.Running)
                 {
                     _state = ServerState.Stopping;
+                    DisableMetricsCapture();
                 }
             }
 
@@ -276,9 +281,11 @@ public sealed class TcpServer : IDisposable
             }
 
             _state = ServerState.Stopping;
+            DisableMetricsCapture();
         }
 
         Log(LogLevel.Info, nameof(Stop), "Stopping server...");
+        _metricsCollector.Stop();
         Shutdown();
         Log(LogLevel.Info, nameof(Stop), "TcpServer stopped.");
     }
@@ -298,6 +305,7 @@ public sealed class TcpServer : IDisposable
                 if (_state == ServerState.Running)
                 {
                     _state = ServerState.Stopping;
+                    DisableMetricsCapture();
                     shouldShutdown = true;
                 }
             }
@@ -1090,11 +1098,14 @@ public sealed class TcpServer : IDisposable
                 if (_state == ServerState.Running || _state == ServerState.Created)
                 {
                     _state = ServerState.Stopping;
+                    DisableMetricsCapture();
                 }
 
                 listenSocket = _listenSocket;
                 _listenSocket = null;
             }
+
+            _metricsCollector.Stop();
 
             Service.CloseSocket(listenSocket);
             try
@@ -1111,8 +1122,6 @@ public sealed class TcpServer : IDisposable
             Service.JoinThread(_timeoutThread, ThreadTimeoutMs);
             Service.JoinThread(_disconnectCleanupThread, ThreadTimeoutMs);
             WaitForShutdownQuiescence();
-            _metricsCollector.CaptureSnapshot();
-            _metricsCollector.Stop();
 
             lock (_lifecycleLock)
             {
@@ -1337,6 +1346,21 @@ public sealed class TcpServer : IDisposable
             Name = $"{_identity}{name}",
             IsBackground = true
         };
+    }
+
+    private void EnableMetricsCapture()
+    {
+        _metricsState.EnableCapture();
+    }
+
+    private void DisableMetricsCapture()
+    {
+        _metricsState.DisableCapture();
+    }
+
+    private bool IsMetricsCaptureEnabled()
+    {
+        return _metricsState.IsCaptureEnabled();
     }
 
 }

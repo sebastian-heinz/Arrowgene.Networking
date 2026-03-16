@@ -7,6 +7,7 @@ namespace Arrowgene.Networking.SAEAServer.Metric;
 internal sealed class TcpServerMetricsState
 {
     private readonly long[] _disconnectsByReason;
+    private int _captureEnabled;
     private long _acceptedConnections;
     private long _rejectedConnections;
     private long _activeConnections;
@@ -30,44 +31,99 @@ internal sealed class TcpServerMetricsState
 
     internal int DisconnectReasonCount => _disconnectsByReason.Length;
 
+    internal void EnableCapture()
+    {
+        Volatile.Write(ref _captureEnabled, 1);
+    }
+
+    internal void DisableCapture()
+    {
+        Volatile.Write(ref _captureEnabled, 0);
+    }
+
+    internal bool IsCaptureEnabled()
+    {
+        return Volatile.Read(ref _captureEnabled) == 1;
+    }
+
     internal void IncrementAcceptedConnections()
     {
+        if (!IsCaptureEnabled())
+        {
+            return;
+        }
+
         Interlocked.Increment(ref _acceptedConnections);
         Interlocked.Increment(ref _activeConnections);
     }
 
     internal void IncrementRejectedConnections()
     {
+        if (!IsCaptureEnabled())
+        {
+            return;
+        }
+
         Interlocked.Increment(ref _rejectedConnections);
     }
 
     internal void IncrementTimedOutConnections()
     {
+        if (!IsCaptureEnabled())
+        {
+            return;
+        }
+
         Interlocked.Increment(ref _timedOutConnections);
     }
 
     internal void IncrementSendQueueOverflows()
     {
+        if (!IsCaptureEnabled())
+        {
+            return;
+        }
+
         Interlocked.Increment(ref _sendQueueOverflows);
     }
 
     internal void IncrementSocketAcceptErrors()
     {
+        if (!IsCaptureEnabled())
+        {
+            return;
+        }
+
         Interlocked.Increment(ref _socketAcceptErrors);
     }
 
     internal void IncrementSocketReceiveErrors()
     {
+        if (!IsCaptureEnabled())
+        {
+            return;
+        }
+
         Interlocked.Increment(ref _socketReceiveErrors);
     }
 
     internal void IncrementSocketSendErrors()
     {
+        if (!IsCaptureEnabled())
+        {
+            return;
+        }
+
         Interlocked.Increment(ref _socketSendErrors);
     }
 
     internal void RecordReceive(int bytesTransferred)
     {
+        if (!IsCaptureEnabled())
+        {
+            return;
+        }
+
         if (bytesTransferred <= 0)
         {
             return;
@@ -79,6 +135,11 @@ internal sealed class TcpServerMetricsState
 
     internal void RecordSend(int bytesTransferred)
     {
+        if (!IsCaptureEnabled())
+        {
+            return;
+        }
+
         if (bytesTransferred <= 0)
         {
             return;
@@ -90,6 +151,11 @@ internal sealed class TcpServerMetricsState
 
     internal void FinalizeDisconnect(DisconnectReason disconnectReason)
     {
+        if (!IsCaptureEnabled())
+        {
+            return;
+        }
+
         Interlocked.Increment(ref _disconnectedConnections);
         Interlocked.Decrement(ref _activeConnections);
         Interlocked.Increment(ref _disconnectsByReason[(int)disconnectReason]);
@@ -97,11 +163,21 @@ internal sealed class TcpServerMetricsState
 
     internal void EnterAsyncCallback()
     {
+        if (!IsCaptureEnabled())
+        {
+            return;
+        }
+
         Interlocked.Increment(ref _inFlightAsyncCallbacks);
     }
 
     internal void ExitAsyncCallback()
     {
+        if (!IsCaptureEnabled())
+        {
+            return;
+        }
+
         long current;
         do
         {
@@ -115,11 +191,21 @@ internal sealed class TcpServerMetricsState
 
     internal void EnqueueDisconnectCleanup()
     {
+        if (!IsCaptureEnabled())
+        {
+            return;
+        }
+
         Interlocked.Increment(ref _disconnectCleanupQueueDepth);
     }
 
     internal void DequeueDisconnectCleanup()
     {
+        if (!IsCaptureEnabled())
+        {
+            return;
+        }
+
         long current;
         do
         {

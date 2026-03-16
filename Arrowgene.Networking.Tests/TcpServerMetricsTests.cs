@@ -231,6 +231,59 @@ public sealed class TcpServerMetricsTests
         }
     }
 
+    /// <summary>
+    /// Verifies stop-time disconnects do not change the published metrics counters.
+    /// </summary>
+    [Fact]
+    public async Task MetricsSnapshot_StopDoesNotAdvanceCountersAfterLeavingRunningState()
+    {
+        RecordingConsumer consumer = new RecordingConsumer();
+
+        using ServerTestHost host = new ServerTestHost(
+            consumer,
+            settings =>
+            {
+                settings.MaxConnections = 1;
+                settings.OrderingLaneCount = 1;
+                settings.ConcurrentAccepts = 1;
+            }
+        );
+
+        TcpClient client = await host.ConnectClientAsync();
+
+        try
+        {
+            await consumer.WaitForConnectedCountAsync(1, ShortTimeout);
+
+            TcpServerMetricsSnapshot runningSnapshot = await WaitForSnapshotAsync(
+                host,
+                candidate => candidate.AcceptedConnections == 1 && candidate.ActiveConnections == 1,
+                MediumTimeout,
+                "Timed out waiting for the running metrics snapshot before stop."
+            );
+
+            host.TcpServer.Stop();
+            await consumer.WaitForDisconnectedCountAsync(1, MediumTimeout);
+
+            TcpServerMetricsSnapshot stoppedSnapshot = host.TcpServer.GetMetricsSnapshot();
+
+            Assert.Equal(runningSnapshot.AcceptedConnections, stoppedSnapshot.AcceptedConnections);
+            Assert.Equal(runningSnapshot.RejectedConnections, stoppedSnapshot.RejectedConnections);
+            Assert.Equal(runningSnapshot.DisconnectedConnections, stoppedSnapshot.DisconnectedConnections);
+            Assert.Equal(runningSnapshot.TimedOutConnections, stoppedSnapshot.TimedOutConnections);
+            Assert.Equal(runningSnapshot.SendQueueOverflows, stoppedSnapshot.SendQueueOverflows);
+            Assert.Equal(
+                GetDisconnectCount(runningSnapshot, DisconnectReason.Shutdown),
+                GetDisconnectCount(stoppedSnapshot, DisconnectReason.Shutdown)
+            );
+            Assert.Empty(consumer.Errors);
+        }
+        finally
+        {
+            host.DisposeClient(client);
+        }
+    }
+
     private static byte[] CreatePayload(int length, int seed)
     {
         byte[] payload = new byte[length];
