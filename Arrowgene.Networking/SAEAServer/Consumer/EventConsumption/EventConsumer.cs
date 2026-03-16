@@ -59,12 +59,12 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.EventConsumption
             }
         }
 
-        void IConsumer.OnError(ClientHandle clientHandle, Exception exception, string message)
+        void IConsumer.OnError(ClientSnapshot clientSnapshot, Exception exception, string message)
         {
             EventHandler<ErrorEventArgs>? error = Error;
             if (error != null)
             {
-                ErrorEventArgs errorEventArgs = new ErrorEventArgs(clientHandle, exception, message);
+                ErrorEventArgs errorEventArgs = new ErrorEventArgs(clientSnapshot, exception, message);
                 error(this, errorEventArgs);
             }
         }

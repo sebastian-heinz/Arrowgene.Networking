@@ -899,7 +899,7 @@ public sealed class TcpServer : IDisposable
         catch (Exception exception)
         {
             OnConsumerError(
-                clientHandle,
+                snapshot,
                 exception,
                 nameof(Disconnect),
                 "Error during consumer code."
@@ -1066,24 +1066,27 @@ public sealed class TcpServer : IDisposable
         }
     }
 
-    private void OnConsumerError(
-        ClientHandle clientHandle,
-        Exception exception,
-        string function,
-        string message
-    )
+    private void OnConsumerError(ClientHandle clientHandle, Exception exception, string function, string message)
     {
-        string clientIdentity = UnknownIdentity;
-        if (clientHandle.TryGetClient(out Client client))
+        if (!clientHandle.TrySnapshot(out ClientSnapshot snapshot))
         {
-            clientIdentity = client.Identity;
+            snapshot = default;
         }
+
+        OnConsumerError(snapshot, exception, function, message);
+    }
+
+    private void OnConsumerError(ClientSnapshot clientSnapshot, Exception exception, string function, string message)
+    {
+        string clientIdentity = string.IsNullOrEmpty(clientSnapshot.Identity)
+            ? UnknownIdentity
+            : clientSnapshot.Identity;
 
         Log(LogLevel.Error, function, message, clientIdentity);
         Logger.Exception(exception);
         try
         {
-            _consumer.OnError(clientHandle, exception, message);
+            _consumer.OnError(clientSnapshot, exception, message);
         }
         catch (Exception e)
         {
@@ -1211,6 +1214,7 @@ public sealed class TcpServer : IDisposable
         {
             _disconnectCleanupQueue.Clear();
         }
+
         _acceptThread = CreateBackgroundThread(Run, AcceptThreadName);
         _timeoutThread = CreateBackgroundThread(CheckSocketTimeout, TimeoutThreadName);
         _disconnectCleanupThread = CreateBackgroundThread(CleanupDisconnectedClients, DisconnectCleanupThreadName);

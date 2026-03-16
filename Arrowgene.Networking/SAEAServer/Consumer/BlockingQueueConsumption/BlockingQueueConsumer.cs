@@ -36,9 +36,9 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
             ClientEvents.Add(new ClientConnectedEvent(clientHandle));
         }
 
-        void IConsumer.OnError(ClientHandle clientHandle, Exception exception, string message)
+        void IConsumer.OnError(ClientSnapshot clientSnapshot, Exception exception, string message)
         {
-            ClientEvents.Add(new ClientErrorEvent(clientHandle, exception, message));
+            ClientEvents.Add(new ClientErrorEvent(clientSnapshot, exception, message));
         }
         
         public void Dispose()

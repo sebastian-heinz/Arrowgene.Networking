@@ -92,7 +92,7 @@ internal sealed class ThreadedDisconnectTestConsumer : ThreadedBlockingQueueCons
     {
     }
 
-    protected override void HandleError(ClientHandle clientHandle, Exception exception, string message)
+    protected override void HandleError(ClientSnapshot clientSnapshot, Exception exception, string message)
     {
     }
 

@@ -138,7 +138,7 @@ internal sealed class ThreadedEchoRecordingConsumer : ThreadedBlockingQueueConsu
         }
     }
 
-    protected override void HandleError(ClientHandle clientHandle, Exception exception, string message)
+    protected override void HandleError(ClientSnapshot clientSnapshot, Exception exception, string message)
     {
         lock (_sync)
         {

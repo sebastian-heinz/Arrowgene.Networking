@@ -7,17 +7,17 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.EventConsumption
     /// </summary>
     public class ErrorEventArgs : EventArgs
     {
-        internal ErrorEventArgs(ClientHandle clientHandle, Exception exception, string message)
+        internal ErrorEventArgs(ClientSnapshot clientSnapshot, Exception exception, string message)
         {
-            ClientHandle = clientHandle;
+            ClientSnapshot = clientSnapshot;
             Exception = exception;
             Message = message;
         }
 
         /// <summary>
-        /// Gets the client associated with the error.
+        /// Gets the immutable client snapshot associated with the error.
         /// </summary>
-        public ClientHandle ClientHandle { get; }
+        public ClientSnapshot ClientSnapshot { get; }
 
         /// <summary>
         /// Gets the exception that was thrown.

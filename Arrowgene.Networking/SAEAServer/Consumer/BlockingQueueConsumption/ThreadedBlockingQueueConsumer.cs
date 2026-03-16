@@ -90,10 +90,10 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
         /// <summary>
         /// Handles a consumer error on the worker thread assigned to the client's ordering lane.
         /// </summary>
-        /// <param name="clientHandle">The client associated with the error.</param>
+        /// <param name="clientSnapshot">The immutable client snapshot associated with the error.</param>
         /// <param name="exception">The exception that was thrown.</param>
         /// <param name="message">Additional context about where the error occurred.</param>
-        protected abstract void HandleError(ClientHandle clientHandle, Exception exception, string message);
+        protected abstract void HandleError(ClientSnapshot clientSnapshot, Exception exception, string message);
 
         private void Consume(int unitOfOrder, CancellationToken cancellationToken)
         {
@@ -130,7 +130,7 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
                             HandleDisconnected(disconnectedEvent.ClientSnapshot);
                             break;
                         case ClientErrorEvent errorEvent:
-                            HandleError(errorEvent.ClientHandle, errorEvent.Exception, errorEvent.Message);
+                            HandleError(errorEvent.ClientSnapshot, errorEvent.Exception, errorEvent.Message);
                             break;
                         default:
                             throw new InvalidOperationException(
@@ -233,11 +233,11 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
             EnqueueForHandle(clientHandle, new ClientConnectedEvent(clientHandle), nameof(IConsumer.OnClientConnected));
         }
 
-        void IConsumer.OnError(ClientHandle clientHandle, Exception exception, string message)
+        void IConsumer.OnError(ClientSnapshot clientSnapshot, Exception exception, string message)
         {
-            EnqueueForHandle(
-                clientHandle,
-                new ClientErrorEvent(clientHandle, exception, message),
+            EnqueueForLane(
+                clientSnapshot.UnitOfOrder,
+                new ClientErrorEvent(clientSnapshot, exception, message),
                 nameof(IConsumer.OnError)
             );
         }

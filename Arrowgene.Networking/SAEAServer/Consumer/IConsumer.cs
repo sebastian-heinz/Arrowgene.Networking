@@ -29,9 +29,9 @@ namespace Arrowgene.Networking.SAEAServer.Consumer
         /// <summary>
         /// Handles an exception raised while invoking consumer code.
         /// </summary>
-        /// <param name="clientHandle">The client associated with the error.</param>
+        /// <param name="clientSnapshot">The immutable client snapshot associated with the error.</param>
         /// <param name="exception">The exception that was thrown.</param>
         /// <param name="message">Additional context about where the error occurred.</param>
-        void OnError(ClientHandle clientHandle, Exception exception, string message);
+        void OnError(ClientSnapshot clientSnapshot, Exception exception, string message);
     }
 }

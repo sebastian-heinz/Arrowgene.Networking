@@ -398,6 +398,50 @@ public sealed class ServerIntegrationTests
     }
 
     /// <summary>
+    /// Verifies disconnect callback failures are reported with the final disconnected snapshot.
+    /// </summary>
+    [Fact]
+    public async Task DisconnectCallbackFailure_OnErrorReceivesDisconnectedSnapshot()
+    {
+        DisconnectErrorRecordingConsumer consumer = new DisconnectErrorRecordingConsumer();
+
+        using ServerTestHost host = new ServerTestHost(
+            consumer,
+            settings =>
+            {
+                settings.MaxConnections = 1;
+                settings.BufferSize = 256;
+            }
+        );
+
+        TcpClient client = await host.ConnectClientAsync();
+
+        try
+        {
+            await consumer.WaitForConnectedCountAsync(1, ShortTimeout);
+            ClientHandle connectedClient = consumer.GetConnectedClient(0);
+
+            host.DisposeClient(client);
+
+            await consumer.WaitForDisconnectCountAsync(1, MediumTimeout);
+            await consumer.WaitForErrorCountAsync(1, MediumTimeout);
+
+            ClientSnapshot disconnectSnapshot = consumer.GetDisconnectSnapshot(0);
+            ClientSnapshot errorSnapshot = consumer.GetErrorSnapshot(0);
+
+            Assert.Equal(disconnectSnapshot, errorSnapshot);
+            Assert.Equal(connectedClient.ClientId, errorSnapshot.ClientId);
+            Assert.Equal(connectedClient.Generation, errorSnapshot.Generation);
+            Assert.IsType<InvalidOperationException>(consumer.GetError(0));
+            Assert.Equal("Error during consumer code.", consumer.GetMessage(0));
+        }
+        finally
+        {
+            host.DisposeClient(client);
+        }
+    }
+
+    /// <summary>
     /// Verifies the same tcpServer instance can be stopped and started multiple times.
     /// </summary>
     [Fact]

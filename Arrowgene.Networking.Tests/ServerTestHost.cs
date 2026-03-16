@@ -6,6 +6,7 @@ using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using Arrowgene.Networking.SAEAServer;
+using Arrowgene.Networking.SAEAServer.Consumer;
 
 namespace Arrowgene.Networking.Tests;
 
@@ -16,7 +17,7 @@ internal sealed class ServerTestHost : IDisposable
     private bool _disposed;
 
     internal ServerTestHost(
-        RecordingConsumer consumer,
+        IConsumer consumer,
         Action<TcpServerSettings>? configureSettings = null
     )
     {
@@ -45,7 +46,7 @@ internal sealed class ServerTestHost : IDisposable
         TcpServer.Start();
     }
 
-    internal RecordingConsumer Consumer { get; }
+    internal IConsumer Consumer { get; }
 
     internal TcpServer TcpServer { get; }
 
