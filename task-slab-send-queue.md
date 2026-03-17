@@ -81,29 +81,23 @@ Provide deterministic memory usage with zero cross-client contention. Every clie
 One physical pinned array with dedicated per-client regions:
 
 ```text
-[recv0][send0-0][send0-1]...[send0-N][recv1][send1-0][send1-1]...[send1-N]...
+[recv0][sendRing0][recv1][sendRing1]...
 ```
 
 Each client block contains:
 
 ```text
-[receive buffer][send slab 0][send slab 1]...[send slab N-1]
+[receive buffer (BufferSize bytes)][send circular buffer (MaxQueuedSendBytes bytes)]
 ```
 
 Where:
 
 ```text
-SendSlabCount = ceil(MaxQueuedSendBytes / BufferSize)
-ClientBlockSize = BufferSize + (SendSlabCount * BufferSize)
-              = BufferSize * (1 + SendSlabCount)
-TotalPinnedBytes = MaxConnections * ClientBlockSize
+ClientBlockSize = BufferSize + MaxQueuedSendBytes
+TotalPinnedBytes = MaxConnections * (BufferSize + MaxQueuedSendBytes)
 ```
 
-So total pinned bytes are:
-
-```text
-MaxConnections * BufferSize * (1 + ceil(MaxQueuedSendBytes / BufferSize))
-```
+The per-client send region is a circular buffer of exactly `MaxQueuedSendBytes` bytes. Enqueue writes data at the write cursor and advances it; send reads from the read cursor and advances it. Both cursors wrap at `MaxQueuedSendBytes`. Occupied space is `_queuedBytes`; free space is `MaxQueuedSendBytes - _queuedBytes`. These two regions are always disjoint.
 
 ### Behavior
 
@@ -111,8 +105,9 @@ MaxConnections * BufferSize * (1 + ceil(MaxQueuedSendBytes / BufferSize))
 - all queued send storage is pinned and preallocated per client
 - no shared rented send fallback exists
 - no global send allocator exists
-- enqueue can only fail because the client's own slabs are exhausted
+- enqueue can only fail because the client's own circular buffer is full
 - overflow is always per-client, never cross-client
+- the byte check (`_queuedBytes + length <= capacity`) is the **only** capacity check — there is no secondary slab or block count limit that can diverge from it
 
 ### Why Per-Client Regions
 
@@ -123,7 +118,7 @@ The previous shared-arena `HardCapped` design required a global chunk allocator 
 - a new failure mode where client A fails because clients B through Z consumed the global pool
 - all-or-nothing acquisition logic with rollback considerations
 
-Per-client regions eliminate all of these. Each client's send slabs are managed by that client's existing `SendQueue` lock. No cross-client synchronization is needed. Overflow semantics match today exactly: a client fails only when its own queue is full.
+Per-client regions eliminate all of these. Each client's send ring is managed by that client's existing `SendQueue` lock. No cross-client synchronization is needed. Overflow semantics match today exactly: a client fails only when its own queue is full.
 
 The cost is memory. With defaults (100 connections, 8 KiB buffer, 16 MiB max queue), each client block is ~16.008 MiB, total ~1.56 GiB. This is the price of a deterministic per-client worst-case guarantee. It is explicit and expected.
 
@@ -135,78 +130,104 @@ No new synchronization. The existing lock hierarchy is unchanged:
 Client._sync -> SendQueue._sync
 ```
 
-Each client's free slab stack lives inside `SendQueue` and is protected by `SendQueue._sync`. No global lock, no cross-client contention.
+Each client's circular buffer state lives inside `SendQueue` and is protected by `SendQueue._sync`. No global lock, no cross-client contention.
 
-### `SendBlock` Shape
+### Why a Circular Buffer Instead of Fixed-Size Slabs
 
-Since all blocks come from the same per-client region in the pinned arena, the block only needs a slab index and a used length:
+The earlier slab-based design divided the per-client send region into `ceil(MaxQueuedSendBytes / BufferSize)` fixed-size slabs. This introduced a secondary capacity dimension — slab count — that could diverge from the byte limit:
+
+- When `_count == 1 && _headInFlight`, coalescing into the tail was unsafe (the kernel is DMA-reading it), so Enqueue had to pop a fresh slab even for a 1-byte write. That consumed an entire `BufferSize`-worth of slab capacity for 1 byte of data.
+- This meant slab exhaustion could reject a send while `_queuedBytes` was well below `MaxQueuedSendBytes`. The "exact per-client byte limit" claim was not actually preserved.
+- Fixing this required coalescing logic, a `_headInFlight` flag, a free-slab stack, a ring of `SendBlock` structs, and careful case analysis of when coalescing was safe.
+
+A circular buffer eliminates all of this. There is no secondary capacity dimension. The buffer is exactly `MaxQueuedSendBytes` bytes, and the occupied region (`_readPos` to `_writePos`, wrapping) is always exactly `_queuedBytes` bytes. The free region is always exactly `MaxQueuedSendBytes - _queuedBytes` bytes. The byte check is the only check.
+
+The in-flight safety concern also disappears structurally. When `TryGetNextChunk` hands a region to the kernel, that region is part of the occupied space. Enqueue writes into the free space. Occupied and free space are disjoint by construction — no flag or case analysis needed.
+
+### Circular Buffer Fields
 
 ```csharp
-private readonly struct SendBlock
-{
-    internal SendBlock(int slabIndex, int length)
-    {
-        SlabIndex = slabIndex;
-        Length = length;
-    }
-
-    internal int SlabIndex { get; }
-    internal int Length { get; }
-}
+private readonly byte[] _buffer;     // the backing pinned array
+private readonly int _baseOffset;    // start of this client's send region within the array
+private readonly int _capacity;      // = MaxQueuedSendBytes
+private int _readPos;                // next byte to send, [0, _capacity)
+private int _writePos;               // next byte to write, [0, _capacity)
+private int _queuedBytes;            // occupied bytes in the ring
+private bool _sendInProgress;
 ```
 
-The buffer reference, base offset, and slab size are known to the `SendQueue` instance. No ownership flag needed — all blocks belong to the same per-client arena region.
-
-### Allocation Rules
-
-For payload length `data.Length`:
-
-1. validate exact per-client `_queuedBytes` against `MaxQueuedSendBytes`
-2. compute `chunksNeeded = ceil(data.Length / slabSize)`
-3. check `chunksNeeded <= freeSlabs.Count`
-4. pop slabs, copy payload chunks into them, enqueue `SendBlock` per chunk
-5. update `_queuedBytes`
-
-If step 3 fails, the enqueue fails with queue overflow. This is the same per-client overflow as today.
+Empty: `_queuedBytes == 0`, `_readPos == _writePos`.
+Full: `_queuedBytes == _capacity`, `_readPos == _writePos`.
 
 ### Send Flow
 
 Enqueue:
 
 ```csharp
-int offset = 0;
-while (offset < data.Length)
+if (_queuedBytes + data.Length > _capacity)
 {
-    int slabIndex = _freeSlabs.Pop();
-    int chunkLen = Math.Min(_slabSize, data.Length - offset);
-    int slabOffset = _slabBaseOffset + slabIndex * _slabSize;
-    Buffer.BlockCopy(data, offset, _slabBuffer, slabOffset, chunkLen);
-    _pendingBlocks.Enqueue(new SendBlock(slabIndex, chunkLen));
-    offset += chunkLen;
+    // per-client overflow — exact byte semantics
+    return false;
 }
+
+// write into the circular buffer, wrapping at the boundary
+int firstPart = Math.Min(data.Length, _capacity - _writePos);
+Buffer.BlockCopy(data, 0, _buffer, _baseOffset + _writePos, firstPart);
+if (firstPart < data.Length)
+{
+    Buffer.BlockCopy(data, firstPart, _buffer, _baseOffset, data.Length - firstPart);
+}
+_writePos = (_writePos + data.Length) % _capacity;
 _queuedBytes += data.Length;
 ```
+
+No coalescing logic, no slab pops, no block ring mutation. Data goes into the buffer at the write cursor.
 
 Prepare (zero copy):
 
 ```csharp
-int bufferOffset = _slabBaseOffset + _currentBlock.SlabIndex * _slabSize + _currentSlabOffset;
-int remaining = _currentBlock.Length - _currentSlabOffset;
-sendEventArgs.SetBuffer(_slabBuffer, bufferOffset, remaining);
+if (_queuedBytes == 0)
+{
+    _sendInProgress = false;
+    chunkSize = 0;
+    return false;
+}
+
+// send the contiguous region from _readPos — up to the buffer boundary or _queuedBytes
+chunkSize = Math.Min(_queuedBytes, _capacity - _readPos);
+sendEventArgs.SetBuffer(_buffer, _baseOffset + _readPos, chunkSize);
+return true;
 ```
+
+The chunk is the longest contiguous run from the read cursor. If data wraps, this send covers up to the end of the buffer; the next send picks up from offset 0.
 
 Complete:
 
 ```csharp
-_currentSlabOffset += bytesTransferred;
+_readPos = (_readPos + bytesTransferred) % _capacity;
 _queuedBytes -= bytesTransferred;
 
-if (_currentSlabOffset >= _currentBlock.Length)
+if (_queuedBytes > 0)
 {
-    _freeSlabs.Push(_currentBlock.SlabIndex);
-    // advance to next block or mark idle
+    return true;
 }
+
+_sendInProgress = false;
+return false;
 ```
+
+No slab returns, no block ring advancement. The read cursor moves forward, freeing space for future enqueues.
+
+### In-Flight Safety — Why No Flag Is Needed
+
+In the slab design, `_headInFlight` existed to prevent Enqueue from coalescing into a slab the kernel was reading. The circular buffer eliminates this concern structurally:
+
+- The kernel reads from the **occupied** region (starting at `_readPos`, length up to `_queuedBytes`).
+- Enqueue writes into the **free** region (starting at `_writePos`, length up to `_capacity - _queuedBytes`).
+- These two regions are disjoint as long as `_queuedBytes <= _capacity`, which is enforced by the overflow check at the top of Enqueue.
+- No writes can ever land in the in-flight region, regardless of timing.
+
+The `_headInFlight` flag, the coalescing case analysis (`_count == 1 && _headInFlight`), and the `SendBlock` ring are all eliminated.
 
 ## Mode 2: `Shared`
 
@@ -257,6 +278,21 @@ _queuedBytes += data.Length;
 Prepare (note: uses stored `Length`, not `rented.Length`, because `ArrayPool` may return a larger array):
 
 ```csharp
+if (_currentBuffer is null)
+{
+    if (_pendingMessages.Count == 0)
+    {
+        _sendInProgress = false;
+        chunkSize = 0;
+        return false;
+    }
+
+    var (buffer, length) = _pendingMessages.Dequeue();
+    _currentBuffer = buffer;
+    _currentLength = length;
+    _currentOffset = 0;
+}
+
 int remaining = _currentLength - _currentOffset;
 chunkSize = remaining <= maxChunkSize ? remaining : maxChunkSize;
 sendEventArgs.SetBuffer(_currentBuffer, _currentOffset, chunkSize);
@@ -323,13 +359,13 @@ Default:
 SendStorageMode = SendStorageMode.Shared;
 ```
 
-`SendPoolChunkSize` is not needed as a separate setting. In `HardCapped`, slabs are always `BufferSize`. In `Shared`, there is no chunking — messages are stored as single rented buffers.
+`SendPoolChunkSize` is not needed as a separate setting. In `HardCapped`, the send region is a single circular buffer of `MaxQueuedSendBytes` bytes — there are no discrete slabs. In `Shared`, there is no chunking — messages are stored as single rented buffers.
 
 Validation:
 
 - `BufferSize > 0` (already exists)
 - `MaxQueuedSendBytes > 0` (already exists)
-- `MaxQueuedSendBytes >= BufferSize` (ensures at least one slab per client in `HardCapped`)
+- `MaxQueuedSendBytes > 0` when `SendStorageMode == HardCapped` (the circular buffer must have nonzero capacity)
 - all size calculations must use `checked` arithmetic
 
 ## Memory Formulas
@@ -337,15 +373,13 @@ Validation:
 ### `HardCapped`
 
 ```text
-SendSlabCount = ceil(MaxQueuedSendBytes / BufferSize)
-TotalPinnedBytes = MaxConnections * BufferSize * (1 + SendSlabCount)
+TotalPinnedBytes = MaxConnections * (BufferSize + MaxQueuedSendBytes)
 ```
 
 With defaults (100 connections, 8192 buffer, 16 MiB max queue):
 
 ```text
-SendSlabCount = ceil(16777216 / 8192) = 2048
-TotalPinnedBytes = 100 * 8192 * 2049 = 1,678,540,800 bytes (~1.56 GiB)
+TotalPinnedBytes = 100 * (8192 + 16777216) = 1,678,540,800 bytes (~1.56 GiB)
 ```
 
 ### `Shared`
@@ -374,7 +408,7 @@ Add validation: `MaxQueuedSendBytes >= BufferSize`.
 
 Mode-dependent:
 
-- `HardCapped`: allocate one pinned array with per-client blocks containing receive buffer + send slabs. `CreateReceiveEventArgs` binds to the receive slice within each client block. `CreateSendEventArgs` creates the SAEA without binding a buffer.
+- `HardCapped`: allocate one pinned array with per-client blocks containing receive buffer + send circular buffer. `CreateReceiveEventArgs` binds to the receive slice within each client block. `CreateSendEventArgs` creates the SAEA without binding a buffer.
 - `Shared`: allocate one pinned array with receive buffers only (`MaxConnections * BufferSize`). `CreateReceiveEventArgs` binds to receive slices. `CreateSendEventArgs` creates the SAEA without binding a buffer.
 
 In both modes, the old `× 2` layout (one receive + one send per client) is removed.
@@ -384,19 +418,18 @@ In both modes, the old `× 2` layout (one receive + one send per client) is remo
 Fields:
 
 ```csharp
-private readonly byte[] _slabBuffer;
-private readonly int _slabBaseOffset;
-private readonly int _slabSize;
-private readonly int _slabCount;
-private readonly Stack<int> _freeSlabs;
-private readonly Queue<SendBlock> _pendingBlocks;
-private SendBlock _currentBlock;
-private int _currentSlabOffset;
-private int _queuedBytes;
+private readonly byte[] _buffer;     // the backing pinned array (shared with receive buffers)
+private readonly int _baseOffset;    // start of this client's send region
+private readonly int _capacity;      // = MaxQueuedSendBytes
+private int _readPos;                // next byte to send, [0, _capacity)
+private int _writePos;               // next byte to write, [0, _capacity)
+private int _queuedBytes;            // occupied bytes in the ring
 private bool _sendInProgress;
 ```
 
 Methods: `Enqueue`, `TryGetNextChunk`, `CompleteSend`, `Reset`, `GetQueuedBytes`.
+
+`Reset` must reset `_readPos`, `_writePos`, `_queuedBytes`, and `_sendInProgress`. No slab returns needed — the circular buffer region is fixed and reusable.
 
 ### `SharedSendQueue` (new, `Shared` only)
 
@@ -418,9 +451,9 @@ Methods: same contract as `ArenaBackedSendQueue`.
 
 Constructor takes the appropriate send queue implementation based on `SendStorageMode`.
 
-`TryPrepareSendChunk` removes the `maxChunkSize` parameter in `HardCapped` (slabs are always `BufferSize`). In `Shared`, `maxChunkSize` remains because rented buffers can be larger than the socket buffer.
+`TryPrepareSendChunk` in `HardCapped` does not need a `maxChunkSize` parameter — the chunk is naturally bounded by the contiguous region from `_readPos` to the buffer boundary. In `Shared`, `maxChunkSize` remains because rented buffers can be larger than the socket buffer.
 
-Alternatively, keep `maxChunkSize` in both for uniformity — `ArenaBackedSendQueue.TryGetNextChunk` simply ignores it since slabs are already capped at `BufferSize`.
+Alternatively, keep `maxChunkSize` in both for uniformity — `ArenaBackedSendQueue.TryGetNextChunk` can cap the chunk at `maxChunkSize` to limit individual send sizes if desired.
 
 `TryPrepareSendChunk` calls the send queue to get buffer, offset, and size, then calls `SendEventArgs.SetBuffer(buffer, offset, size)`. No intermediate copy.
 
@@ -454,16 +487,23 @@ This phasing reduces risk and gives a working improvement before the arena work 
 
 Add tests for:
 
-1. `HardCapped` computes pinned memory as `MaxConnections * BufferSize * (1 + SendSlabCount)`
+1. `HardCapped` computes pinned memory as `MaxConnections * (BufferSize + MaxQueuedSendBytes)`
 2. `Shared` computes pinned memory as `MaxConnections * BufferSize`
-3. `HardCapped` enqueue pops slabs from the per-client free stack and release returns them
+3. `HardCapped` enqueue writes into circular buffer and advances write cursor
 4. `Shared` enqueue rents from `ArrayPool` and complete/reset returns them
-5. per-client `MaxQueuedSendBytes` overflow is exact in both modes
-6. `HardCapped` slab exhaustion matches per-client overflow (no cross-client failure)
-7. partial sends advance offsets correctly in both modes
-8. `Reset` returns all owned storage in both modes
+5. per-client `MaxQueuedSendBytes` overflow is exact in both modes — byte check is the only rejection path
+6. `HardCapped` overflow is per-client only (no cross-client failure)
+7. partial sends advance read cursor correctly in both modes
+8. `Reset` resets cursors and `_queuedBytes` in `HardCapped`, returns rented buffers in `Shared`
 9. caller mutation after `Send` does not affect queued data in both modes
 10. `Shared` mode uses stored `Length`, not `rented.Length`, when preparing send chunks
+11. `HardCapped` many 1-byte sends up to `MaxQueuedSendBytes` all succeed (no secondary slab limit to exhaust)
+12. `HardCapped` enqueue wraps correctly when the write cursor crosses the buffer boundary (data split across end and start)
+13. `HardCapped` `TryGetNextChunk` returns contiguous region up to buffer boundary; next call picks up from offset 0
+14. `HardCapped` a send that exactly fills the buffer leaves `_queuedBytes == _capacity` and rejects the next enqueue
+15. `HardCapped` after CompleteSend frees space, enqueue into the freed region succeeds
+16. `HardCapped` enqueue while a send is in flight writes into the free region without corrupting the in-flight region
+17. `HardCapped` interleaved enqueue and send cycles maintain correct `_readPos` / `_writePos` / `_queuedBytes` invariants
 
 ### Integration Tests
 
