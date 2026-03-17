@@ -89,7 +89,7 @@ public sealed class ClientSnapshotTests
             ClientSnapshot queuedSnapshot = client.Snapshot();
             Assert.Equal(payload.Length, queuedSnapshot.SendQueuedBytes);
 
-            bool prepared = client.TryPrepareSendChunk(clientHandle.Generation, payload.Length, out int chunkSize);
+            bool prepared = client.TryPrepareSendChunk(clientHandle.Generation, out int chunkSize);
             Assert.True(prepared);
             Assert.Equal(payload.Length, chunkSize);
 
@@ -115,9 +115,9 @@ public sealed class ClientSnapshotTests
         TcpServer tcpServer = (TcpServer)RuntimeHelpers.GetUninitializedObject(typeof(TcpServer));
         SocketAsyncEventArgs receiveEventArgs = new SocketAsyncEventArgs();
         SocketAsyncEventArgs sendEventArgs = new SocketAsyncEventArgs();
-        sendEventArgs.SetBuffer(new byte[256], 0, 256);
+        SharedSendQueue sendQueue = new SharedSendQueue(1024);
 
-        Client client = new Client(tcpServer, 1, receiveEventArgs, sendEventArgs, 1024);
+        Client client = new Client(tcpServer, 1, receiveEventArgs, sendEventArgs, sendQueue);
 
         listener = new TcpListener(IPAddress.Loopback, PortAllocator.GetFreeTcpPort());
         listener.Start();

@@ -145,7 +145,12 @@ public sealed class TcpServer : IDisposable
         _disconnectCleanupQueue = new Queue<(ClientHandle ClientHandle, DisconnectReason DisconnectReason)>(
             _settings.MaxConnections
         );
-        _bufferSlab = new BufferSlab(_settings.MaxConnections, _bufferSize);
+        _bufferSlab = new BufferSlab(
+            _settings.MaxConnections,
+            _bufferSize,
+            _settings.MaxQueuedSendBytes,
+            _settings.SendStorageMode
+        );
         _clientRegistry = new ClientRegistry(
             _settings.MaxConnections,
             _settings.OrderingLaneCount,
@@ -796,7 +801,7 @@ public sealed class TcpServer : IDisposable
 
         while (true)
         {
-            if (!client.TryPrepareSendChunk(clientHandle.Generation, _bufferSize, out int chunkSize))
+            if (!client.TryPrepareSendChunk(clientHandle.Generation, out _))
             {
                 return;
             }
@@ -961,7 +966,7 @@ public sealed class TcpServer : IDisposable
             clientId,
             _bufferSlab.CreateReceiveEventArgs(clientId, ReceiveCompleted),
             _bufferSlab.CreateSendEventArgs(clientId, SendCompleted),
-            _settings.MaxQueuedSendBytes
+            _bufferSlab.CreateSendQueue(clientId, _settings.MaxQueuedSendBytes)
         );
     }
 

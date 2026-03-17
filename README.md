@@ -2,7 +2,7 @@
 
 A pooled TCP server library for .NET built on `SocketAsyncEventArgs` (SAEA).
 
-Client slots are pre-allocated and recycled, send/receive buffers come from a shared pinned slab, payloads are copied for isolation, and connected clients are assigned to the least-loaded ordering lane.
+Client slots are pre-allocated and recycled, receive buffers come from a pinned slab, send storage is mode-dependent (`Shared` rents from `ArrayPool`, `HardCapped` uses a per-client pinned circular buffer), payloads are copied for isolation, and connected clients are assigned to the least-loaded ordering lane.
 
 [![NuGet](https://img.shields.io/nuget/v/Arrowgene.Networking.svg)](https://www.nuget.org/packages/Arrowgene.Networking)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.md)
@@ -47,6 +47,7 @@ TcpServerSettings settings = new TcpServerSettings
     OrderingLaneCount = 4,
     ConcurrentAccepts = 8,
     MaxQueuedSendBytes = 16 * 1024 * 1024,
+    SendStorageMode = SendStorageMode.Shared,
     ClientSocketTimeoutSeconds = -1
 };
 
@@ -232,11 +233,12 @@ server.Start();
 | Option | Default | Purpose | When to change |
 |---|---|---|---|
 | `Identity` | `""` | Label prefixed to all log lines and thread names for this server instance. | Set when running multiple `TcpServer` instances in the same process so logs and thread dumps are distinguishable. |
-| `MaxConnections` | `100` | Upper bound on simultaneous connected clients. Determines the size of the client pool and the pinned buffer slab (`MaxConnections * BufferSize * 2` bytes). | Raise for high-concurrency services (game servers, chat). Lower to cap memory on resource-constrained hosts. Connections beyond this limit are refused at accept time. |
-| `BufferSize` | `8192` | Size in bytes of the pinned receive and send buffer allocated per client per direction. Receive completions copy at most this many bytes per callback; outbound sends are chunked to this size. | Increase when your protocol frames are large (file transfer, media streaming) to reduce per-message callback overhead. Decrease for many small-message workloads (chat, telemetry) to reduce pinned memory. |
+| `MaxConnections` | `100` | Upper bound on simultaneous connected clients. Determines the client pool size and pinned buffer allocation. `Shared`: `MaxConnections * BufferSize`. `HardCapped`: `MaxConnections * (BufferSize + MaxQueuedSendBytes)`. | Raise for high-concurrency services (game servers, chat). Lower to cap memory on resource-constrained hosts. Connections beyond this limit are refused at accept time. |
+| `BufferSize` | `8192` | Size in bytes of the pinned receive buffer per client. | Increase when your protocol frames are large (file transfer, media streaming) to reduce per-message callback overhead. Decrease for many small-message workloads (chat, telemetry) to reduce pinned memory. |
 | `OrderingLaneCount` | `4` | Number of ordering lanes. Each connected client is assigned to the least-loaded lane. `ThreadedBlockingQueueConsumer` creates one worker thread per lane and guarantees FIFO within a lane. | Match to the number of consumer worker threads. More lanes = more parallelism but less ordering guarantee across clients. Fewer lanes = stronger cross-client ordering but higher head-of-line blocking risk. |
 | `ConcurrentAccepts` | `10` | Maximum simultaneous pending `AcceptAsync` operations. Controls how many accept event args are pooled and handed to the OS at once. | Raise under burst-connect workloads (load tests, game lobby joins) where many clients connect within milliseconds. Lower if accept throughput is not a bottleneck to save a few allocations. |
-| `MaxQueuedSendBytes` | `16 MB` | Per-client outbound queue byte limit. When a client's queued send data exceeds this, the client is disconnected. | Raise for clients that receive large bursts (bulk data push, replay streaming). Lower to shed slow consumers faster and protect server memory. |
+| `MaxQueuedSendBytes` | `16 MB` | Per-client outbound queue byte limit. When a client's queued send data exceeds this, the client is disconnected. In `HardCapped` mode this is also the size of the per-client pinned circular send buffer. | Raise for clients that receive large bursts (bulk data push, replay streaming). Lower to shed slow consumers faster and protect server memory. |
+| `SendStorageMode` | `Shared` | How queued outbound payloads are stored. `Shared`: rents from `ArrayPool<byte>.Shared` at runtime, pinned memory is receive-only. `HardCapped`: per-client pinned circular send buffer, zero runtime allocations, deterministic memory. | Use `Shared` (default) for most workloads. Use `HardCapped` when you need deterministic memory and no runtime allocation on the send path. |
 | `ListenSocketRetries` | `5` | Number of times the server retries `Bind`+`Listen` (with a 1-second delay) before giving up on startup. | Raise in environments where port release is slow (container restarts, CI). Set to `0` for fail-fast startup. |
 | `ClientSocketTimeoutSeconds` | `-1` | Idle timeout in seconds. Clients with no send or receive activity for this long are disconnected. `-1` or `0` disables the timeout. | Enable (`30`-`300`) for public-facing servers to reclaim slots from idle or half-open connections. Leave disabled for trusted internal services or long-lived connections. |
 | `ListenSocketSettings` | *(default `SocketSettings`)* | `SocketSettings` instance applied to the listener socket before `Bind`. | Configure `Backlog`, `ExclusiveAddressUse`, `DualMode`, or raw socket options for the listening socket. |

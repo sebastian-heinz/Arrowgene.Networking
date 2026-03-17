@@ -14,7 +14,7 @@ dotnet test --logger "console;verbosity=detailed"
 
 ## Design Rules
 
-- Always copy user buffers on send and receive. Zero-copy is not allowed.
+- Always copy caller buffers on send (into the queue) and on receive (into the consumer event). The queue-to-kernel send path is zero-copy (the queue binds its storage directly to the SAEA).
 - Assign each client to the least-loaded ordering lane on connect.
 - `Client` is a pooled, reusable internal object holding all connection state.
 - `ClientHandle` is a lightweight public struct (client reference + generation) that exposes send, disconnect, and read-only state. Generation tracking prevents use-after-recycle.

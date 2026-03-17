@@ -12,7 +12,7 @@ namespace Arrowgene.Networking.SAEAServer;
 internal sealed class Client : IDisposable
 {
     private readonly object _sync;
-    private readonly SendQueue _sendQueue;
+    private readonly ISendQueue _sendQueue;
     private Socket? _socket;
     private bool _isAlive;
     private bool _isInPool;
@@ -31,13 +31,18 @@ internal sealed class Client : IDisposable
         ushort clientId,
         SocketAsyncEventArgs receiveEventArgs,
         SocketAsyncEventArgs sendEventArgs,
-        int maxQueuedSendBytes
+        ISendQueue sendQueue
     )
     {
+        if (sendQueue is null)
+        {
+            throw new ArgumentNullException(nameof(sendQueue));
+        }
+
         _server = server;
         ClientId = clientId;
         _sync = new object();
-        _sendQueue = new SendQueue(maxQueuedSendBytes);
+        _sendQueue = sendQueue;
         ReceiveEventArgs = receiveEventArgs;
         SendEventArgs = sendEventArgs;
         ReceiveEventArgs.UserToken = null;
@@ -130,7 +135,7 @@ internal sealed class Client : IDisposable
 
     internal int GetSendQueuedBytes()
     {
-        return _sendQueue.GetQueuedBytes();
+        return _sendQueue.QueuedBytes;
     }
 
     /// <summary>
@@ -157,7 +162,7 @@ internal sealed class Client : IDisposable
         ClientSnapshot snapshot;
         lock (_sync)
         {
-            int sendQueuedBytes = _sendQueue.GetQueuedBytes();
+            int sendQueuedBytes = _sendQueue.QueuedBytes;
             snapshot = new ClientSnapshot(
                 ClientId,
                 _generation,
@@ -284,7 +289,7 @@ internal sealed class Client : IDisposable
         }
     }
 
-    internal bool TryPrepareSendChunk(uint generation, int maxChunkSize, out int chunkSize)
+    internal bool TryPrepareSendChunk(uint generation, out int chunkSize)
     {
         lock (_sync)
         {
@@ -294,20 +299,7 @@ internal sealed class Client : IDisposable
                 return false;
             }
 
-            byte[]? sendBuffer = SendEventArgs.Buffer;
-            if (sendBuffer is null)
-            {
-                chunkSize = 0;
-                return false;
-            }
-
-            bool send = _sendQueue.CopyNextChunk(sendBuffer, SendEventArgs.Offset, maxChunkSize, out chunkSize);
-            if (send)
-            {
-                SendEventArgs.SetBuffer(SendEventArgs.Offset, chunkSize);
-            }
-
-            return send;
+            return _sendQueue.TryGetNextChunk(SendEventArgs, out chunkSize);
         }
     }
 
@@ -323,7 +315,10 @@ internal sealed class Client : IDisposable
                 return false;
             }
 
-            return _sendQueue.Enqueue(data, out startSend, out queueOverflow);
+            EnqueueResult result = _sendQueue.Enqueue(data, 0, data.Length);
+            startSend = result == EnqueueResult.SendNow;
+            queueOverflow = result == EnqueueResult.Overflow;
+            return result != EnqueueResult.Overflow;
         }
     }
 
