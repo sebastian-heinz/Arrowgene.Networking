@@ -23,6 +23,9 @@ internal sealed class TcpServerMetricsCollector : IDisposable
     private DateTime _previousTimestampUtc;
     private long _previousBytesReceived;
     private long _previousBytesSent;
+    private long _previousReceiveOperations;
+    private long _previousSendOperations;
+    private long _previousAcceptedConnections;
     private long _snapshotSequenceNumber;
     private bool _disposed;
 
@@ -62,10 +65,13 @@ internal sealed class TcpServerMetricsCollector : IDisposable
         _orderingLaneCount = orderingLaneCount;
         _serverStartedAtUtc = DateTime.MinValue;
         _snapshotSequenceNumber = 0;
-        _latestSnapshot = CreateSnapshot(DateTime.UtcNow, 0.0d, 0.0d);
+        _latestSnapshot = CreateSnapshot(DateTime.UtcNow, 0.0d, 0.0d, 0.0d, 0.0d, 0.0d);
         _previousTimestampUtc = _latestSnapshot.TimestampUtc;
         _previousBytesReceived = _latestSnapshot.BytesReceived;
         _previousBytesSent = _latestSnapshot.BytesSent;
+        _previousReceiveOperations = _latestSnapshot.ReceiveOperations;
+        _previousSendOperations = _latestSnapshot.SendOperations;
+        _previousAcceptedConnections = _latestSnapshot.AcceptedConnections;
     }
 
     internal void Start(string threadName)
@@ -87,7 +93,10 @@ internal sealed class TcpServerMetricsCollector : IDisposable
             _previousTimestampUtc = now;
             _previousBytesReceived = _metricsState.GetBytesReceived();
             _previousBytesSent = _metricsState.GetBytesSent();
-            PublishSnapshotNoLock(now, 0.0d, 0.0d);
+            _previousReceiveOperations = _metricsState.GetReceiveOperations();
+            _previousSendOperations = _metricsState.GetSendOperations();
+            _previousAcceptedConnections = _metricsState.GetAcceptedConnections();
+            PublishSnapshotNoLock(now, 0.0d, 0.0d, 0.0d, 0.0d, 0.0d);
 
             CancellationTokenSource cancellationTokenSource = new CancellationTokenSource();
             metricsThread = new Thread(() => Run(cancellationTokenSource.Token))
@@ -130,21 +139,40 @@ internal sealed class TcpServerMetricsCollector : IDisposable
             DateTime now = DateTime.UtcNow;
             long bytesReceived = _metricsState.GetBytesReceived();
             long bytesSent = _metricsState.GetBytesSent();
+            long receiveOperations = _metricsState.GetReceiveOperations();
+            long sendOperations = _metricsState.GetSendOperations();
+            long acceptedConnections = _metricsState.GetAcceptedConnections();
             double elapsedSeconds = (now - _previousTimestampUtc).TotalSeconds;
 
             double receiveBytesPerSecond = 0.0d;
             double sendBytesPerSecond = 0.0d;
+            double receiveOpsPerSecond = 0.0d;
+            double sendOpsPerSecond = 0.0d;
+            double acceptsPerSecond = 0.0d;
 
             if (elapsedSeconds > 0.0d)
             {
                 receiveBytesPerSecond = (bytesReceived - _previousBytesReceived) / elapsedSeconds;
                 sendBytesPerSecond = (bytesSent - _previousBytesSent) / elapsedSeconds;
+                receiveOpsPerSecond = (receiveOperations - _previousReceiveOperations) / elapsedSeconds;
+                sendOpsPerSecond = (sendOperations - _previousSendOperations) / elapsedSeconds;
+                acceptsPerSecond = (acceptedConnections - _previousAcceptedConnections) / elapsedSeconds;
             }
 
-            PublishSnapshotNoLock(now, receiveBytesPerSecond, sendBytesPerSecond);
+            PublishSnapshotNoLock(
+                now,
+                receiveBytesPerSecond,
+                sendBytesPerSecond,
+                receiveOpsPerSecond,
+                sendOpsPerSecond,
+                acceptsPerSecond
+            );
             _previousTimestampUtc = now;
             _previousBytesReceived = bytesReceived;
             _previousBytesSent = bytesSent;
+            _previousReceiveOperations = receiveOperations;
+            _previousSendOperations = sendOperations;
+            _previousAcceptedConnections = acceptedConnections;
         }
     }
 
@@ -194,7 +222,10 @@ internal sealed class TcpServerMetricsCollector : IDisposable
     private TcpServerMetricsSnapshot CreateSnapshot(
         DateTime timestampUtc,
         double receiveBytesPerSecond,
-        double sendBytesPerSecond)
+        double sendBytesPerSecond,
+        double receiveOpsPerSecond,
+        double sendOpsPerSecond,
+        double acceptsPerSecond)
     {
         ConsumerMetricsSnapshot? consumerMetrics = _consumerMetrics?.CreateSnapshot();
         long snapshotSequenceNumber = _serverStartedAtUtc == DateTime.MinValue
@@ -236,6 +267,9 @@ internal sealed class TcpServerMetricsCollector : IDisposable
             _metricsState.GetBytesSent(),
             receiveBytesPerSecond,
             sendBytesPerSecond,
+            receiveOpsPerSecond,
+            sendOpsPerSecond,
+            acceptsPerSecond,
             _metricsState.GetInFlightAsyncCallbacks(),
             _metricsState.GetDisconnectCleanupQueueDepth(),
             _acceptPool.CurrentCount,
@@ -254,9 +288,19 @@ internal sealed class TcpServerMetricsCollector : IDisposable
     private void PublishSnapshotNoLock(
         DateTime timestampUtc,
         double receiveBytesPerSecond,
-        double sendBytesPerSecond)
+        double sendBytesPerSecond,
+        double receiveOpsPerSecond,
+        double sendOpsPerSecond,
+        double acceptsPerSecond)
     {
-        TcpServerMetricsSnapshot snapshot = CreateSnapshot(timestampUtc, receiveBytesPerSecond, sendBytesPerSecond);
+        TcpServerMetricsSnapshot snapshot = CreateSnapshot(
+            timestampUtc,
+            receiveBytesPerSecond,
+            sendBytesPerSecond,
+            receiveOpsPerSecond,
+            sendOpsPerSecond,
+            acceptsPerSecond
+        );
 
         lock (_snapshotSync)
         {

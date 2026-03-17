@@ -1,6 +1,8 @@
 # Metrics Reference
 
-`TcpServer.GetMetricsSnapshot()` returns a `TcpServerMetricsSnapshot` with the current server metrics.
+`TcpServer.GetMetricsSnapshot()` captures and returns a fresh `TcpServerMetricsSnapshot`.
+
+`TcpServer.GetPublishedMetricsSnapshot()` returns the latest published `TcpServerMetricsSnapshot` without forcing a new capture.
 
 ## Snapshot Fields
 
@@ -26,6 +28,9 @@
 | `BytesSent` | Counter | Total number of bytes sent to clients. |
 | `ReceiveBytesPerSecond` | Rate | Derived inbound throughput for the most recent sampling interval, in bytes per second. |
 | `SendBytesPerSecond` | Rate | Derived outbound throughput for the most recent sampling interval, in bytes per second. |
+| `ReceiveOpsPerSecond` | Rate | Derived inbound receive-completion rate for the most recent sampling interval, in operations per second. |
+| `SendOpsPerSecond` | Rate | Derived outbound send-completion rate for the most recent sampling interval, in operations per second. |
+| `AcceptsPerSecond` | Rate | Derived connection accept rate for the most recent sampling interval, in accepts per second. |
 | `AcceptPoolAvailable` | Gauge | Current number of available pooled accept event args. |
 | `AvailableClientSlots` | Gauge | Current number of available pooled client slots. |
 | `InFlightAsyncCallbacks` | Gauge | Current number of async socket callbacks still executing. |

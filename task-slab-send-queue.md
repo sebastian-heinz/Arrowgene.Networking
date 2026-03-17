@@ -1,245 +1,563 @@
-# Send Queue Rewrite Evaluation
+# Shared Pinned Buffer Arena Design
 
 ## Summary
 
-The optimization target is real: the current send path copies each payload twice and allocates one `byte[]` per enqueue. That is worth fixing.
+The current send path copies each outbound payload twice:
 
-The original per-client slab proposal is not a good fit as written. It removes the second copy, but it does so by reserving worst-case pinned send capacity for every pooled client slot up front. With the current defaults, that changes the pinned slab from about `1.56 MiB` to about `1.56 GiB`. It also weakens the meaning of `MaxQueuedSendBytes` because capacity becomes rounded to slab count instead of tracked by exact queued bytes.
+1. caller buffer -> owned queued `byte[]`
+2. queued `byte[]` -> `SocketAsyncEventArgs` send buffer
 
-The better direction is a pooled single-copy queue:
+The design should move to one physical pinned array that is shared across receive and send storage.
 
-1. Copy the caller's buffer once on enqueue into an internal rented buffer.
-2. Point `SocketAsyncEventArgs` directly at that queued buffer during send.
-3. Return the buffer to the pool when the message is fully sent or the client is reset.
+That pinned array is split into two logical regions:
 
-This keeps the existing ownership rule, removes the hot-path re-copy, avoids per-enqueue GC allocations, and preserves lazy memory growth.
+- a fixed receive region sized for all clients
+- a shared send region used as a chunked global send pool
+
+This keeps receive buffers permanently available, removes the send-path re-copy, and allows deterministic upfront memory reservation.
+
+Two modes are proposed:
+
+- `PreallocatedOnly`
+  Hard-cap mode. The send region is large enough for every client to hit `MaxQueuedSendBytes` at the same time.
+
+- `PreallocatedThenShared`
+  Hybrid mode. The send region is smaller by default and falls back to `ArrayPool<byte>.Shared` when exhausted.
 
 ## Current State
 
-Today the send path works like this:
+Today the library allocates one pinned `BufferSlab` sized as:
 
-1. `SendQueue.Enqueue` allocates a new `byte[]` and copies the caller payload into it.
-2. `Client.TryPrepareSendChunk` calls `SendQueue.CopyNextChunk`.
-3. `CopyNextChunk` copies from the queued message into the pinned `SendEventArgs` buffer.
-4. `TcpServer.StartSend` calls `socket.SendAsync`.
-5. `SendQueue.CompleteSend` advances the offset and drops the message when finished.
+```text
+MaxConnections * BufferSize * 2
+```
+
+Per client that is:
+
+```text
+[receive buffer][send buffer]
+```
+
+The current send flow is:
+
+1. `SendQueue.Enqueue` allocates a new `byte[]` and copies the caller payload into it
+2. `Client.TryPrepareSendChunk` calls `SendQueue.CopyNextChunk`
+3. `CopyNextChunk` copies from the queued message into the pinned `SendEventArgs` buffer
+4. `TcpServer.StartSend` calls `socket.SendAsync`
+5. `SendQueue.CompleteSend` advances the offset and drops the message when finished
 
 That means:
 
-- One allocation per enqueue.
-- Two copies per payload.
-- Exact `MaxQueuedSendBytes` accounting.
-- Very small pinned baseline: `maxConnections * bufferSize * 2`.
+- one allocation per enqueue
+- two copies per payload
+- exact `MaxQueuedSendBytes` accounting
+- a small fixed pinned baseline
 
-## What Is Good In The Original Proposal
+## Goals
 
-- It targets the right bottleneck: the second copy from queued heap buffer into the send SAEA buffer.
-- It keeps copy-on-enqueue ownership, so callers still cannot mutate queued payloads after calling `Send`.
-- It preserves the existing single in-flight send model and partial-send handling.
-- It would remove hot-path allocations entirely if the memory model were acceptable.
+- Always keep receive storage in pinned memory
+- Use one physical pinned array for both receive and preallocated send storage
+- Reduce outbound copies from 2 to 1
+- Preserve the rule that caller buffers are always copied on send
+- Preserve exact per-client `MaxQueuedSendBytes` enforcement
+- Support a strict hard-cap mode
+- Support a smaller preallocated burst mode with shared fallback
 
-## What Is Not Good
+## Why Per-Client Worst-Case Send Slabs Are Still Wrong
 
-### 1. Pinned Memory Explosion
+The original per-client slab idea scales send memory like this:
 
-The proposal turns `MaxQueuedSendBytes` into reserved pinned memory for every pooled client, not just for clients that are actively backed up.
+```text
+MaxConnections * MaxQueuedSendBytes
+```
+
+but reserved independently inside every client slot. That is the wrong layout.
+
+The right memory model is:
+
+- receive memory is per-client and fixed
+- send queue memory is shared globally across clients
+
+The hard-cap requirement does not require per-client send slabs. It requires a global pinned send budget that is large enough when `PreallocatedOnly` is enabled.
+
+## Proposed Architecture
+
+Use one shared pinned buffer arena owned by `BufferSlab`, then layer a global send allocator on top of its send region.
+
+### Components
+
+- `BufferSlab`
+  Owns one pinned `byte[]` and knows the region boundaries.
+
+- receive region
+  Fixed per-client receive slices used by `ReceiveEventArgs`.
+
+- send region
+  Shared chunked storage used by queued outbound payloads.
+
+- `SendBufferPool`
+  Manages chunk allocation inside the send region.
+
+- `SendQueue`
+  Copies caller data into owned send blocks backed by the send region, or by shared fallback storage when configured.
+
+## Arena Layout
+
+One physical pinned array:
+
+```text
+[recv client 0][recv client 1]...[recv client N-1][send chunk 0][send chunk 1]...[send chunk M-1]
+```
+
+Where:
+
+```text
+ReceiveRegionBytes = MaxConnections * BufferSize
+SendRegionBytes = depends on mode
+TotalPinnedBytes = ReceiveRegionBytes + SendRegionBytes
+```
+
+## Modes
+
+```csharp
+public enum SendStorageMode
+{
+    PreallocatedOnly = 0,
+    PreallocatedThenShared = 1
+}
+```
+
+### `PreallocatedOnly`
+
+This is the strict hard-cap mode.
+
+The send region is computed as:
+
+```text
+SendRegionBytes = MaxConnections * MaxQueuedSendBytes
+```
+
+Total pinned bytes become:
+
+```text
+TotalPinnedBytes =
+    (MaxConnections * BufferSize) +
+    (MaxConnections * MaxQueuedSendBytes)
+```
+
+Effect:
+
+- all receive buffers are pinned
+- all queued send storage is preallocated and pinned
+- no `ArrayPool<byte>.Shared` fallback is used
+- if the send region cannot satisfy an enqueue, it is treated as backpressure / overflow
+
+This mode gives the cleanest memory guarantee:
+
+- each client is still bounded by `MaxQueuedSendBytes`
+- the server also has a deterministic total queued-send memory budget
+- every client can hit its own queue cap simultaneously
+
+### `PreallocatedThenShared`
+
+This is the hybrid burst mode.
+
+The send region is configurable, with default:
+
+```text
+SendRegionBytes = (MaxConnections * MaxQueuedSendBytes) / 4
+```
+
+Total pinned bytes become:
+
+```text
+TotalPinnedBytes =
+    (MaxConnections * BufferSize) +
+    PreallocatedSendPoolBytes
+```
+
+Default pinned total:
+
+```text
+TotalPinnedBytes =
+    (MaxConnections * BufferSize) +
+    ((MaxConnections * MaxQueuedSendBytes) / 4)
+```
+
+Effect:
+
+- all receive buffers are pinned
+- some queued send storage is preallocated and pinned
+- if the send region is exhausted, enqueue falls back to `ArrayPool<byte>.Shared`
+
+Important:
+
+- this mode is not a strict memory cap once fallback is enabled
+- it is a burst-tolerant mode, not a deterministic cap mode
+
+## Settings
+
+Add:
+
+```csharp
+public SendStorageMode SendStorageMode { get; set; }
+public int PreallocatedSendPoolBytes { get; set; }
+public int SendPoolChunkSize { get; set; }
+```
+
+Recommended defaults:
+
+```csharp
+SendStorageMode = SendStorageMode.PreallocatedThenShared;
+PreallocatedSendPoolBytes = (MaxConnections * MaxQueuedSendBytes) / 4;
+SendPoolChunkSize = BufferSize;
+```
+
+Rules:
+
+- `PreallocatedSendPoolBytes` applies only to `PreallocatedThenShared`
+- `PreallocatedOnly` computes its send region from `MaxConnections * MaxQueuedSendBytes`
+- `SendPoolChunkSize` must be positive
+- `PreallocatedSendPoolBytes` must be positive in `PreallocatedThenShared`
+- the send region size must be a multiple of `SendPoolChunkSize`
+- all total-size calculations must use `checked` arithmetic
+
+If strict caps matter, deployments should use `PreallocatedOnly`.
+
+## Memory Examples
 
 With current defaults:
 
-- Current slab: `100 * 8192 * 2 = 1,638,400` bytes, about `1.56 MiB`
-- Proposed slab count: `ceil(16 MiB / 8192) = 2048`
-- Proposed slab: `100 * 8192 * (1 + 2048) = 1,678,540,800` bytes, about `1.56 GiB`
+- `MaxConnections = 100`
+- `BufferSize = 8192`
+- `MaxQueuedSendBytes = 16 MiB`
 
-That is roughly a `1000x` increase in baseline pinned memory before any client sends a byte.
-
-### 2. `MaxQueuedSendBytes` Stops Meaning Exact Bytes
-
-The current queue enforces the limit by exact queued bytes:
-
-```csharp
-if (data.Length > _maxQueuedBytes - _queuedBytes)
-```
-
-The slab design enforces capacity by free slab count. That means small sends waste the unused tail of each slab.
-
-Example with `BufferSize = 256` and `MaxQueuedSendBytes = 512`:
-
-- Current queue accepts `512` one-byte sends before overflow.
-- A two-slab design overflows on the third one-byte send if each message takes its own slab.
-
-That is a major behavioral regression for workloads with many small packets.
-
-### 3. Worst-Case Provisioning Is Bound To `MaxConnections`
-
-The current design pays for queue memory only when a client actually has queued outbound data.
-
-The slab proposal reserves the worst-case queue size for every pooled `Client`, including idle slots. That is the wrong scaling factor for this library. The expensive part should scale with actual queued bytes, not with the size of the connection pool.
-
-### 4. `BufferSlab` Becomes A Large Allocator Instead Of A Simple Transport Slab
-
-Right now `BufferSlab` is easy to reason about:
+Receive region:
 
 ```text
-[recv][send]
+100 * 8192 = 819,200 bytes
 ```
 
-The proposal turns it into:
+### `PreallocatedOnly`
+
+Send region:
 
 ```text
-[recv][send slab 0][send slab 1]...[send slab N-1]
+100 * 16 MiB = 1,677,721,600 bytes
 ```
 
-That couples queue storage, queue policy, and socket buffer layout into one object. It makes the send queue rewrite more invasive than it needs to be and raises the cost of future buffer changes.
+Total pinned:
 
-### 5. The Testing Section Is Too Optimistic
-
-The statement that all existing tests should pass without modification is not strong enough for a change this invasive.
-
-If the implementation changes queue accounting, send buffer ownership, and reset behavior, the following must be revalidated explicitly:
-
-- Overflow behavior with many small sends
-- Partial sends across multiple callbacks
-- Reset and disconnect cleanup returning all internal buffers
-- Stale handle and client recycle behavior
-- Metrics integration for `SendQueueOverflow`
-
-## Recommended Design
-
-### Pooled Single-Copy Queue
-
-Keep the public semantics and the current send loop, but replace the internal queue storage.
-
-### Core Idea
-
-- On enqueue, rent a buffer from `ArrayPool<byte>.Shared`
-- Copy the caller payload into the rented buffer
-- Queue `(buffer, length)`
-- During send, call `SendEventArgs.SetBuffer(buffer, offset, chunkSize)` directly on the queued buffer
-- When the message is fully sent, return the buffer to the pool
-
-This keeps the required copy from caller-owned memory to server-owned memory, but removes the internal re-copy into a separate send slab.
-
-### Why This Is Better
-
-| Concern | Per-client slab plan | Pooled direct-buffer plan |
-|---|---|---|
-| Ownership isolation | Preserved | Preserved |
-| Copies per payload | 1 | 1 |
-| Per-enqueue GC allocation | 0 | 0 in steady state |
-| Baseline pinned memory | Very high | Low |
-| `MaxQueuedSendBytes` accuracy | Rounded by slabs | Exact bytes |
-| Memory growth | Worst-case upfront | Lazy, load-driven |
-| Code churn | High | Moderate |
-
-### Recommended Implementation Shape
-
-#### `SendQueue`
-
-Replace `Queue<byte[]>` with a queue of pooled payload tuples:
-
-```csharp
-private readonly Queue<(byte[] Buffer, int Length)> _pendingMessages;
+```text
+819,200 + 1,677,721,600 = 1,678,540,800 bytes
 ```
 
-`Enqueue` becomes:
+This is large, but it is explicit and deterministic.
 
-```csharp
-byte[] rented = ArrayPool<byte>.Shared.Rent(data.Length);
-Buffer.BlockCopy(data, 0, rented, 0, data.Length);
-_pendingMessages.Enqueue((rented, data.Length));
-_queuedBytes += data.Length;
+### `PreallocatedThenShared`
+
+Default send region:
+
+```text
+(100 * 16 MiB) / 4 = 419,430,400 bytes
 ```
 
-`TryPrepareSendChunk` should no longer copy into a transport scratch buffer. It should point the send args directly at the queued message:
+Total pinned:
+
+```text
+819,200 + 419,430,400 = 420,249,600 bytes
+```
+
+This is materially smaller, but it trades away the hard-cap guarantee once fallback occurs.
+
+## Send Region Layout
+
+The send region is chunked:
+
+```text
+[chunk 0][chunk 1][chunk 2]...[chunk N-1]
+```
+
+Where:
+
+```text
+ChunkCount = SendRegionBytes / SendPoolChunkSize
+```
+
+Each chunk lives inside the single pinned arena and is addressed by:
+
+- shared arena buffer reference
+- chunk base offset
+- used length inside the chunk
+
+Messages larger than one chunk are split into multiple send blocks in order.
+
+## Queue Storage Model
+
+`SendQueue` should store owned send blocks, not caller buffers:
 
 ```csharp
-int remaining = _currentMessage.Length - _currentOffset;
+private readonly Queue<SendBlock> _pendingBlocks;
+```
+
+Suggested shape:
+
+```csharp
+private readonly struct SendBlock
+{
+    internal SendBlock(
+        byte[] buffer,
+        int offset,
+        int length,
+        int poolChunkIndex,
+        bool returnToSharedPool)
+    {
+        Buffer = buffer;
+        Offset = offset;
+        Length = length;
+        PoolChunkIndex = poolChunkIndex;
+        ReturnToSharedPool = returnToSharedPool;
+    }
+
+    internal byte[] Buffer { get; }
+    internal int Offset { get; }
+    internal int Length { get; }
+    internal int PoolChunkIndex { get; }
+    internal bool ReturnToSharedPool { get; }
+}
+```
+
+Ownership:
+
+- `poolChunkIndex >= 0`
+  Block came from the pinned arena send region
+
+- `returnToSharedPool == true`
+  Block came from `ArrayPool<byte>.Shared`
+
+Exactly one ownership path should apply for a block.
+
+## Allocation Behavior
+
+### Preferred Path: Arena Send Region
+
+For payload length `data.Length`:
+
+```text
+ChunksNeeded = ceil(data.Length / SendPoolChunkSize)
+```
+
+Then:
+
+1. enforce exact per-client `_queuedBytes` against `MaxQueuedSendBytes`
+2. try to acquire `ChunksNeeded` chunks from `SendBufferPool`
+3. copy the payload into those chunk slices
+4. enqueue one `SendBlock` per chunk in order
+
+This gives:
+
+- one copy from caller memory into owned storage
+- zero extra copy when preparing the actual socket send
+
+### Fallback Path: Shared Pool
+
+If the arena send region cannot satisfy the request:
+
+- in `PreallocatedOnly`, fail the enqueue
+- in `PreallocatedThenShared`, rent one array from `ArrayPool<byte>.Shared`, copy once, and enqueue one fallback `SendBlock`
+
+## Send Flow
+
+### Enqueue
+
+1. validate exact per-client `MaxQueuedSendBytes`
+2. allocate from the arena send region if possible
+3. otherwise use shared fallback if the mode allows it
+4. copy the caller data into owned storage
+5. enqueue owned `SendBlock` instances
+
+### Prepare
+
+`Client.TryPrepareSendChunk` should stop copying into a dedicated send SAEA buffer.
+
+Instead it should bind `SocketAsyncEventArgs` directly to the current block:
+
+```csharp
+int remaining = _currentBlock.Length - _currentOffset;
 chunkSize = remaining <= maxChunkSize ? remaining : maxChunkSize;
-sendEventArgs.SetBuffer(_currentMessage.Buffer, _currentOffset, chunkSize);
+sendEventArgs.SetBuffer(_currentBlock.Buffer, _currentBlock.Offset + _currentOffset, chunkSize);
 ```
 
-When a message completes, return it:
+For preallocated blocks, `Buffer` is the single pinned arena.
+
+For fallback blocks, `Buffer` is the rented shared array.
+
+### Complete
+
+When a block is fully sent:
+
+- if it came from the arena send region, return the chunk index to `SendBufferPool`
+- if it came from `ArrayPool<byte>.Shared`, return the array there
+
+Partial sends keep the current block and only advance the block-local offset.
+
+## Why This Design Is Better
+
+| Concern | Per-client send slabs | Shared pinned arena |
+|---|---|---|
+| Physical pinned objects | Many logical per-client regions | One physical pinned array |
+| Receive buffers always pinned | Yes | Yes |
+| Send-path re-copy | Removed | Removed |
+| Hard-cap mode available | Yes | Yes |
+| Shared send budget | No | Yes |
+| Burst mode available | Poor fit | Yes |
+| Complexity | High | Moderate |
+
+## Important Tradeoffs
+
+### 1. `PreallocatedOnly` Is Expensive By Design
+
+If the goal is "every client can hit `MaxQueuedSendBytes` simultaneously without any fallback", the total pinned size will be large. That is expected.
+
+This is not a design flaw. It is the cost of a deterministic worst-case guarantee.
+
+### 2. `PreallocatedThenShared` Is Not Hard-Capped
+
+Once fallback to `ArrayPool<byte>.Shared` is enabled, total send memory is no longer strictly bounded by the pinned arena size.
+
+### 3. Chunk Size Controls Fragmentation
+
+Large chunk sizes reduce allocator metadata overhead but waste more space for small messages.
+
+Small chunk sizes improve packing but increase chunk-management overhead.
+
+## Detailed Changes
+
+### `TcpServerSettings`
+
+Add:
 
 ```csharp
-ArrayPool<byte>.Shared.Return(_currentMessage.Buffer);
+public SendStorageMode SendStorageMode { get; set; }
+public int PreallocatedSendPoolBytes { get; set; }
+public int SendPoolChunkSize { get; set; }
 ```
 
-`Reset` must return both the current message buffer and every queued pending buffer.
+Validation:
 
-#### `Client`
+- `SendPoolChunkSize > 0`
+- `PreallocatedSendPoolBytes > 0` when `SendStorageMode == SendStorageMode.PreallocatedThenShared`
+- `PreallocatedSendPoolBytes % SendPoolChunkSize == 0`
+- `checked(MaxConnections * BufferSize)`
+- `checked(MaxConnections * MaxQueuedSendBytes)`
+- `checked(ReceiveRegionBytes + SendRegionBytes)`
 
-`TryPrepareSendChunk` can keep the current shape:
+### `BufferSlab`
+
+Refactor it to own the whole pinned arena.
+
+Suggested responsibilities:
+
+- allocate the single pinned `byte[]`
+- expose receive offsets for each client
+- expose the send region base offset and length
+- create receive `SocketAsyncEventArgs` with fixed receive slices
+- create send `SocketAsyncEventArgs` without a permanent bound buffer
+
+### `SendBufferPool`
+
+Add a helper responsible for chunk allocation inside the send region of `BufferSlab`.
+
+Suggested members:
 
 ```csharp
-internal bool TryPrepareSendChunk(uint generation, int maxChunkSize, out int chunkSize)
+internal sealed class SendBufferPool
+{
+    internal byte[] Buffer { get; }
+    internal int SendRegionBaseOffset { get; }
+
+    internal bool TryAcquireChunks(int chunkCount, Span<int> destination);
+    internal void ReleaseChunk(int chunkIndex);
+}
 ```
 
-The important change is that it should delegate to `SendQueue` to bind `SendEventArgs` directly to the queued buffer rather than copying into `SendEventArgs.Buffer`.
+### `SendQueue`
 
-#### `TcpServer`
+Rewrite queue storage around `SendBlock`.
 
-`StartSend` and `ProcessSend` can stay almost unchanged. They already support partial sends and repeated completion callbacks.
+Requirements:
 
-The only required change is that `SendEventArgs` is no longer permanently tied to a dedicated send region in `BufferSlab`.
+- keep `_queuedBytes` exact
+- preserve send order
+- support partial sends
+- release all owned storage in `Reset`
+- never expose caller-owned arrays directly
 
-## Optional Follow-Up
+### `Client`
 
-Once the pooled direct-buffer queue is stable, the dedicated send half of `BufferSlab` can be removed entirely.
+`TryPrepareSendChunk` still validates generation and aliveness, but it should no longer copy into `SendEventArgs.Buffer`.
 
-That would shrink the transport slab from:
+It should bind the current `SendBlock` slice directly using `SetBuffer(...)`.
 
-```text
-maxConnections * bufferSize * 2
-```
+### `TcpServer`
 
-to:
+Construct one `BufferSlab` that contains both receive and send regions.
 
-```text
-maxConnections * bufferSize
-```
+Construct one `SendBufferPool` over the send region of that same `BufferSlab`.
 
-At that point `BufferSlab` becomes receive-only, and `CreateSendEventArgs` can simply create a `SocketAsyncEventArgs` without assigning a fixed buffer up front.
+Pass the shared send pool into each `Client` / `SendQueue`.
 
-This is a good follow-up because it is independent from the queue rewrite and easy to verify once direct-buffer sending already works.
+The rest of `StartSend` and `ProcessSend` can keep the current shape because they already support:
 
-## If A Slab Design Is Still Desired
+- single in-flight send
+- synchronous completion
+- asynchronous completion
+- partial send continuation
 
-If the project still wants slab-backed send storage, the slab pool should be global and demand-driven, not reserved per client.
+## Metrics
 
-That avoids multiplying worst-case queue capacity by `MaxConnections`. Even then, the design still needs an exact-byte accounting strategy. A slab-per-message queue is not enough because it wastes too much capacity on small writes.
+Add:
 
-That version is more complex than the pooled direct-buffer approach and should only be considered if profiling shows `ArrayPool` is not sufficient.
+- `PreallocatedSendPoolExhaustions`
+- `SharedSendFallbacks`
 
-## Recommended Plan
+Meaning:
 
-1. Rewrite `SendQueue` to store pooled owned buffers instead of freshly allocated arrays.
-2. Change `TryPrepareSendChunk` to bind `SendEventArgs` directly to the queued buffer segment.
-3. Keep exact byte-based overflow accounting.
-4. Add explicit tests for buffer return on complete and reset.
-5. After that lands, remove the fixed send region from `BufferSlab` as a follow-up.
+- `PreallocatedSendPoolExhaustions`
+  Count every time the arena send region cannot satisfy an allocation request
+
+- `SharedSendFallbacks`
+  Count every time `PreallocatedThenShared` successfully switches to shared rented storage
 
 ## Testing
 
 ### Unit Tests
 
-Add focused tests around the new queue behavior:
+Add tests for:
 
-1. Enqueue copies the caller buffer and later caller mutations do not affect the queued payload.
-2. `MaxQueuedSendBytes` is enforced by exact bytes, including many small messages.
-3. Partial sends advance the offset correctly across multiple completions.
-4. `Reset` returns the current in-flight buffer and all pending queued buffers.
-5. Completing the final chunk returns the rented buffer and clears send-in-progress state.
+1. receive offsets stay fixed and do not overlap send-region offsets
+2. `PreallocatedOnly` computes total pinned bytes using the full worst-case send formula
+3. `PreallocatedThenShared` computes total pinned bytes using the configured send-pool size
+4. enqueue uses arena chunks and returns them after completion
+5. exhaustion in `PreallocatedOnly` fails without fallback
+6. exhaustion in `PreallocatedThenShared` falls back to shared rented storage
+7. exact per-client `MaxQueuedSendBytes` still applies by bytes
+8. partial sends advance offsets correctly across multiple completions
+9. `Reset` returns both pinned chunks and shared fallback buffers
+10. caller mutation after `Send` does not affect queued data
 
 ### Integration Tests
 
-Re-run the existing server tests and add explicit assertions for:
+Re-run existing send and overflow tests and add:
 
-1. Send queue overflow still disconnects with `DisconnectReason.SendQueueOverflow`.
-2. Disconnect cleanup after pending sends does not leak queued buffers.
-3. A recycled `ClientHandle` cannot send using buffers owned by a later generation.
+1. `PreallocatedOnly` disconnect behavior still matches send-queue overflow expectations
+2. `PreallocatedThenShared` records fallback metrics and still delivers payloads
+3. recycled clients do not retain pinned send chunks from earlier generations
 
 ## Verdict
 
-Do not implement the original per-client slab plan as written.
+Use one physical pinned buffer arena shared across receive and preallocated send storage.
 
-Implement a pooled single-copy queue first. It addresses the real problem, matches the project's copy-on-enqueue rule, preserves exact queue semantics, keeps memory proportional to actual load, and requires much less invasive change.
+For strict deterministic memory behavior, use `PreallocatedOnly`.
+
+For lower upfront memory with burst tolerance, use `PreallocatedThenShared`.

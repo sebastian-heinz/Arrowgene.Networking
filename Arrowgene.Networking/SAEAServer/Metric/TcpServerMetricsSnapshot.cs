@@ -33,6 +33,9 @@ public readonly struct TcpServerMetricsSnapshot
     /// <param name="bytesSent">The total number of bytes sent.</param>
     /// <param name="receiveBytesPerSecond">The derived inbound byte rate for the most recent sample interval.</param>
     /// <param name="sendBytesPerSecond">The derived outbound byte rate for the most recent sample interval.</param>
+    /// <param name="receiveOpsPerSecond">The derived inbound operation rate for the most recent sample interval.</param>
+    /// <param name="sendOpsPerSecond">The derived outbound operation rate for the most recent sample interval.</param>
+    /// <param name="acceptsPerSecond">The derived accept rate for the most recent sample interval.</param>
     /// <param name="inFlightAsyncCallbacks">The current number of in-flight async socket callbacks.</param>
     /// <param name="disconnectCleanupQueueDepth">The current number of queued deferred disconnect cleanups.</param>
     /// <param name="acceptPoolAvailable">The current number of available accept event args in the accept pool.</param>
@@ -66,6 +69,9 @@ public readonly struct TcpServerMetricsSnapshot
         long bytesSent,
         double receiveBytesPerSecond,
         double sendBytesPerSecond,
+        double receiveOpsPerSecond,
+        double sendOpsPerSecond,
+        double acceptsPerSecond,
         long inFlightAsyncCallbacks,
         long disconnectCleanupQueueDepth,
         long acceptPoolAvailable,
@@ -99,6 +105,9 @@ public readonly struct TcpServerMetricsSnapshot
         BytesSent = bytesSent;
         ReceiveBytesPerSecond = receiveBytesPerSecond;
         SendBytesPerSecond = sendBytesPerSecond;
+        ReceiveOpsPerSecond = receiveOpsPerSecond;
+        SendOpsPerSecond = sendOpsPerSecond;
+        AcceptsPerSecond = acceptsPerSecond;
         InFlightAsyncCallbacks = inFlightAsyncCallbacks;
         DisconnectCleanupQueueDepth = disconnectCleanupQueueDepth;
         AcceptPoolAvailable = acceptPoolAvailable;
@@ -212,6 +221,21 @@ public readonly struct TcpServerMetricsSnapshot
     /// Gets the outbound byte rate for the most recent sample interval.
     /// </summary>
     public double SendBytesPerSecond { get; }
+
+    /// <summary>
+    /// Gets the inbound operation rate for the most recent sample interval.
+    /// </summary>
+    public double ReceiveOpsPerSecond { get; }
+
+    /// <summary>
+    /// Gets the outbound operation rate for the most recent sample interval.
+    /// </summary>
+    public double SendOpsPerSecond { get; }
+
+    /// <summary>
+    /// Gets the accept rate for the most recent sample interval.
+    /// </summary>
+    public double AcceptsPerSecond { get; }
 
     /// <summary>
     /// Gets the current number of in-flight async socket callbacks.

@@ -171,9 +171,9 @@ public sealed class TcpServer : IDisposable
     }
 
     /// <summary>
-    /// Gets the latest published metrics snapshot for the server.
+    /// Captures and returns a fresh metrics snapshot for the server.
     /// </summary>
-    /// <returns>The latest published <see cref="TcpServerMetricsSnapshot"/>.</returns>
+    /// <returns>The latest captured <see cref="TcpServerMetricsSnapshot"/>.</returns>
     public TcpServerMetricsSnapshot GetMetricsSnapshot()
     {
         if (IsMetricsCaptureEnabled())
@@ -187,6 +187,15 @@ public sealed class TcpServer : IDisposable
             }
         }
 
+        return _metricsCollector.GetSnapshot();
+    }
+
+    /// <summary>
+    /// Returns the latest published metrics snapshot without forcing a new capture.
+    /// </summary>
+    /// <returns>The latest published <see cref="TcpServerMetricsSnapshot"/>.</returns>
+    public TcpServerMetricsSnapshot GetPublishedMetricsSnapshot()
+    {
         return _metricsCollector.GetSnapshot();
     }
 

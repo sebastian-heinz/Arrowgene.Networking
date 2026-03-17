@@ -44,25 +44,27 @@ public sealed class TcpServerMetricsTests
         {
             await consumer.WaitForConnectedCountAsync(1, ShortTimeout);
 
+            TcpServerMetricsSnapshot preTrafficSnapshot = host.TcpServer.GetMetricsSnapshot();
+
             byte[] payload = CreatePayload(256, 11);
             byte[] echoed = await host.RoundTripAsync(client, payload, MediumTimeout);
 
             Assert.Equal(payload, echoed);
 
-            TcpServerMetricsSnapshot connectedSnapshot = await WaitForSnapshotAsync(
+            TcpServerMetricsSnapshot connectedSnapshot = await WaitForPublishedSnapshotAsync(
                 host,
                 snapshot =>
-                    snapshot.SnapshotSequenceNumber > 0
-                    && snapshot.ServerStartedAtUtc <= snapshot.TimestampUtc
+                    snapshot.SnapshotSequenceNumber > preTrafficSnapshot.SnapshotSequenceNumber
+                    && snapshot.ServerStartedAtUtc == preTrafficSnapshot.ServerStartedAtUtc
                     && snapshot.AcceptedConnections >= 1
                     && snapshot.ActiveConnections == 1
-                    && snapshot.PeakActiveConnections >= snapshot.ActiveConnections
                     && snapshot.ReceiveOperations >= 1
                     && snapshot.SendOperations >= 1
+                    && snapshot.ReceiveOpsPerSecond > 0.0d
+                    && snapshot.SendOpsPerSecond > 0.0d
                     && snapshot.BytesReceived >= payload.Length
                     && snapshot.BytesSent >= payload.Length
-                    && snapshot.AvailableClientSlots == 0
-                    && GetLaneConnectionTotal(snapshot) == 1,
+                    && snapshot.AvailableClientSlots == 0,
                 MediumTimeout,
                 "Timed out waiting for the connected traffic metrics snapshot."
             );
@@ -70,9 +72,20 @@ public sealed class TcpServerMetricsTests
             Assert.Equal(10, connectedSnapshot.ReceiveSizeBuckets.Length);
             Assert.Equal(10, connectedSnapshot.SendSizeBuckets.Length);
             Assert.Equal(10, connectedSnapshot.ConnectionDurationBuckets.Length);
-            Assert.True(connectedSnapshot.SnapshotSequenceNumber > 0);
+            Assert.True(connectedSnapshot.SnapshotSequenceNumber > preTrafficSnapshot.SnapshotSequenceNumber);
+            Assert.Equal(preTrafficSnapshot.ServerStartedAtUtc, connectedSnapshot.ServerStartedAtUtc);
             Assert.True(connectedSnapshot.ServerStartedAtUtc <= connectedSnapshot.TimestampUtc);
+            Assert.True(connectedSnapshot.AcceptedConnections >= 1);
+            Assert.Equal(1, connectedSnapshot.ActiveConnections);
             Assert.True(connectedSnapshot.PeakActiveConnections >= connectedSnapshot.ActiveConnections);
+            Assert.True(connectedSnapshot.ReceiveOperations >= 1);
+            Assert.True(connectedSnapshot.SendOperations >= 1);
+            Assert.True(connectedSnapshot.ReceiveOpsPerSecond > 0.0d);
+            Assert.True(connectedSnapshot.SendOpsPerSecond > 0.0d);
+            Assert.True(connectedSnapshot.BytesReceived >= payload.Length);
+            Assert.True(connectedSnapshot.BytesSent >= payload.Length);
+            Assert.Equal(0, connectedSnapshot.AvailableClientSlots);
+            Assert.Equal(1, GetLaneConnectionTotal(connectedSnapshot));
             Assert.Equal(connectedSnapshot.ReceiveOperations, GetCounterTotal(connectedSnapshot.ReceiveSizeBuckets));
             Assert.Equal(connectedSnapshot.SendOperations, GetCounterTotal(connectedSnapshot.SendSizeBuckets));
             Assert.Equal(0, GetCounterTotal(connectedSnapshot.ConnectionDurationBuckets));
@@ -112,6 +125,32 @@ public sealed class TcpServerMetricsTests
         {
             host.DisposeClient(client);
         }
+    }
+
+    /// <summary>
+    /// Verifies passive metrics reads do not force a new snapshot capture.
+    /// </summary>
+    [Fact]
+    public void GetPublishedMetricsSnapshot_DoesNotAdvanceSnapshotSequence()
+    {
+        RecordingConsumer consumer = new RecordingConsumer();
+
+        using ServerTestHost host = new ServerTestHost(
+            consumer,
+            settings =>
+            {
+                settings.MaxConnections = 1;
+                settings.OrderingLaneCount = 1;
+                settings.ConcurrentAccepts = 1;
+            }
+        );
+
+        TcpServerMetricsSnapshot capturedSnapshot = host.TcpServer.GetMetricsSnapshot();
+        TcpServerMetricsSnapshot publishedSnapshot = host.TcpServer.GetPublishedMetricsSnapshot();
+
+        Assert.Equal(capturedSnapshot.SnapshotSequenceNumber, publishedSnapshot.SnapshotSequenceNumber);
+        Assert.Equal(capturedSnapshot.TimestampUtc, publishedSnapshot.TimestampUtc);
+        Assert.Equal(capturedSnapshot.ServerStartedAtUtc, publishedSnapshot.ServerStartedAtUtc);
     }
 
     /// <summary>
@@ -577,6 +616,27 @@ public sealed class TcpServerMetricsTests
         return host.TcpServer.GetMetricsSnapshot();
     }
 
+    private static async Task<TcpServerMetricsSnapshot> WaitForPublishedSnapshotAsync(
+        ServerTestHost host,
+        Func<TcpServerMetricsSnapshot, bool> predicate,
+        TimeSpan timeout,
+        string failureMessage)
+    {
+        TcpServerMetricsSnapshot lastSnapshot = host.TcpServer.GetPublishedMetricsSnapshot();
+
+        await TestWait.UntilAsync(
+            () =>
+            {
+                lastSnapshot = host.TcpServer.GetPublishedMetricsSnapshot();
+                return predicate(lastSnapshot);
+            },
+            timeout,
+            $"{failureMessage}{Environment.NewLine}Last snapshot: {DescribeSnapshot(lastSnapshot)}"
+        ).ConfigureAwait(false);
+
+        return host.TcpServer.GetPublishedMetricsSnapshot();
+    }
+
     private static string DescribeSnapshot(TcpServerMetricsSnapshot snapshot)
     {
         return
@@ -595,8 +655,12 @@ public sealed class TcpServerMetricsTests
             $"zeroByteReceives={snapshot.ZeroByteReceives}, " +
             $"receiveOps={snapshot.ReceiveOperations}, " +
             $"sendOps={snapshot.SendOperations}, " +
+            $"receiveOpsPerSecond={snapshot.ReceiveOpsPerSecond:F2}, " +
+            $"sendOpsPerSecond={snapshot.SendOpsPerSecond:F2}, " +
+            $"acceptsPerSecond={snapshot.AcceptsPerSecond:F2}, " +
             $"bytesReceived={snapshot.BytesReceived}, " +
             $"bytesSent={snapshot.BytesSent}, " +
+            $"laneActiveTotal={GetLaneConnectionTotal(snapshot)}, " +
             $"acceptPoolAvailable={snapshot.AcceptPoolAvailable}, " +
             $"availableClientSlots={snapshot.AvailableClientSlots}, " +
             $"timeoutDisconnects={GetDisconnectCount(snapshot, DisconnectReason.Timeout)}, " +

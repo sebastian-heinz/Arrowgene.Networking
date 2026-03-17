@@ -26,7 +26,7 @@ dotnet add package Arrowgene.Networking
 | `SocketSettings` | Socket-level tuning applied via `ListenSocketSettings` and `ClientSocketSettings`. |
 | `ClientHandle` | Generation-checked struct to `Send`, `Disconnect`, or inspect a live client. |
 | `ClientSnapshot` | Immutable state captured at disconnect or error time (ID, endpoint, bytes, timestamps). |
-| `TcpServerMetricsSnapshot` | Immutable metrics snapshot returned by `TcpServer.GetMetricsSnapshot()`. |
+| `TcpServerMetricsSnapshot` | Immutable metrics snapshot returned by `TcpServer.GetMetricsSnapshot()` or `TcpServer.GetPublishedMetricsSnapshot()`. |
 | `DisconnectReason` | Enum used for disconnect logs and `DisconnectsByReason` indexing. |
 
 ## Quick Start
@@ -84,7 +84,7 @@ server.Stop();
 
 ## Metrics
 
-Poll metrics from the server with `GetMetricsSnapshot()`:
+Use `GetMetricsSnapshot()` when you want to force a fresh capture, or `GetPublishedMetricsSnapshot()` when you want a passive read of the latest published snapshot.
 
 ```csharp
 using System;
@@ -92,6 +92,7 @@ using Arrowgene.Networking.SAEAServer;
 using Arrowgene.Networking.SAEAServer.Metric;
 
 TcpServerMetricsSnapshot metrics = server.GetMetricsSnapshot();
+TcpServerMetricsSnapshot latestPublished = server.GetPublishedMetricsSnapshot();
 TimeSpan uptime = metrics.TimestampUtc - metrics.ServerStartedAtUtc;
 
 Console.WriteLine(
@@ -100,9 +101,12 @@ Console.WriteLine(
     $"active={metrics.ActiveConnections} " +
     $"peakActive={metrics.PeakActiveConnections} " +
     $"accepted={metrics.AcceptedConnections} " +
+    $"accepts={metrics.AcceptsPerSecond:F1}/s " +
     $"availableSlots={metrics.AvailableClientSlots} " +
     $"recv={metrics.BytesReceived} " +
     $"sent={metrics.BytesSent} " +
+    $"recvOps={metrics.ReceiveOpsPerSecond:F1}/s " +
+    $"sendOps={metrics.SendOpsPerSecond:F1}/s " +
     $"in={metrics.ReceiveBytesPerSecond:F0}/s " +
     $"out={metrics.SendBytesPerSecond:F0}/s"
 );
@@ -117,14 +121,14 @@ The snapshot includes:
 
 - Connection totals and gauges: accepted, rejected, active, peak active, disconnected.
 - Snapshot metadata: timestamp, server start time, snapshot sequence, derived uptime.
-- Throughput totals and rates: receive/send operations, bytes, bytes per second.
+- Throughput totals and rates: accepts, receive/send operations, bytes, operations per second, and bytes per second.
 - Failure and backpressure counters: socket errors, zero-byte receives, timeouts, send queue overflows.
 - Current server state: accept-pool availability, available client slots, in-flight async callbacks, deferred disconnect cleanup depth, per-lane active connections.
 - Optional low-cost detail: connection-duration buckets, receive/send size buckets, and per-socket-error-code counters via `GetSocketErrorCount(SocketError.X)`.
 - Optional consumer detail via `ConsumerMetrics` when the consumer implements `IConsumerMetrics`; for `ThreadedBlockingQueueConsumer` this includes per-lane queue depth, processed event counts, handler duration buckets, and handler error totals.
 - Disconnect reason counters indexed by `DisconnectReason`.
 
-Use `GetMetricsSnapshot()` from your own timer, background service, or health endpoint.
+Use `GetMetricsSnapshot()` from one timer or background service that owns metric sampling. Use `GetPublishedMetricsSnapshot()` for passive readers such as health endpoints or secondary exporters.
 
 ## Consumer Models
 
