@@ -16,6 +16,7 @@
 | `SocketAcceptErrors` | Counter | Total number of socket errors seen on the accept path. |
 | `SocketReceiveErrors` | Counter | Total number of socket errors seen on the receive path. |
 | `SocketSendErrors` | Counter | Total number of socket errors seen on the send path. |
+| `ZeroByteReceives` | Counter | Total number of zero-byte receive completions that signaled a graceful remote close. |
 | `ReceiveOperations` | Counter | Total number of successful receive completions that transferred bytes. |
 | `SendOperations` | Counter | Total number of successful send completions that transferred bytes. |
 | `BytesReceived` | Counter | Total number of bytes received from clients. |

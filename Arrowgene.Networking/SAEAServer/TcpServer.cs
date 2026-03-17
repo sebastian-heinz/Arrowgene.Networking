@@ -681,6 +681,7 @@ public sealed class TcpServer : IDisposable
             int bytesTransferred = receiveEventArgs.BytesTransferred;
             if (bytesTransferred <= 0)
             {
+                _metricsState.IncrementZeroByteReceives();
                 Log(
                     LogLevel.Error,
                     nameof(ProcessReceive),

@@ -341,6 +341,56 @@ public sealed class TcpServerMetricsTests
     }
 
     /// <summary>
+    /// Verifies graceful remote close signals are counted as zero-byte receives.
+    /// </summary>
+    [Fact]
+    public async Task MetricsSnapshot_TracksZeroByteReceivesForRemoteClose()
+    {
+        RecordingConsumer consumer = new RecordingConsumer();
+
+        using ServerTestHost host = new ServerTestHost(
+            consumer,
+            settings =>
+            {
+                settings.MaxConnections = 1;
+                settings.OrderingLaneCount = 1;
+                settings.ConcurrentAccepts = 1;
+            }
+        );
+
+        TcpClient client = await host.ConnectClientAsync();
+
+        try
+        {
+            await consumer.WaitForConnectedCountAsync(1, ShortTimeout);
+
+            host.DisposeClient(client);
+
+            await consumer.WaitForDisconnectedCountAsync(1, MediumTimeout);
+
+            TcpServerMetricsSnapshot snapshot = await WaitForSnapshotAsync(
+                host,
+                candidate =>
+                    candidate.ActiveConnections == 0
+                    && candidate.ZeroByteReceives >= 1
+                    && candidate.ReceiveOperations == 0
+                    && candidate.BytesReceived == 0
+                    && GetDisconnectCount(candidate, DisconnectReason.RemoteClosed) >= 1,
+                MediumTimeout,
+                "Timed out waiting for zero-byte receive metrics."
+            );
+
+            Assert.True(snapshot.ZeroByteReceives >= 1);
+            Assert.True(GetDisconnectCount(snapshot, DisconnectReason.RemoteClosed) >= 1);
+            Assert.Empty(consumer.Errors);
+        }
+        finally
+        {
+            host.DisposeClient(client);
+        }
+    }
+
+    /// <summary>
     /// Verifies send queue overflows are counted and attributed to the correct disconnect reason.
     /// </summary>
     [Fact]
@@ -527,6 +577,7 @@ public sealed class TcpServerMetricsTests
             $"acceptErrors={snapshot.SocketAcceptErrors}, " +
             $"receiveErrors={snapshot.SocketReceiveErrors}, " +
             $"sendErrors={snapshot.SocketSendErrors}, " +
+            $"zeroByteReceives={snapshot.ZeroByteReceives}, " +
             $"receiveOps={snapshot.ReceiveOperations}, " +
             $"sendOps={snapshot.SendOperations}, " +
             $"bytesReceived={snapshot.BytesReceived}, " +

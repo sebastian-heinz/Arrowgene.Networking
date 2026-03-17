@@ -113,7 +113,7 @@ The snapshot includes:
 
 - Connection totals and gauges: accepted, rejected, active, disconnected.
 - Throughput totals and rates: receive/send operations, bytes, bytes per second.
-- Failure and backpressure counters: socket errors, timeouts, send queue overflows.
+- Failure and backpressure counters: socket errors, zero-byte receives, timeouts, send queue overflows.
 - Current server state: accept-pool availability, available client slots, in-flight async callbacks, deferred disconnect cleanup depth, per-lane active connections.
 - Optional low-cost detail: connection-duration buckets, receive/send size buckets, and per-socket-error-code counters via `GetSocketErrorCount(SocketError.X)`.
 - Optional consumer detail via `ConsumerMetrics` when the consumer implements `IConsumerMetrics`; for `ThreadedBlockingQueueConsumer` this includes per-lane queue depth, processed event counts, handler duration buckets, and handler error totals.

@@ -23,6 +23,7 @@ public readonly struct TcpServerMetricsSnapshot
     /// <param name="socketAcceptErrors">The total number of accept-path socket errors.</param>
     /// <param name="socketReceiveErrors">The total number of receive-path socket errors.</param>
     /// <param name="socketSendErrors">The total number of send-path socket errors.</param>
+    /// <param name="zeroByteReceives">The total number of zero-byte receive completions that signaled remote graceful close.</param>
     /// <param name="receiveOperations">The total number of successful receive operations.</param>
     /// <param name="sendOperations">The total number of successful send operations.</param>
     /// <param name="bytesReceived">The total number of bytes received.</param>
@@ -52,6 +53,7 @@ public readonly struct TcpServerMetricsSnapshot
         long socketAcceptErrors,
         long socketReceiveErrors,
         long socketSendErrors,
+        long zeroByteReceives,
         long receiveOperations,
         long sendOperations,
         long bytesReceived,
@@ -81,6 +83,7 @@ public readonly struct TcpServerMetricsSnapshot
         SocketAcceptErrors = socketAcceptErrors;
         SocketReceiveErrors = socketReceiveErrors;
         SocketSendErrors = socketSendErrors;
+        ZeroByteReceives = zeroByteReceives;
         ReceiveOperations = receiveOperations;
         SendOperations = sendOperations;
         BytesReceived = bytesReceived;
@@ -150,6 +153,11 @@ public readonly struct TcpServerMetricsSnapshot
     /// Gets the total number of send-path socket errors.
     /// </summary>
     public long SocketSendErrors { get; }
+
+    /// <summary>
+    /// Gets the total number of zero-byte receive completions (remote graceful close signals).
+    /// </summary>
+    public long ZeroByteReceives { get; }
 
     /// <summary>
     /// Gets the total number of successful receive operations.

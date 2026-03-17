@@ -24,6 +24,7 @@ internal sealed class TcpServerMetricsState
     private long _socketAcceptErrors;
     private long _socketReceiveErrors;
     private long _socketSendErrors;
+    private long _zeroByteReceives;
     private long _receiveOperations;
     private long _sendOperations;
     private long _bytesReceived;
@@ -162,6 +163,16 @@ internal sealed class TcpServerMetricsState
         Interlocked.Increment(ref _receiveOperations);
         Interlocked.Add(ref _bytesReceived, bytesTransferred);
         Interlocked.Increment(ref _receiveSizeBuckets[GetTransferSizeBucketIndex(bytesTransferred)]);
+    }
+
+    internal void IncrementZeroByteReceives()
+    {
+        if (!IsCaptureEnabled())
+        {
+            return;
+        }
+
+        Interlocked.Increment(ref _zeroByteReceives);
     }
 
     internal void RecordSend(int bytesTransferred)
@@ -309,6 +320,11 @@ internal sealed class TcpServerMetricsState
     internal long GetSocketSendErrors()
     {
         return Interlocked.Read(ref _socketSendErrors);
+    }
+
+    internal long GetZeroByteReceives()
+    {
+        return Interlocked.Read(ref _zeroByteReceives);
     }
 
     internal long GetReceiveOperations()

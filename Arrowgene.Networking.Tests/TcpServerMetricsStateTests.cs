@@ -84,6 +84,41 @@ public sealed class TcpServerMetricsStateTests
     }
 
     /// <summary>
+    /// Verifies zero-byte receive completions are counted separately from byte-transferring receives.
+    /// </summary>
+    [Fact]
+    public void IncrementZeroByteReceives_TracksCountWhenCaptureIsEnabled()
+    {
+        TcpServerMetricsState state = new TcpServerMetricsState();
+        state.EnableCapture();
+
+        state.IncrementZeroByteReceives();
+        state.IncrementZeroByteReceives();
+        state.IncrementZeroByteReceives();
+
+        Assert.Equal(3, state.GetZeroByteReceives());
+        Assert.Equal(0, state.GetReceiveOperations());
+        Assert.Equal(0, state.GetBytesReceived());
+    }
+
+    /// <summary>
+    /// Verifies zero-byte receive completions are ignored while capture is disabled.
+    /// </summary>
+    [Fact]
+    public void IncrementZeroByteReceives_DoesNotTrackWhenCaptureIsDisabled()
+    {
+        TcpServerMetricsState state = new TcpServerMetricsState();
+
+        state.IncrementZeroByteReceives();
+        state.EnableCapture();
+        state.IncrementZeroByteReceives();
+        state.DisableCapture();
+        state.IncrementZeroByteReceives();
+
+        Assert.Equal(1, state.GetZeroByteReceives());
+    }
+
+    /// <summary>
     /// Verifies disconnect durations are bucketed at the documented boundaries.
     /// </summary>
     [Fact]

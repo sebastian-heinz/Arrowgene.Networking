@@ -215,6 +215,7 @@ internal sealed class TcpServerMetricsCollector : IDisposable
             _metricsState.GetSocketAcceptErrors(),
             _metricsState.GetSocketReceiveErrors(),
             _metricsState.GetSocketSendErrors(),
+            _metricsState.GetZeroByteReceives(),
             _metricsState.GetReceiveOperations(),
             _metricsState.GetSendOperations(),
             _metricsState.GetBytesReceived(),
