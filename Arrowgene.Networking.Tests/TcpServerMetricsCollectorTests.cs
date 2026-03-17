@@ -132,7 +132,8 @@ public sealed class TcpServerMetricsCollectorTests
         TcpServer tcpServer = (TcpServer)RuntimeHelpers.GetUninitializedObject(typeof(TcpServer));
         SocketAsyncEventArgs receiveEventArgs = new SocketAsyncEventArgs();
         SocketAsyncEventArgs sendEventArgs = new SocketAsyncEventArgs();
-        return new Client(tcpServer, clientId, receiveEventArgs, sendEventArgs, 1024);
+        SharedSendQueue sendQueue = new SharedSendQueue(1024);
+        return new Client(tcpServer, clientId, receiveEventArgs, sendEventArgs, sendQueue);
     }
 
     private static void IgnoreAcceptCompletion(object? sender, SocketAsyncEventArgs eventArgs)

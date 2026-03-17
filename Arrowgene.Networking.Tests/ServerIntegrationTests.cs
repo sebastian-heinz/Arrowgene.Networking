@@ -289,8 +289,10 @@ public sealed class ServerIntegrationTests
     /// <summary>
     /// Verifies a large payload is echoed back intact even when the tcpServer must split it into multiple buffer-sized chunks.
     /// </summary>
-    [Fact]
-    public async Task BigDataTransfer_EchoesEntirePayloadAcrossMultipleChunks()
+    [Theory]
+    [InlineData(SendStorageMode.Shared)]
+    [InlineData(SendStorageMode.HardCapped)]
+    public async Task BigDataTransfer_EchoesEntirePayloadAcrossMultipleChunks(SendStorageMode sendStorageMode)
     {
         RecordingConsumer consumer = new RecordingConsumer(echoReceivedData: true);
 
@@ -301,6 +303,7 @@ public sealed class ServerIntegrationTests
                 settings.MaxConnections = 2;
                 settings.BufferSize = 512;
                 settings.MaxQueuedSendBytes = 4 * 1024 * 1024;
+                settings.SendStorageMode = sendStorageMode;
             }
         );
 

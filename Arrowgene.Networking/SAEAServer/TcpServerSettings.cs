@@ -20,6 +20,7 @@ public sealed class TcpServerSettings : ICloneable
         OrderingLaneCount = 4;
         ConcurrentAccepts = 10;
         MaxQueuedSendBytes = 16 * 1024 * 1024;
+        SendStorageMode = SendStorageMode.Shared;
         ListenSocketRetries = 5;
         ListenSocketSettings = new SocketSettings();
         ClientSocketTimeoutSeconds = -1;
@@ -43,6 +44,7 @@ public sealed class TcpServerSettings : ICloneable
         OrderingLaneCount = settings.OrderingLaneCount;
         ConcurrentAccepts = settings.ConcurrentAccepts;
         MaxQueuedSendBytes = settings.MaxQueuedSendBytes;
+        SendStorageMode = settings.SendStorageMode;
         ListenSocketRetries = settings.ListenSocketRetries;
         ListenSocketSettings = new SocketSettings(settings.ListenSocketSettings);
         ClientSocketTimeoutSeconds = settings.ClientSocketTimeoutSeconds;
@@ -62,7 +64,7 @@ public sealed class TcpServerSettings : ICloneable
     public ushort MaxConnections { get; set; }
 
     /// <summary>
-    /// Gets or sets the pinned receive and send buffer size per direction.
+    /// Gets or sets the pinned receive buffer size per client.
     /// </summary>
     [DataMember(Order = 2)]
     public int BufferSize { get; set; }
@@ -84,6 +86,12 @@ public sealed class TcpServerSettings : ICloneable
     /// </summary>
     [DataMember(Order = 5)]
     public int MaxQueuedSendBytes { get; set; }
+
+    /// <summary>
+    /// Gets or sets how queued outbound payloads are stored.
+    /// </summary>
+    [DataMember(Order = 6)]
+    public SendStorageMode SendStorageMode { get; set; }
 
     /// <summary>
     /// Gets or sets the number of listener bind retries.
@@ -140,6 +148,12 @@ public sealed class TcpServerSettings : ICloneable
         {
             throw new ArgumentOutOfRangeException(nameof(MaxQueuedSendBytes),
                 "MaxQueuedSendBytes must be greater than zero.");
+        }
+
+        if (!Enum.IsDefined(typeof(SendStorageMode), SendStorageMode))
+        {
+            throw new ArgumentOutOfRangeException(nameof(SendStorageMode),
+                "SendStorageMode must be a defined enum value.");
         }
 
         if (ListenSocketRetries < 0)
