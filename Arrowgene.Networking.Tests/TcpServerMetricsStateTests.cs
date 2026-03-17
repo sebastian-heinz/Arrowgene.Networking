@@ -1,5 +1,6 @@
 using System;
 using System.Net.Sockets;
+using Arrowgene.Networking.SAEAServer;
 using Arrowgene.Networking.SAEAServer.Metric;
 using Xunit;
 
@@ -116,6 +117,72 @@ public sealed class TcpServerMetricsStateTests
         state.IncrementZeroByteReceives();
 
         Assert.Equal(1, state.GetZeroByteReceives());
+    }
+
+    /// <summary>
+    /// Verifies peak active connections track the high-watermark rather than the current active count.
+    /// </summary>
+    [Fact]
+    public void IncrementAcceptedConnections_TracksPeakActiveConnections()
+    {
+        TcpServerMetricsState state = new TcpServerMetricsState();
+        state.EnableCapture();
+
+        for (int index = 0; index < 5; index++)
+        {
+            state.IncrementAcceptedConnections();
+        }
+
+        for (int index = 0; index < 3; index++)
+        {
+            state.FinalizeDisconnect(DisconnectReason.None);
+        }
+
+        state.IncrementAcceptedConnections();
+
+        Assert.Equal(3, state.GetActiveConnections());
+        Assert.Equal(5, state.GetAndResetPeakActiveConnections(state.GetActiveConnections()));
+    }
+
+    /// <summary>
+    /// Verifies resetting the peak returns the previous value and seeds the next interval with the provided baseline.
+    /// </summary>
+    [Fact]
+    public void GetAndResetPeakActiveConnections_ReturnsPreviousPeakAndSeedsNextInterval()
+    {
+        TcpServerMetricsState state = new TcpServerMetricsState();
+        state.EnableCapture();
+
+        for (int index = 0; index < 5; index++)
+        {
+            state.IncrementAcceptedConnections();
+        }
+
+        for (int index = 0; index < 2; index++)
+        {
+            state.FinalizeDisconnect(DisconnectReason.None);
+        }
+
+        Assert.Equal(5, state.GetAndResetPeakActiveConnections(3));
+        Assert.Equal(3, state.GetAndResetPeakActiveConnections(3));
+    }
+
+    /// <summary>
+    /// Verifies peak active connections do not update while capture is disabled.
+    /// </summary>
+    [Fact]
+    public void IncrementAcceptedConnections_DoesNotTrackPeakWhenCaptureIsDisabled()
+    {
+        TcpServerMetricsState state = new TcpServerMetricsState();
+
+        state.IncrementAcceptedConnections();
+        state.EnableCapture();
+        state.IncrementAcceptedConnections();
+        state.DisableCapture();
+        state.IncrementAcceptedConnections();
+
+        Assert.Equal(1, state.GetActiveConnections());
+        Assert.Equal(1, state.GetAndResetPeakActiveConnections(0));
     }
 
     /// <summary>

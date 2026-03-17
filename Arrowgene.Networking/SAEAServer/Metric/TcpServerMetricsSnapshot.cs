@@ -17,6 +17,7 @@ public readonly struct TcpServerMetricsSnapshot
     /// <param name="acceptedConnections">The total number of accepted connections.</param>
     /// <param name="rejectedConnections">The total number of rejected connections.</param>
     /// <param name="activeConnections">The current number of active connections.</param>
+    /// <param name="peakActiveConnections">The maximum number of simultaneously active connections observed since the previous snapshot.</param>
     /// <param name="disconnectedConnections">The total number of finalized disconnects.</param>
     /// <param name="timedOutConnections">The total number of timeout-initiated disconnects.</param>
     /// <param name="sendQueueOverflows">The total number of send queue overflow events.</param>
@@ -47,6 +48,7 @@ public readonly struct TcpServerMetricsSnapshot
         long acceptedConnections,
         long rejectedConnections,
         long activeConnections,
+        long peakActiveConnections,
         long disconnectedConnections,
         long timedOutConnections,
         long sendQueueOverflows,
@@ -77,6 +79,7 @@ public readonly struct TcpServerMetricsSnapshot
         AcceptedConnections = acceptedConnections;
         RejectedConnections = rejectedConnections;
         ActiveConnections = activeConnections;
+        PeakActiveConnections = peakActiveConnections;
         DisconnectedConnections = disconnectedConnections;
         TimedOutConnections = timedOutConnections;
         SendQueueOverflows = sendQueueOverflows;
@@ -123,6 +126,11 @@ public readonly struct TcpServerMetricsSnapshot
     /// Gets the current number of active connections.
     /// </summary>
     public long ActiveConnections { get; }
+
+    /// <summary>
+    /// Gets the maximum number of simultaneously active connections observed since the previous snapshot.
+    /// </summary>
+    public long PeakActiveConnections { get; }
 
     /// <summary>
     /// Gets the total number of finalized disconnects.

@@ -18,6 +18,7 @@ internal sealed class TcpServerMetricsState
     private long _acceptedConnections;
     private long _rejectedConnections;
     private long _activeConnections;
+    private long _peakActiveConnections;
     private long _disconnectedConnections;
     private long _timedOutConnections;
     private long _sendQueueOverflows;
@@ -95,7 +96,16 @@ internal sealed class TcpServerMetricsState
         }
 
         Interlocked.Increment(ref _acceptedConnections);
-        Interlocked.Increment(ref _activeConnections);
+        long current = Interlocked.Increment(ref _activeConnections);
+        long peak;
+        do
+        {
+            peak = Volatile.Read(ref _peakActiveConnections);
+            if (current <= peak)
+            {
+                break;
+            }
+        } while (Interlocked.CompareExchange(ref _peakActiveConnections, current, peak) != peak);
     }
 
     internal void IncrementRejectedConnections()
@@ -273,6 +283,7 @@ internal sealed class TcpServerMetricsState
     internal void ResetCurrentGauges()
     {
         Interlocked.Exchange(ref _activeConnections, 0);
+        Interlocked.Exchange(ref _peakActiveConnections, 0);
         Interlocked.Exchange(ref _inFlightAsyncCallbacks, 0);
         Interlocked.Exchange(ref _disconnectCleanupQueueDepth, 0);
     }
@@ -290,6 +301,11 @@ internal sealed class TcpServerMetricsState
     internal long GetActiveConnections()
     {
         return Interlocked.Read(ref _activeConnections);
+    }
+
+    internal long GetAndResetPeakActiveConnections(long resetValue)
+    {
+        return Interlocked.Exchange(ref _peakActiveConnections, resetValue);
     }
 
     internal long GetDisconnectedConnections()

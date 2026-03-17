@@ -10,6 +10,7 @@
 | `AcceptedConnections` | Counter | Total number of connections that were accepted and activated. |
 | `RejectedConnections` | Counter | Total number of accepted sockets rejected before activation, for example because the server was stopping or the client pool was full. |
 | `ActiveConnections` | Gauge | Current number of active connected clients. |
+| `PeakActiveConnections` | Gauge | Maximum simultaneous active connections observed since the previous snapshot. |
 | `DisconnectedConnections` | Counter | Total number of finalized disconnects. |
 | `TimedOutConnections` | Counter | Total number of disconnects initiated by the idle socket timeout. |
 | `SendQueueOverflows` | Counter | Total number of times a client exceeded `MaxQueuedSendBytes`. |

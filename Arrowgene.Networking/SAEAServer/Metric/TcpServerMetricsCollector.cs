@@ -191,6 +191,8 @@ internal sealed class TcpServerMetricsCollector : IDisposable
         double sendBytesPerSecond)
     {
         ConsumerMetricsSnapshot? consumerMetrics = _consumerMetrics?.CreateSnapshot();
+        long activeConnections = _metricsState.GetActiveConnections();
+        long peakActiveConnections = _metricsState.GetAndResetPeakActiveConnections(activeConnections);
         long[] disconnectsByReason = new long[_metricsState.DisconnectReasonCount];
         long[] laneActiveConnections = new long[_orderingLaneCount];
         long[] connectionDurationBuckets = new long[_metricsState.ConnectionDurationBucketsCount];
@@ -208,7 +210,8 @@ internal sealed class TcpServerMetricsCollector : IDisposable
             timestampUtc,
             _metricsState.GetAcceptedConnections(),
             _metricsState.GetRejectedConnections(),
-            _metricsState.GetActiveConnections(),
+            activeConnections,
+            peakActiveConnections,
             _metricsState.GetDisconnectedConnections(),
             _metricsState.GetTimedOutConnections(),
             _metricsState.GetSendQueueOverflows(),

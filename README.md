@@ -95,6 +95,7 @@ TcpServerMetricsSnapshot metrics = server.GetMetricsSnapshot();
 
 Console.WriteLine(
     $"active={metrics.ActiveConnections} " +
+    $"peakActive={metrics.PeakActiveConnections} " +
     $"accepted={metrics.AcceptedConnections} " +
     $"availableSlots={metrics.AvailableClientSlots} " +
     $"recv={metrics.BytesReceived} " +
@@ -111,7 +112,7 @@ long smallReceives = metrics.ReceiveSizeBuckets.Span[0];
 
 The snapshot includes:
 
-- Connection totals and gauges: accepted, rejected, active, disconnected.
+- Connection totals and gauges: accepted, rejected, active, peak active, disconnected.
 - Throughput totals and rates: receive/send operations, bytes, bytes per second.
 - Failure and backpressure counters: socket errors, zero-byte receives, timeouts, send queue overflows.
 - Current server state: accept-pool availability, available client slots, in-flight async callbacks, deferred disconnect cleanup depth, per-lane active connections.

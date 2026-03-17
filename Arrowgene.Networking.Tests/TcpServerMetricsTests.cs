@@ -54,6 +54,7 @@ public sealed class TcpServerMetricsTests
                 snapshot =>
                     snapshot.AcceptedConnections >= 1
                     && snapshot.ActiveConnections == 1
+                    && snapshot.PeakActiveConnections >= snapshot.ActiveConnections
                     && snapshot.ReceiveOperations >= 1
                     && snapshot.SendOperations >= 1
                     && snapshot.BytesReceived >= payload.Length
@@ -67,6 +68,7 @@ public sealed class TcpServerMetricsTests
             Assert.Equal(10, connectedSnapshot.ReceiveSizeBuckets.Length);
             Assert.Equal(10, connectedSnapshot.SendSizeBuckets.Length);
             Assert.Equal(10, connectedSnapshot.ConnectionDurationBuckets.Length);
+            Assert.True(connectedSnapshot.PeakActiveConnections >= connectedSnapshot.ActiveConnections);
             Assert.Equal(connectedSnapshot.ReceiveOperations, GetCounterTotal(connectedSnapshot.ReceiveSizeBuckets));
             Assert.Equal(connectedSnapshot.SendOperations, GetCounterTotal(connectedSnapshot.SendSizeBuckets));
             Assert.Equal(0, GetCounterTotal(connectedSnapshot.ConnectionDurationBuckets));
@@ -80,6 +82,7 @@ public sealed class TcpServerMetricsTests
                 host,
                 snapshot =>
                     snapshot.ActiveConnections == 0
+                    && snapshot.PeakActiveConnections >= snapshot.ActiveConnections
                     && snapshot.DisconnectedConnections >= 1
                     && snapshot.AvailableClientSlots == 1
                     && GetDisconnectCount(snapshot, DisconnectReason.RemoteClosed) >= 1,
@@ -88,6 +91,7 @@ public sealed class TcpServerMetricsTests
             );
 
             Assert.Equal(0, GetLaneConnectionTotal(disconnectedSnapshot));
+            Assert.True(disconnectedSnapshot.PeakActiveConnections >= disconnectedSnapshot.ActiveConnections);
             Assert.Equal(10, disconnectedSnapshot.ConnectionDurationBuckets.Length);
             Assert.Equal(
                 disconnectedSnapshot.DisconnectedConnections,
@@ -571,6 +575,7 @@ public sealed class TcpServerMetricsTests
             $"accepted={snapshot.AcceptedConnections}, " +
             $"rejected={snapshot.RejectedConnections}, " +
             $"active={snapshot.ActiveConnections}, " +
+            $"peakActive={snapshot.PeakActiveConnections}, " +
             $"disconnected={snapshot.DisconnectedConnections}, " +
             $"timedOut={snapshot.TimedOutConnections}, " +
             $"queueOverflows={snapshot.SendQueueOverflows}, " +
