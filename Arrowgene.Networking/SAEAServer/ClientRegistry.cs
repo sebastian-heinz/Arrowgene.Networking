@@ -54,6 +54,14 @@ internal sealed class ClientRegistry : IDisposable
         }
     }
 
+    internal int GetAvailableClientSlotCount()
+    {
+        lock (_sync)
+        {
+            return _availableClients.Count;
+        }
+    }
+
     internal bool TryActivateClient(
         TcpServer tcpServer,
         Socket acceptedSocket,
@@ -147,6 +155,44 @@ internal sealed class ClientRegistry : IDisposable
             destination.Clear();
             destination.AddRange(_activeHandles);
         }
+    }
+
+    internal void SnapshotLaneLoads(long[] destination)
+    {
+        if (destination is null)
+        {
+            throw new ArgumentNullException(nameof(destination));
+        }
+
+        if (destination.Length < _laneLoadByIndex.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(destination),
+                "Destination must be at least as large as the configured ordering lane count.");
+        }
+
+        lock (_sync)
+        {
+            for (int index = 0; index < _laneLoadByIndex.Length; index++)
+            {
+                destination[index] = _laneLoadByIndex[index];
+            }
+        }
+    }
+
+    internal long GetTotalSendQueuedBytes()
+    {
+        long total = 0;
+
+        for (int index = 0; index < _allClients.Length; index++)
+        {
+            Client client = _allClients[index];
+            if (client.IsAlive)
+            {
+                total += client.GetSendQueuedBytes();
+            }
+        }
+
+        return total;
     }
 
     public void Dispose()

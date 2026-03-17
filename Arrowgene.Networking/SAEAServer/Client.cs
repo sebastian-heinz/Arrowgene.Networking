@@ -111,11 +111,27 @@ internal sealed class Client : IDisposable
         }
     }
 
+    internal bool IsDisconnectCleanupQueued
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _disconnectCleanupQueued;
+            }
+        }
+    }
+
     internal SocketAsyncEventArgs ReceiveEventArgs { get; }
 
     internal SocketAsyncEventArgs SendEventArgs { get; }
 
     internal int PendingOperations => Volatile.Read(ref _pendingOperations);
+
+    internal int GetSendQueuedBytes()
+    {
+        return _sendQueue.GetQueuedBytes();
+    }
 
     /// <summary>
     /// Queues a payload to be sent to the client.
@@ -131,9 +147,9 @@ internal sealed class Client : IDisposable
     /// <summary>
     /// Disconnects the client.
     /// </summary>
-    public void Disconnect(ClientHandle clientHandle, string reason = "")
+    public void Disconnect(ClientHandle clientHandle)
     {
-        _server.Disconnect(clientHandle, reason);
+        _server.Disconnect(clientHandle, DisconnectReason.None);
     }
 
     public ClientSnapshot Snapshot()
@@ -141,6 +157,7 @@ internal sealed class Client : IDisposable
         ClientSnapshot snapshot;
         lock (_sync)
         {
+            int sendQueuedBytes = _sendQueue.GetQueuedBytes();
             snapshot = new ClientSnapshot(
                 ClientId,
                 _generation,
@@ -154,6 +171,7 @@ internal sealed class Client : IDisposable
                 unchecked((ulong)_bytesReceived),
                 unchecked((ulong)_bytesSent),
                 _pendingOperations,
+                sendQueuedBytes,
                 UnitOfOrder
             );
         }

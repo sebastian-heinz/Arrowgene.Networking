@@ -158,6 +158,78 @@ public sealed class ServerIntegrationTests
     }
 
     /// <summary>
+    /// Verifies client snapshots expose queued outbound bytes during backpressure and reset on pooled-slot reuse.
+    /// </summary>
+    [Fact]
+    public async Task ClientSnapshot_SendQueuedBytesTracksBackpressureAndResetsOnReuse()
+    {
+        RecordingConsumer consumer = new RecordingConsumer();
+
+        using ServerTestHost host = new ServerTestHost(
+            consumer,
+            settings =>
+            {
+                settings.MaxConnections = 1;
+                settings.BufferSize = 256;
+                settings.MaxQueuedSendBytes = 8 * 1024 * 1024;
+            }
+        );
+
+        TcpClient firstClient = await host.ConnectClientAsync();
+
+        try
+        {
+            await consumer.WaitForConnectedCountAsync(1, ShortTimeout);
+
+            ConnectedClientRecord firstConnectedClient = consumer.GetConnectedClient(0);
+            byte[] payload = CreatePayload(4 * 1024 * 1024, 41);
+            firstConnectedClient.Handle.Send(payload);
+
+            ClientSnapshot queuedSnapshot = default;
+            await TestWait.UntilAsync(
+                () =>
+                {
+                    if (!firstConnectedClient.Handle.TrySnapshot(out ClientSnapshot candidate))
+                    {
+                        return false;
+                    }
+
+                    queuedSnapshot = candidate;
+                    return queuedSnapshot.SendQueuedBytes > 0;
+                },
+                MediumTimeout,
+                "Timed out waiting for queued outbound bytes to appear in the client snapshot."
+            );
+
+            Assert.True(queuedSnapshot.SendQueuedBytes > 0);
+
+            host.DisposeClient(firstClient);
+            await consumer.WaitForDisconnectedCountAsync(1, MediumTimeout);
+
+            TcpClient secondClient = await host.ConnectClientAsync();
+            try
+            {
+                await consumer.WaitForConnectedCountAsync(2, MediumTimeout);
+
+                ConnectedClientRecord secondConnectedClient = consumer.GetConnectedClient(1);
+                Assert.True(secondConnectedClient.Handle.TrySnapshot(out ClientSnapshot resetSnapshot));
+                Assert.Equal(0, resetSnapshot.SendQueuedBytes);
+                Assert.Empty(consumer.Errors);
+            }
+            finally
+            {
+                host.DisposeClient(secondClient);
+            }
+        }
+        finally
+        {
+            host.DisposeClient(firstClient);
+        }
+
+        await consumer.WaitForDisconnectedCountAsync(2, MediumTimeout);
+    }
+
+    /// <summary>
     /// Verifies a stale handle cannot send data into a recycled pooled client slot.
     /// </summary>
     [Fact]

@@ -29,6 +29,7 @@ using System.Net.Sockets;
 using System.Threading;
 using Arrowgene.Logging;
 using Arrowgene.Networking.SAEAServer.Consumer;
+using Arrowgene.Networking.SAEAServer.Metric;
 
 namespace Arrowgene.Networking.SAEAServer;
 
@@ -50,6 +51,7 @@ public sealed class TcpServer : IDisposable
     private const string AcceptThreadName = "TcpServer";
     private const string TimeoutThreadName = "TcpServer_Timeout";
     private const string DisconnectCleanupThreadName = "TcpServer_DisconnectCleanup";
+    private const string MetricsThreadName = "TcpServer_Metrics";
     private const int ThreadTimeoutMs = 10000;
     private const int MinSocketTimeoutDelayMs = 1000;
     private const int MaxSocketTimeoutDelayMs = 30000;
@@ -63,11 +65,15 @@ public sealed class TcpServer : IDisposable
     private readonly AcceptPool _acceptPool;
     private readonly BufferSlab _bufferSlab;
     private readonly ClientRegistry _clientRegistry;
+    private readonly IConsumerMetrics? _consumerMetrics;
+    private readonly TcpServerMetricsState _metricsState;
+    private readonly TcpServerMetricsCollector _metricsCollector;
     private readonly TimeSpan _socketTimeout;
     private readonly int _bufferSize;
     private readonly string _identity;
     private readonly object _disconnectCleanupSync;
-    private readonly Queue<ClientHandle> _disconnectCleanupQueue;
+    private readonly Queue<(ClientHandle ClientHandle, DisconnectReason DisconnectReason)>
+        _disconnectCleanupQueue;
     private readonly ManualResetEventSlim _shutdownCompleted;
     private readonly ManualResetEventSlim _asyncCallbacksDrained;
     private CancellationTokenSource _cancellation;
@@ -128,6 +134,7 @@ public sealed class TcpServer : IDisposable
         IpAddress = ipAddress;
         Port = port;
         _consumer = consumer;
+        _consumerMetrics = consumer as IConsumerMetrics;
         _settings = new TcpServerSettings(settings);
         _bufferSize = settings.BufferSize;
 
@@ -135,14 +142,24 @@ public sealed class TcpServer : IDisposable
         _socketTimeout = TimeSpan.FromSeconds(_settings.ClientSocketTimeoutSeconds);
         _identity = string.IsNullOrEmpty(_settings.Identity) ? string.Empty : $"[{_settings.Identity}] ";
         _disconnectCleanupSync = new object();
-        _disconnectCleanupQueue = new Queue<ClientHandle>(_settings.MaxConnections);
+        _disconnectCleanupQueue = new Queue<(ClientHandle ClientHandle, DisconnectReason DisconnectReason)>(
+            _settings.MaxConnections
+        );
         _bufferSlab = new BufferSlab(_settings.MaxConnections, _bufferSize);
         _clientRegistry = new ClientRegistry(
             _settings.MaxConnections,
             _settings.OrderingLaneCount,
             CreateClient
         );
+        _metricsState = new TcpServerMetricsState();
         _acceptPool = new AcceptPool(_settings.ConcurrentAccepts, AcceptCompleted);
+        _metricsCollector = new TcpServerMetricsCollector(
+            _metricsState,
+            _clientRegistry,
+            _acceptPool,
+            _consumerMetrics,
+            _settings.OrderingLaneCount
+        );
 
         _state = ServerState.Created;
         _shutdownCompleted = new ManualResetEventSlim(false);
@@ -151,6 +168,35 @@ public sealed class TcpServer : IDisposable
         _acceptThread = CreateBackgroundThread(Run, AcceptThreadName);
         _timeoutThread = CreateBackgroundThread(CheckSocketTimeout, TimeoutThreadName);
         _disconnectCleanupThread = CreateBackgroundThread(CleanupDisconnectedClients, DisconnectCleanupThreadName);
+    }
+
+    /// <summary>
+    /// Captures and returns a fresh metrics snapshot for the server.
+    /// </summary>
+    /// <returns>The latest captured <see cref="TcpServerMetricsSnapshot"/>.</returns>
+    public TcpServerMetricsSnapshot GetMetricsSnapshot()
+    {
+        if (IsMetricsCaptureEnabled())
+        {
+            try
+            {
+                _metricsCollector.CaptureSnapshot();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+
+        return _metricsCollector.GetSnapshot();
+    }
+
+    /// <summary>
+    /// Returns the latest published metrics snapshot without forcing a new capture.
+    /// </summary>
+    /// <returns>The latest published <see cref="TcpServerMetricsSnapshot"/>.</returns>
+    public TcpServerMetricsSnapshot GetPublishedMetricsSnapshot()
+    {
+        return _metricsCollector.GetSnapshot();
     }
 
     /// <summary>
@@ -188,11 +234,14 @@ public sealed class TcpServer : IDisposable
             }
 
             _state = ServerState.Running;
+            EnableMetricsCapture();
             startTimeoutThread = _socketTimeout > TimeSpan.Zero;
         }
 
         try
         {
+            string metricsThreadName = $"{_identity}{MetricsThreadName}".Trim();
+            _metricsCollector.Start(metricsThreadName);
             _disconnectCleanupThread.Start();
             if (startTimeoutThread)
             {
@@ -210,6 +259,7 @@ public sealed class TcpServer : IDisposable
                 if (_state == ServerState.Running)
                 {
                     _state = ServerState.Stopping;
+                    DisableMetricsCapture();
                 }
             }
 
@@ -248,9 +298,11 @@ public sealed class TcpServer : IDisposable
             }
 
             _state = ServerState.Stopping;
+            DisableMetricsCapture();
         }
 
         Log(LogLevel.Info, nameof(Stop), "Stopping server...");
+        _metricsCollector.Stop();
         Shutdown();
         Log(LogLevel.Info, nameof(Stop), "TcpServer stopped.");
     }
@@ -270,6 +322,7 @@ public sealed class TcpServer : IDisposable
                 if (_state == ServerState.Running)
                 {
                     _state = ServerState.Stopping;
+                    DisableMetricsCapture();
                     shouldShutdown = true;
                 }
             }
@@ -389,6 +442,7 @@ public sealed class TcpServer : IDisposable
             catch (SocketException exception)
             {
                 Logger.Exception(exception);
+                _metricsState.IncrementSocketAcceptErrors();
                 _acceptPool.Return(acquiredEventArgs);
                 continue;
             }
@@ -410,6 +464,7 @@ public sealed class TcpServer : IDisposable
         catch (Exception exception)
         {
             Logger.Exception(exception);
+            _metricsState.IncrementSocketAcceptErrors();
             Service.CloseSocket(acceptEventArgs.AcceptSocket);
         }
         finally
@@ -430,6 +485,15 @@ public sealed class TcpServer : IDisposable
         {
             if (acceptedSocket is null)
             {
+                if (socketError != SocketError.Success)
+                {
+                    _metricsState.RecordSocketAcceptError(socketError);
+                }
+                else
+                {
+                    _metricsState.IncrementSocketAcceptErrors();
+                }
+
                 Log(
                     LogLevel.Error,
                     nameof(ProcessAccept),
@@ -444,6 +508,7 @@ public sealed class TcpServer : IDisposable
 
             if (socketError != SocketError.Success)
             {
+                _metricsState.RecordSocketAcceptError(socketError);
                 Log(LogLevel.Error, nameof(ProcessAccept), $"SocketError: {socketError}.", clientIdentity);
                 Service.CloseSocket(acceptedSocket);
                 return;
@@ -451,6 +516,7 @@ public sealed class TcpServer : IDisposable
 
             if (!IsRunningState())
             {
+                _metricsState.IncrementRejectedConnections();
                 Log(
                     LogLevel.Debug,
                     nameof(ProcessAccept),
@@ -465,12 +531,14 @@ public sealed class TcpServer : IDisposable
 
             if (!_clientRegistry.TryActivateClient(this, acceptedSocket, out clientHandle))
             {
+                _metricsState.IncrementRejectedConnections();
                 Log(LogLevel.Error, nameof(ProcessAccept), "No available client slot in the pool.", clientIdentity);
                 Service.CloseSocket(acceptedSocket);
                 return;
             }
 
             clientActivated = true;
+            _metricsState.IncrementAcceptedConnections();
         }
 
         catch (Exception exception)
@@ -478,7 +546,7 @@ public sealed class TcpServer : IDisposable
             Logger.Exception(exception);
             if (clientActivated)
             {
-                Disconnect(clientHandle, "AcceptFailure");
+                Disconnect(clientHandle, DisconnectReason.AcceptFailure);
             }
             else
             {
@@ -517,7 +585,7 @@ public sealed class TcpServer : IDisposable
         {
             if (!client.TryBeginSocketOperation(clientHandle.Generation, out Socket socket))
             {
-                Disconnect(clientHandle);
+                Disconnect(clientHandle, DisconnectReason.StaleHandle);
                 return;
             }
 
@@ -529,20 +597,21 @@ public sealed class TcpServer : IDisposable
             catch (ObjectDisposedException)
             {
                 client.DecrementPendingOperations();
-                Disconnect(clientHandle);
+                Disconnect(clientHandle, DisconnectReason.ReceiveFailure);
                 return;
             }
             catch (InvalidOperationException)
             {
                 client.DecrementPendingOperations();
-                Disconnect(clientHandle);
+                Disconnect(clientHandle, DisconnectReason.ReceiveFailure);
                 return;
             }
             catch (SocketException exception)
             {
                 client.DecrementPendingOperations();
                 Logger.Exception(exception);
-                Disconnect(clientHandle);
+                _metricsState.RecordSocketReceiveError(exception.SocketErrorCode);
+                Disconnect(clientHandle, DisconnectReason.ReceiveFailure);
                 return;
             }
 
@@ -551,10 +620,10 @@ public sealed class TcpServer : IDisposable
                 return;
             }
 
-            bool continueReceiving = ProcessReceive(clientHandle);
+            bool continueReceiving = ProcessReceive(clientHandle, out DisconnectReason disconnectReason);
             if (!continueReceiving)
             {
-                Disconnect(clientHandle);
+                Disconnect(clientHandle, disconnectReason);
                 return;
             }
         }
@@ -571,21 +640,21 @@ public sealed class TcpServer : IDisposable
                 return;
             }
 
-            bool continueReceiving = ProcessReceive(clientHandle);
+            bool continueReceiving = ProcessReceive(clientHandle, out DisconnectReason disconnectReason);
             if (continueReceiving)
             {
                 StartReceive(clientHandle);
                 return;
             }
 
-            Disconnect(clientHandle);
+            Disconnect(clientHandle, disconnectReason);
         }
         catch (Exception exception)
         {
             Logger.Exception(exception);
             if (eventArgs.UserToken is ClientHandle clientHandle)
             {
-                Disconnect(clientHandle, "ReceiveCompletedFailure");
+                Disconnect(clientHandle, DisconnectReason.ReceiveCompletedFailure);
             }
         }
         finally
@@ -594,11 +663,14 @@ public sealed class TcpServer : IDisposable
         }
     }
 
-    private bool ProcessReceive(ClientHandle clientHandle)
+    private bool ProcessReceive(ClientHandle clientHandle, out DisconnectReason disconnectReason)
     {
+        disconnectReason = DisconnectReason.None;
+
         if (!clientHandle.TryGetClient(out Client client))
         {
             Log(LogLevel.Error, nameof(ProcessReceive), "Client handle is stale.");
+            disconnectReason = DisconnectReason.StaleHandle;
             return false;
         }
 
@@ -609,19 +681,23 @@ public sealed class TcpServer : IDisposable
             SocketError socketError = receiveEventArgs.SocketError;
             if (socketError != SocketError.Success)
             {
+                _metricsState.RecordSocketReceiveError(socketError);
                 Log(LogLevel.Error, nameof(ProcessReceive), $"Socket error {socketError}.", client.Identity);
+                disconnectReason = DisconnectReason.ReceiveFailure;
                 return false;
             }
 
             int bytesTransferred = receiveEventArgs.BytesTransferred;
             if (bytesTransferred <= 0)
             {
+                _metricsState.IncrementZeroByteReceives();
                 Log(
                     LogLevel.Error,
                     nameof(ProcessReceive),
                     "No bytes transferred, remote most likely closed",
                     client.Identity
                 );
+                disconnectReason = DisconnectReason.RemoteClosed;
                 return false;
             }
 
@@ -630,10 +706,12 @@ public sealed class TcpServer : IDisposable
             if (receiveBuffer is null)
             {
                 Log(LogLevel.Error, nameof(ProcessReceive), "Receive buffer is null.", client.Identity);
+                disconnectReason = DisconnectReason.ReceiveFailure;
                 return false;
             }
 
             client.RecordReceive(bytesTransferred);
+            _metricsState.RecordReceive(bytesTransferred);
 
             byte[] data = GC.AllocateUninitializedArray<byte>(bytesTransferred);
             Buffer.BlockCopy(receiveBuffer, receiveOffset, data, 0, bytesTransferred);
@@ -694,8 +772,9 @@ public sealed class TcpServer : IDisposable
         {
             if (queueOverflow)
             {
+                _metricsState.IncrementSendQueueOverflows();
                 Log(LogLevel.Error, nameof(Send), "Send queue overflow, closing client.", client.Identity);
-                Disconnect(clientHandle);
+                Disconnect(clientHandle, DisconnectReason.SendQueueOverflow);
             }
 
             return;
@@ -724,7 +803,7 @@ public sealed class TcpServer : IDisposable
 
             if (!client.TryBeginSocketOperation(clientHandle.Generation, out Socket socket))
             {
-                Disconnect(clientHandle);
+                Disconnect(clientHandle, DisconnectReason.StaleHandle);
                 return;
             }
 
@@ -737,20 +816,21 @@ public sealed class TcpServer : IDisposable
             catch (ObjectDisposedException)
             {
                 client.DecrementPendingOperations();
-                Disconnect(clientHandle);
+                Disconnect(clientHandle, DisconnectReason.SendFailure);
                 return;
             }
             catch (InvalidOperationException)
             {
                 client.DecrementPendingOperations();
-                Disconnect(clientHandle);
+                Disconnect(clientHandle, DisconnectReason.SendFailure);
                 return;
             }
             catch (SocketException exception)
             {
                 client.DecrementPendingOperations();
                 Logger.Exception(exception);
-                Disconnect(clientHandle);
+                _metricsState.RecordSocketSendError(exception.SocketErrorCode);
+                Disconnect(clientHandle, DisconnectReason.SendFailure);
                 return;
             }
 
@@ -759,9 +839,18 @@ public sealed class TcpServer : IDisposable
                 return;
             }
 
-            bool continueSending = ProcessSend(clientHandle);
+            bool continueSending = ProcessSend(
+                clientHandle,
+                out bool disconnectClient,
+                out DisconnectReason disconnectReason
+            );
             if (!continueSending)
             {
+                if (disconnectClient)
+                {
+                    Disconnect(clientHandle, disconnectReason);
+                }
+
                 return;
             }
         }
@@ -778,10 +867,20 @@ public sealed class TcpServer : IDisposable
                 return;
             }
 
-            bool continueSending = ProcessSend(clientHandle);
+            bool continueSending = ProcessSend(
+                clientHandle,
+                out bool disconnectClient,
+                out DisconnectReason disconnectReason
+            );
             if (continueSending)
             {
                 StartSend(clientHandle);
+                return;
+            }
+
+            if (disconnectClient)
+            {
+                Disconnect(clientHandle, disconnectReason);
             }
         }
         catch (Exception exception)
@@ -789,7 +888,7 @@ public sealed class TcpServer : IDisposable
             Logger.Exception(exception);
             if (eventArgs.UserToken is ClientHandle clientHandle)
             {
-                Disconnect(clientHandle, "SendCompletedFailure");
+                Disconnect(clientHandle, DisconnectReason.SendCompletedFailure);
             }
         }
         finally
@@ -798,27 +897,38 @@ public sealed class TcpServer : IDisposable
         }
     }
 
-    private bool ProcessSend(ClientHandle clientHandle)
+    private bool ProcessSend(
+        ClientHandle clientHandle,
+        out bool disconnectClient,
+        out DisconnectReason disconnectReason)
     {
+        disconnectClient = false;
+        disconnectReason = DisconnectReason.None;
+
         if (!clientHandle.TryGetClient(out Client client))
         {
             Log(LogLevel.Error, nameof(ProcessSend), "Client handle is stale.");
+            disconnectClient = true;
+            disconnectReason = DisconnectReason.StaleHandle;
             return false;
         }
 
         if (!client.IsAlive)
         {
             client.DecrementPendingOperations();
-            Disconnect(clientHandle);
+            disconnectClient = true;
+            disconnectReason = DisconnectReason.SendFailure;
             return false;
         }
 
         SocketAsyncEventArgs sendEventArgs = client.SendEventArgs;
         if (sendEventArgs.SocketError != SocketError.Success)
         {
+            _metricsState.RecordSocketSendError(sendEventArgs.SocketError);
             Log(LogLevel.Error, nameof(ProcessSend), $"Socket error {sendEventArgs.SocketError}.", client.Identity);
             client.DecrementPendingOperations();
-            Disconnect(clientHandle);
+            disconnectClient = true;
+            disconnectReason = DisconnectReason.SendFailure;
             return false;
         }
 
@@ -827,13 +937,15 @@ public sealed class TcpServer : IDisposable
             Log(LogLevel.Error, nameof(ProcessSend), "Send completed with zero bytes transferred.",
                 client.Identity);
             client.DecrementPendingOperations();
-            Disconnect(clientHandle);
+            disconnectClient = true;
+            disconnectReason = DisconnectReason.SendFailure;
             return false;
         }
 
         try
         {
             client.RecordSend(sendEventArgs.BytesTransferred);
+            _metricsState.RecordSend(sendEventArgs.BytesTransferred);
             return client.CompleteSend(sendEventArgs.BytesTransferred);
         }
         finally
@@ -853,7 +965,9 @@ public sealed class TcpServer : IDisposable
         );
     }
 
-    internal void Disconnect(ClientHandle clientHandle, string reason = "")
+    internal void Disconnect(
+        ClientHandle clientHandle,
+        DisconnectReason disconnectReason = DisconnectReason.None)
     {
         if (!clientHandle.TryGetClient(out Client client))
         {
@@ -861,16 +975,24 @@ public sealed class TcpServer : IDisposable
         }
 
         client.Close();
-        if (!TryFinalizeDisconnect(clientHandle, reason) && client.TryMarkDisconnectCleanupQueued())
+        if (client.IsDisconnectCleanupQueued)
+        {
+            return;
+        }
+
+        if (!TryFinalizeDisconnect(clientHandle, disconnectReason) && client.TryMarkDisconnectCleanupQueued())
         {
             lock (_disconnectCleanupSync)
             {
-                _disconnectCleanupQueue.Enqueue(clientHandle);
+                _disconnectCleanupQueue.Enqueue((clientHandle, disconnectReason));
+                _metricsState.EnqueueDisconnectCleanup();
             }
         }
     }
 
-    private bool TryFinalizeDisconnect(ClientHandle clientHandle, string reason)
+    private bool TryFinalizeDisconnect(
+        ClientHandle clientHandle,
+        DisconnectReason disconnectReason)
     {
         if (!_clientRegistry.TryDeactivateClient(clientHandle, out ClientSnapshot snapshot))
         {
@@ -881,10 +1003,17 @@ public sealed class TcpServer : IDisposable
             ? TimeSpan.Zero
             : DateTime.UtcNow - snapshot.ConnectedAt;
 
+        _metricsState.FinalizeDisconnect(disconnectReason);
+        _metricsState.RecordConnectionDuration(duration);
+
+        string disconnectReasonText = disconnectReason == DisconnectReason.None
+            ? string.Empty
+            : disconnectReason.ToString();
+
         Log(
             LogLevel.Info,
             nameof(Disconnect),
-            $"Disconnected({reason}){Environment.NewLine}" +
+            $"Disconnected({disconnectReasonText}){Environment.NewLine}" +
             $"Total Seconds:{duration.TotalSeconds} ({Service.GetHumanReadableDuration(duration)}){Environment.NewLine}" +
             $"Total Bytes Received:{snapshot.BytesReceived} ({Service.GetHumanReadableSize(snapshot.BytesReceived)}){Environment.NewLine}" +
             $"Total Bytes Sent:{snapshot.BytesSent} ({Service.GetHumanReadableSize(snapshot.BytesSent)}){Environment.NewLine}" +
@@ -912,11 +1041,14 @@ public sealed class TcpServer : IDisposable
     private void CleanupDisconnectedClients()
     {
         CancellationToken cancellationToken = _cancellation.Token;
-        List<ClientHandle> handles = new List<ClientHandle>(_settings.MaxConnections);
+        List<(ClientHandle ClientHandle, DisconnectReason DisconnectReason)> disconnects =
+            new List<(ClientHandle ClientHandle, DisconnectReason DisconnectReason)>(
+                _settings.MaxConnections
+            );
 
         while (true)
         {
-            ProcessDisconnectCleanupQueue(handles, "DeferredCleanup");
+            ProcessDisconnectCleanupQueue(disconnects);
 
             if (cancellationToken.IsCancellationRequested && IsDisconnectCleanupQueueEmpty())
             {
@@ -958,13 +1090,14 @@ public sealed class TcpServer : IDisposable
                 {
                     TimeSpan elapsed = TimeSpan.FromMilliseconds(elapsedMsSinceLastActivity);
                     DateTime lastActiveUtc = DateTime.UtcNow - elapsed;
+                    _metricsState.IncrementTimedOutConnections();
                     Log(
                         LogLevel.Error,
                         nameof(CheckSocketTimeout),
                         $"Client socket timed out after {elapsed.TotalSeconds} seconds. SocketTimeout:{_socketTimeout.TotalSeconds} LastActive(UTC):{lastActiveUtc:yyyy-MM-dd HH:mm:ss}",
                         client.Identity
                     );
-                    Disconnect(clientHandle);
+                    Disconnect(clientHandle, DisconnectReason.Timeout);
                 }
             }
 
@@ -993,11 +1126,14 @@ public sealed class TcpServer : IDisposable
                 if (_state == ServerState.Running || _state == ServerState.Created)
                 {
                     _state = ServerState.Stopping;
+                    DisableMetricsCapture();
                 }
 
                 listenSocket = _listenSocket;
                 _listenSocket = null;
             }
+
+            _metricsCollector.Stop();
 
             Service.CloseSocket(listenSocket);
             try
@@ -1051,6 +1187,7 @@ public sealed class TcpServer : IDisposable
         }
 
         Shutdown();
+        _metricsCollector.Dispose();
         _acceptPool.Dispose();
         _clientRegistry.Dispose();
         _shutdownCompleted.Dispose();
@@ -1106,11 +1243,13 @@ public sealed class TcpServer : IDisposable
     private void EnterAsyncCallback()
     {
         Interlocked.Increment(ref _inFlightAsyncCallbacks);
+        _metricsState.EnterAsyncCallback();
         _asyncCallbacksDrained.Reset();
     }
 
     private void ExitAsyncCallback()
     {
+        _metricsState.ExitAsyncCallback();
         if (Interlocked.Decrement(ref _inFlightAsyncCallbacks) <= 0)
         {
             _asyncCallbacksDrained.Set();
@@ -1124,18 +1263,22 @@ public sealed class TcpServer : IDisposable
 
         foreach (ClientHandle clientHandle in handles)
         {
-            Disconnect(clientHandle);
+            Disconnect(clientHandle, DisconnectReason.Shutdown);
         }
     }
 
     private void WaitForShutdownQuiescence()
     {
         List<ClientHandle> handles = new List<ClientHandle>(_settings.MaxConnections);
+        List<(ClientHandle ClientHandle, DisconnectReason DisconnectReason)> disconnects =
+            new List<(ClientHandle ClientHandle, DisconnectReason DisconnectReason)>(
+                _settings.MaxConnections
+            );
 
         while (true)
         {
             DisconnectActiveClients();
-            ProcessDisconnectCleanupQueue(handles, "DeferredCleanup");
+            ProcessDisconnectCleanupQueue(disconnects);
 
             if (IsShutdownQuiescent(handles))
             {
@@ -1175,29 +1318,32 @@ public sealed class TcpServer : IDisposable
         }
     }
 
-    private void ProcessDisconnectCleanupQueue(List<ClientHandle> handles, string reason)
+    private void ProcessDisconnectCleanupQueue(
+        List<(ClientHandle ClientHandle, DisconnectReason DisconnectReason)> disconnects)
     {
-        handles.Clear();
+        disconnects.Clear();
         lock (_disconnectCleanupSync)
         {
             while (_disconnectCleanupQueue.Count > 0)
             {
-                handles.Add(_disconnectCleanupQueue.Dequeue());
+                disconnects.Add(_disconnectCleanupQueue.Dequeue());
+                _metricsState.DequeueDisconnectCleanup();
             }
         }
 
-        foreach (ClientHandle clientHandle in handles)
+        foreach ((ClientHandle clientHandle, DisconnectReason disconnectReason) in disconnects)
         {
             if (!clientHandle.TryGetClient(out Client client))
             {
                 continue;
             }
 
-            if (!TryFinalizeDisconnect(clientHandle, reason))
+            if (!TryFinalizeDisconnect(clientHandle, disconnectReason))
             {
                 lock (_disconnectCleanupSync)
                 {
-                    _disconnectCleanupQueue.Enqueue(clientHandle);
+                    _disconnectCleanupQueue.Enqueue((clientHandle, disconnectReason));
+                    _metricsState.EnqueueDisconnectCleanup();
                 }
             }
         }
@@ -1210,6 +1356,7 @@ public sealed class TcpServer : IDisposable
         _asyncCallbacksDrained.Set();
         _shutdownStarted = 0;
         _inFlightAsyncCallbacks = 0;
+        _metricsState.ResetCurrentGauges();
         lock (_disconnectCleanupSync)
         {
             _disconnectCleanupQueue.Clear();
@@ -1228,4 +1375,22 @@ public sealed class TcpServer : IDisposable
             IsBackground = true
         };
     }
+
+    private void EnableMetricsCapture()
+    {
+        _metricsState.EnableCapture();
+        _consumerMetrics?.EnableCapture();
+    }
+
+    private void DisableMetricsCapture()
+    {
+        _metricsState.DisableCapture();
+        _consumerMetrics?.DisableCapture();
+    }
+
+    private bool IsMetricsCaptureEnabled()
+    {
+        return _metricsState.IsCaptureEnabled();
+    }
+
 }
