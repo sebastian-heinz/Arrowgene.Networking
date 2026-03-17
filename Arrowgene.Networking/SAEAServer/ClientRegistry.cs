@@ -179,6 +179,22 @@ internal sealed class ClientRegistry : IDisposable
         }
     }
 
+    internal long GetTotalSendQueuedBytes()
+    {
+        long total = 0;
+
+        for (int index = 0; index < _allClients.Length; index++)
+        {
+            Client client = _allClients[index];
+            if (client.IsAlive)
+            {
+                total += client.GetSendQueuedBytes();
+            }
+        }
+
+        return total;
+    }
+
     public void Dispose()
     {
         lock (_sync)

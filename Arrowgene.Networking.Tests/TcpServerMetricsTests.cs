@@ -154,6 +154,70 @@ public sealed class TcpServerMetricsTests
     }
 
     /// <summary>
+    /// Verifies the aggregate queued-send-bytes gauge rises under backpressure and returns to zero after draining.
+    /// </summary>
+    [Fact]
+    public async Task MetricsSnapshot_TracksTotalSendQueuedBytesGauge()
+    {
+        RecordingConsumer consumer = new RecordingConsumer();
+
+        using ServerTestHost host = new ServerTestHost(
+            consumer,
+            settings =>
+            {
+                settings.MaxConnections = 1;
+                settings.OrderingLaneCount = 1;
+                settings.ConcurrentAccepts = 1;
+                settings.BufferSize = 256;
+                settings.MaxQueuedSendBytes = 8 * 1024 * 1024;
+            }
+        );
+
+        TcpClient client = await host.ConnectClientAsync();
+
+        try
+        {
+            await consumer.WaitForConnectedCountAsync(1, ShortTimeout);
+
+            ConnectedClientRecord connectedClient = consumer.GetConnectedClient(0);
+            byte[] payload = CreatePayload(4 * 1024 * 1024, 57);
+            connectedClient.Handle.Send(payload);
+
+            TcpServerMetricsSnapshot queuedSnapshot = await WaitForSnapshotAsync(
+                host,
+                candidate => candidate.TotalSendQueuedBytes > 0,
+                MediumTimeout,
+                "Timed out waiting for queued send bytes to appear in the metrics snapshot."
+            );
+
+            Assert.True(queuedSnapshot.TotalSendQueuedBytes > 0);
+
+            byte[] received = await host.ReadExactAsync(client, payload.Length, LongTimeout);
+            Assert.Equal(payload, received);
+
+            TcpServerMetricsSnapshot drainedSnapshot = await WaitForSnapshotAsync(
+                host,
+                candidate =>
+                    candidate.TotalSendQueuedBytes == 0
+                    && candidate.BytesSent >= payload.Length
+                    && candidate.SendOperations >= 1,
+                LongTimeout,
+                "Timed out waiting for queued send bytes to drain from the metrics snapshot."
+            );
+
+            Assert.Equal(0, drainedSnapshot.TotalSendQueuedBytes);
+            Assert.True(drainedSnapshot.BytesSent >= payload.Length);
+            Assert.Empty(consumer.Errors);
+        }
+        finally
+        {
+            host.DisposeClient(client);
+        }
+
+        await consumer.WaitForDisconnectedCountAsync(1, MediumTimeout);
+    }
+
+    /// <summary>
     /// Verifies non-threaded consumers can opt in to metrics publication through <see cref="IConsumerMetrics"/>.
     /// </summary>
     [Fact]
@@ -658,6 +722,7 @@ public sealed class TcpServerMetricsTests
             $"receiveOpsPerSecond={snapshot.ReceiveOpsPerSecond:F2}, " +
             $"sendOpsPerSecond={snapshot.SendOpsPerSecond:F2}, " +
             $"acceptsPerSecond={snapshot.AcceptsPerSecond:F2}, " +
+            $"totalSendQueuedBytes={snapshot.TotalSendQueuedBytes}, " +
             $"bytesReceived={snapshot.BytesReceived}, " +
             $"bytesSent={snapshot.BytesSent}, " +
             $"laneActiveTotal={GetLaneConnectionTotal(snapshot)}, " +

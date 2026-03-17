@@ -120,6 +120,14 @@ internal sealed class SendQueue
         }
     }
 
+    internal int GetQueuedBytes()
+    {
+        lock (_sync)
+        {
+            return _queuedBytes;
+        }
+    }
+
     internal void Reset()
     {
         lock (_sync)

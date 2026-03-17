@@ -186,6 +186,23 @@ public sealed class TcpServerMetricsStateTests
     }
 
     /// <summary>
+    /// Verifies the queued-send-bytes gauge can be set, read, and reset with other current-state gauges.
+    /// </summary>
+    [Fact]
+    public void TotalSendQueuedBytes_CanBeSetReadAndReset()
+    {
+        TcpServerMetricsState state = new TcpServerMetricsState();
+
+        state.SetTotalSendQueuedBytes(512);
+
+        Assert.Equal(512, state.GetTotalSendQueuedBytes());
+
+        state.ResetCurrentGauges();
+
+        Assert.Equal(0, state.GetTotalSendQueuedBytes());
+    }
+
+    /// <summary>
     /// Verifies disconnect durations are bucketed at the documented boundaries.
     /// </summary>
     [Fact]

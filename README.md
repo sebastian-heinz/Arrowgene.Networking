@@ -25,7 +25,7 @@ dotnet add package Arrowgene.Networking
 | `TcpServerSettings` | Server configuration: connection caps, buffer size, ordering lanes, timeouts. |
 | `SocketSettings` | Socket-level tuning applied via `ListenSocketSettings` and `ClientSocketSettings`. |
 | `ClientHandle` | Generation-checked struct to `Send`, `Disconnect`, or inspect a live client. |
-| `ClientSnapshot` | Immutable state captured at disconnect or error time (ID, endpoint, bytes, timestamps). |
+| `ClientSnapshot` | Immutable state captured at disconnect or error time (ID, endpoint, bytes, queued send bytes, timestamps). |
 | `TcpServerMetricsSnapshot` | Immutable metrics snapshot returned by `TcpServer.GetMetricsSnapshot()` or `TcpServer.GetPublishedMetricsSnapshot()`. |
 | `DisconnectReason` | Enum used for disconnect logs and `DisconnectsByReason` indexing. |
 
@@ -93,7 +93,7 @@ using Arrowgene.Networking.SAEAServer.Metric;
 
 TcpServerMetricsSnapshot metrics = server.GetMetricsSnapshot();
 TcpServerMetricsSnapshot latestPublished = server.GetPublishedMetricsSnapshot();
-TimeSpan uptime = metrics.TimestampUtc - metrics.ServerStartedAtUtc;
+TimeSpan uptime = metrics.Uptime;
 
 Console.WriteLine(
     $"seq={metrics.SnapshotSequenceNumber} " +
@@ -103,6 +103,7 @@ Console.WriteLine(
     $"accepted={metrics.AcceptedConnections} " +
     $"accepts={metrics.AcceptsPerSecond:F1}/s " +
     $"availableSlots={metrics.AvailableClientSlots} " +
+    $"queuedSend={metrics.TotalSendQueuedBytes} " +
     $"recv={metrics.BytesReceived} " +
     $"sent={metrics.BytesSent} " +
     $"recvOps={metrics.ReceiveOpsPerSecond:F1}/s " +
@@ -120,10 +121,10 @@ long smallReceives = metrics.ReceiveSizeBuckets.Span[0];
 The snapshot includes:
 
 - Connection totals and gauges: accepted, rejected, active, peak active, disconnected.
-- Snapshot metadata: timestamp, server start time, snapshot sequence, derived uptime.
+- Snapshot metadata: timestamp, server start time, first-class uptime, snapshot sequence.
 - Throughput totals and rates: accepts, receive/send operations, bytes, operations per second, and bytes per second.
 - Failure and backpressure counters: socket errors, zero-byte receives, timeouts, send queue overflows.
-- Current server state: accept-pool availability, available client slots, in-flight async callbacks, deferred disconnect cleanup depth, per-lane active connections.
+- Current server state: accept-pool availability, available client slots, total queued send bytes, in-flight async callbacks, deferred disconnect cleanup depth, per-lane active connections.
 - Optional low-cost detail: connection-duration buckets, receive/send size buckets, and per-socket-error-code counters via `GetSocketErrorCount(SocketError.X)`.
 - Optional consumer detail via `ConsumerMetrics` when the consumer implements `IConsumerMetrics`; for `ThreadedBlockingQueueConsumer` this includes per-lane queue depth, processed event counts, handler duration buckets, and handler error totals.
 - Disconnect reason counters indexed by `DisconnectReason`.

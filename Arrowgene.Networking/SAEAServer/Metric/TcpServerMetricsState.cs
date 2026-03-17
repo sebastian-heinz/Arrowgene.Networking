@@ -30,6 +30,7 @@ internal sealed class TcpServerMetricsState
     private long _sendOperations;
     private long _bytesReceived;
     private long _bytesSent;
+    private long _totalSendQueuedBytes;
     private long _inFlightAsyncCallbacks;
     private long _disconnectCleanupQueueDepth;
 
@@ -284,6 +285,7 @@ internal sealed class TcpServerMetricsState
     {
         Interlocked.Exchange(ref _activeConnections, 0);
         Interlocked.Exchange(ref _peakActiveConnections, 0);
+        Interlocked.Exchange(ref _totalSendQueuedBytes, 0);
         Interlocked.Exchange(ref _inFlightAsyncCallbacks, 0);
         Interlocked.Exchange(ref _disconnectCleanupQueueDepth, 0);
     }
@@ -361,6 +363,16 @@ internal sealed class TcpServerMetricsState
     internal long GetBytesSent()
     {
         return Interlocked.Read(ref _bytesSent);
+    }
+
+    internal void SetTotalSendQueuedBytes(long value)
+    {
+        Interlocked.Exchange(ref _totalSendQueuedBytes, value);
+    }
+
+    internal long GetTotalSendQueuedBytes()
+    {
+        return Interlocked.Read(ref _totalSendQueuedBytes);
     }
 
     internal long GetInFlightAsyncCallbacks()

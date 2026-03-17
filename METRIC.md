@@ -10,6 +10,7 @@
 |---|---|---|
 | `TimestampUtc` | Timestamp | UTC time when the snapshot was captured. |
 | `ServerStartedAtUtc` | Timestamp | UTC time when the current server run started and metrics capture began. |
+| `Uptime` | Duration | Derived elapsed time between `ServerStartedAtUtc` and `TimestampUtc`. |
 | `SnapshotSequenceNumber` | Counter | Monotonically increasing sequence number for published snapshots in the current server run. |
 | `AcceptedConnections` | Counter | Total number of connections that were accepted and activated. |
 | `RejectedConnections` | Counter | Total number of accepted sockets rejected before activation, for example because the server was stopping or the client pool was full. |
@@ -33,6 +34,7 @@
 | `AcceptsPerSecond` | Rate | Derived connection accept rate for the most recent sampling interval, in accepts per second. |
 | `AcceptPoolAvailable` | Gauge | Current number of available pooled accept event args. |
 | `AvailableClientSlots` | Gauge | Current number of available pooled client slots. |
+| `TotalSendQueuedBytes` | Gauge | Current total outbound bytes queued across all active clients. |
 | `InFlightAsyncCallbacks` | Gauge | Current number of async socket callbacks still executing. |
 | `DisconnectCleanupQueueDepth` | Gauge | Current number of disconnected clients waiting for deferred cleanup finalization. |
 | `DisconnectsByReason` | Indexed counter | Disconnect totals indexed by `DisconnectReason`. |

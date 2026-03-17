@@ -128,6 +128,11 @@ internal sealed class Client : IDisposable
 
     internal int PendingOperations => Volatile.Read(ref _pendingOperations);
 
+    internal int GetSendQueuedBytes()
+    {
+        return _sendQueue.GetQueuedBytes();
+    }
+
     /// <summary>
     /// Queues a payload to be sent to the client.
     /// </summary>
@@ -152,6 +157,7 @@ internal sealed class Client : IDisposable
         ClientSnapshot snapshot;
         lock (_sync)
         {
+            int sendQueuedBytes = _sendQueue.GetQueuedBytes();
             snapshot = new ClientSnapshot(
                 ClientId,
                 _generation,
@@ -165,6 +171,7 @@ internal sealed class Client : IDisposable
                 unchecked((ulong)_bytesReceived),
                 unchecked((ulong)_bytesSent),
                 _pendingOperations,
+                sendQueuedBytes,
                 UnitOfOrder
             );
         }

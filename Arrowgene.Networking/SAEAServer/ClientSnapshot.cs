@@ -23,6 +23,7 @@ public readonly record struct ClientSnapshot
     /// <param name="bytesReceived">The total bytes received from the client.</param>
     /// <param name="bytesSent">The total bytes sent to the client.</param>
     /// <param name="pendingOperations">The number of socket operations still tracked for the client.</param>
+    /// <param name="sendQueuedBytes">The number of outbound bytes currently queued for sending.</param>
     /// <param name="unitOfOrder">The ordering lane assigned to the client.</param>
     public ClientSnapshot(
         ushort clientId,
@@ -37,6 +38,7 @@ public readonly record struct ClientSnapshot
         ulong bytesReceived,
         ulong bytesSent,
         int pendingOperations,
+        int sendQueuedBytes,
         int unitOfOrder)
     {
         ClientId = clientId;
@@ -51,6 +53,7 @@ public readonly record struct ClientSnapshot
         BytesReceived = bytesReceived;
         BytesSent = bytesSent;
         PendingOperations = pendingOperations;
+        SendQueuedBytes = sendQueuedBytes;
         UnitOfOrder = unitOfOrder;
         UniqueId = UniqueIdManager.Pack(clientId, generation);
     }
@@ -116,6 +119,11 @@ public readonly record struct ClientSnapshot
     public int PendingOperations { get; }
 
     /// <summary>
+    /// Gets the number of outbound bytes currently queued for sending.
+    /// </summary>
+    public int SendQueuedBytes { get; }
+
+    /// <summary>
     /// Gets the ordering lane assigned to the client.
     /// </summary>
     public int UnitOfOrder { get; }
@@ -141,6 +149,7 @@ public readonly record struct ClientSnapshot
         out ulong bytesReceived,
         out ulong bytesSent,
         out int pendingOperations,
+        out int sendQueuedBytes,
         out int unitOfOrder)
     {
         clientId = ClientId;
@@ -155,6 +164,7 @@ public readonly record struct ClientSnapshot
         bytesReceived = BytesReceived;
         bytesSent = BytesSent;
         pendingOperations = PendingOperations;
+        sendQueuedBytes = SendQueuedBytes;
         unitOfOrder = UnitOfOrder;
     }
 }

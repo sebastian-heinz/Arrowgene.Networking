@@ -55,6 +55,9 @@ public sealed class TcpServerMetricsCollectorTests
             Assert.Equal(0.0d, thirdSnapshot.ReceiveOpsPerSecond);
             Assert.Equal(0.0d, thirdSnapshot.SendOpsPerSecond);
             Assert.Equal(0.0d, thirdSnapshot.AcceptsPerSecond);
+            Assert.Equal(0, firstSnapshot.TotalSendQueuedBytes);
+            Assert.Equal(0, secondSnapshot.TotalSendQueuedBytes);
+            Assert.Equal(0, thirdSnapshot.TotalSendQueuedBytes);
         }
         finally
         {

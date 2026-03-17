@@ -36,6 +36,7 @@ public readonly struct TcpServerMetricsSnapshot
     /// <param name="receiveOpsPerSecond">The derived inbound operation rate for the most recent sample interval.</param>
     /// <param name="sendOpsPerSecond">The derived outbound operation rate for the most recent sample interval.</param>
     /// <param name="acceptsPerSecond">The derived accept rate for the most recent sample interval.</param>
+    /// <param name="totalSendQueuedBytes">The current total outbound bytes queued across all active clients.</param>
     /// <param name="inFlightAsyncCallbacks">The current number of in-flight async socket callbacks.</param>
     /// <param name="disconnectCleanupQueueDepth">The current number of queued deferred disconnect cleanups.</param>
     /// <param name="acceptPoolAvailable">The current number of available accept event args in the accept pool.</param>
@@ -72,6 +73,7 @@ public readonly struct TcpServerMetricsSnapshot
         double receiveOpsPerSecond,
         double sendOpsPerSecond,
         double acceptsPerSecond,
+        long totalSendQueuedBytes,
         long inFlightAsyncCallbacks,
         long disconnectCleanupQueueDepth,
         long acceptPoolAvailable,
@@ -87,6 +89,7 @@ public readonly struct TcpServerMetricsSnapshot
     {
         TimestampUtc = timestampUtc;
         ServerStartedAtUtc = serverStartedAtUtc;
+        Uptime = timestampUtc - serverStartedAtUtc;
         SnapshotSequenceNumber = snapshotSequenceNumber;
         AcceptedConnections = acceptedConnections;
         RejectedConnections = rejectedConnections;
@@ -108,6 +111,7 @@ public readonly struct TcpServerMetricsSnapshot
         ReceiveOpsPerSecond = receiveOpsPerSecond;
         SendOpsPerSecond = sendOpsPerSecond;
         AcceptsPerSecond = acceptsPerSecond;
+        TotalSendQueuedBytes = totalSendQueuedBytes;
         InFlightAsyncCallbacks = inFlightAsyncCallbacks;
         DisconnectCleanupQueueDepth = disconnectCleanupQueueDepth;
         AcceptPoolAvailable = acceptPoolAvailable;
@@ -131,6 +135,11 @@ public readonly struct TcpServerMetricsSnapshot
     /// Gets the UTC timestamp when the server started and metrics capture began.
     /// </summary>
     public DateTime ServerStartedAtUtc { get; }
+
+    /// <summary>
+    /// Gets the elapsed time between <see cref="ServerStartedAtUtc"/> and <see cref="TimestampUtc"/>.
+    /// </summary>
+    public TimeSpan Uptime { get; }
 
     /// <summary>
     /// Gets the monotonically increasing sequence number of this snapshot.
@@ -236,6 +245,11 @@ public readonly struct TcpServerMetricsSnapshot
     /// Gets the accept rate for the most recent sample interval.
     /// </summary>
     public double AcceptsPerSecond { get; }
+
+    /// <summary>
+    /// Gets the current total outbound bytes queued across all active clients.
+    /// </summary>
+    public long TotalSendQueuedBytes { get; }
 
     /// <summary>
     /// Gets the current number of in-flight async socket callbacks.

@@ -308,6 +308,7 @@ public sealed class ThreadedBlockingQueueConsumerTests
             0,
             0,
             0,
+            0,
             unitOfOrder
         );
     }

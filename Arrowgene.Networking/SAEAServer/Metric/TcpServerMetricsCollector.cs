@@ -233,12 +233,14 @@ internal sealed class TcpServerMetricsCollector : IDisposable
             : Interlocked.Increment(ref _snapshotSequenceNumber);
         long activeConnections = _metricsState.GetActiveConnections();
         long peakActiveConnections = _metricsState.GetAndResetPeakActiveConnections(activeConnections);
+        long totalSendQueuedBytes = _clientRegistry.GetTotalSendQueuedBytes();
         long[] disconnectsByReason = new long[_metricsState.DisconnectReasonCount];
         long[] laneActiveConnections = new long[_orderingLaneCount];
         long[] connectionDurationBuckets = new long[_metricsState.ConnectionDurationBucketsCount];
         long[] receiveSizeBuckets = new long[_metricsState.ReceiveSizeBucketCount];
         long[] sendSizeBuckets = new long[_metricsState.SendSizeBucketCount];
         long[] socketErrorsByCode = new long[_metricsState.SocketErrorCodeCount];
+        _metricsState.SetTotalSendQueuedBytes(totalSendQueuedBytes);
         _metricsState.CopyDisconnectsByReason(disconnectsByReason);
         _metricsState.CopyConnectionDurationBuckets(connectionDurationBuckets);
         _metricsState.CopyReceiveSizeBuckets(receiveSizeBuckets);
@@ -270,6 +272,7 @@ internal sealed class TcpServerMetricsCollector : IDisposable
             receiveOpsPerSecond,
             sendOpsPerSecond,
             acceptsPerSecond,
+            _metricsState.GetTotalSendQueuedBytes(),
             _metricsState.GetInFlightAsyncCallbacks(),
             _metricsState.GetDisconnectCleanupQueueDepth(),
             _acceptPool.CurrentCount,
