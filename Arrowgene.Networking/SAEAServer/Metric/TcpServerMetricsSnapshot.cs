@@ -14,6 +14,8 @@ public readonly struct TcpServerMetricsSnapshot
     /// Initializes a new instance of the <see cref="TcpServerMetricsSnapshot"/> struct.
     /// </summary>
     /// <param name="timestampUtc">The UTC timestamp when the snapshot was published.</param>
+    /// <param name="serverStartedAtUtc">The UTC timestamp when the server started and metrics capture began.</param>
+    /// <param name="snapshotSequenceNumber">The monotonically increasing sequence number for this snapshot.</param>
     /// <param name="acceptedConnections">The total number of accepted connections.</param>
     /// <param name="rejectedConnections">The total number of rejected connections.</param>
     /// <param name="activeConnections">The current number of active connections.</param>
@@ -45,6 +47,8 @@ public readonly struct TcpServerMetricsSnapshot
     /// <param name="socketErrorCodeMinimum">The minimum raw <see cref="SocketError"/> value represented in <paramref name="socketErrorsByCode"/>.</param>
     public TcpServerMetricsSnapshot(
         DateTime timestampUtc,
+        DateTime serverStartedAtUtc,
+        long snapshotSequenceNumber,
         long acceptedConnections,
         long rejectedConnections,
         long activeConnections,
@@ -76,6 +80,8 @@ public readonly struct TcpServerMetricsSnapshot
         int socketErrorCodeMinimum)
     {
         TimestampUtc = timestampUtc;
+        ServerStartedAtUtc = serverStartedAtUtc;
+        SnapshotSequenceNumber = snapshotSequenceNumber;
         AcceptedConnections = acceptedConnections;
         RejectedConnections = rejectedConnections;
         ActiveConnections = activeConnections;
@@ -111,6 +117,16 @@ public readonly struct TcpServerMetricsSnapshot
     /// Gets the UTC timestamp when the snapshot was published.
     /// </summary>
     public DateTime TimestampUtc { get; }
+
+    /// <summary>
+    /// Gets the UTC timestamp when the server started and metrics capture began.
+    /// </summary>
+    public DateTime ServerStartedAtUtc { get; }
+
+    /// <summary>
+    /// Gets the monotonically increasing sequence number of this snapshot.
+    /// </summary>
+    public long SnapshotSequenceNumber { get; }
 
     /// <summary>
     /// Gets the total number of accepted connections.

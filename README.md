@@ -92,8 +92,11 @@ using Arrowgene.Networking.SAEAServer;
 using Arrowgene.Networking.SAEAServer.Metric;
 
 TcpServerMetricsSnapshot metrics = server.GetMetricsSnapshot();
+TimeSpan uptime = metrics.TimestampUtc - metrics.ServerStartedAtUtc;
 
 Console.WriteLine(
+    $"seq={metrics.SnapshotSequenceNumber} " +
+    $"uptime={uptime} " +
     $"active={metrics.ActiveConnections} " +
     $"peakActive={metrics.PeakActiveConnections} " +
     $"accepted={metrics.AcceptedConnections} " +
@@ -113,6 +116,7 @@ long smallReceives = metrics.ReceiveSizeBuckets.Span[0];
 The snapshot includes:
 
 - Connection totals and gauges: accepted, rejected, active, peak active, disconnected.
+- Snapshot metadata: timestamp, server start time, snapshot sequence, derived uptime.
 - Throughput totals and rates: receive/send operations, bytes, bytes per second.
 - Failure and backpressure counters: socket errors, zero-byte receives, timeouts, send queue overflows.
 - Current server state: accept-pool availability, available client slots, in-flight async callbacks, deferred disconnect cleanup depth, per-lane active connections.

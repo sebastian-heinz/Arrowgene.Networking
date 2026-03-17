@@ -52,7 +52,9 @@ public sealed class TcpServerMetricsTests
             TcpServerMetricsSnapshot connectedSnapshot = await WaitForSnapshotAsync(
                 host,
                 snapshot =>
-                    snapshot.AcceptedConnections >= 1
+                    snapshot.SnapshotSequenceNumber > 0
+                    && snapshot.ServerStartedAtUtc <= snapshot.TimestampUtc
+                    && snapshot.AcceptedConnections >= 1
                     && snapshot.ActiveConnections == 1
                     && snapshot.PeakActiveConnections >= snapshot.ActiveConnections
                     && snapshot.ReceiveOperations >= 1
@@ -68,6 +70,8 @@ public sealed class TcpServerMetricsTests
             Assert.Equal(10, connectedSnapshot.ReceiveSizeBuckets.Length);
             Assert.Equal(10, connectedSnapshot.SendSizeBuckets.Length);
             Assert.Equal(10, connectedSnapshot.ConnectionDurationBuckets.Length);
+            Assert.True(connectedSnapshot.SnapshotSequenceNumber > 0);
+            Assert.True(connectedSnapshot.ServerStartedAtUtc <= connectedSnapshot.TimestampUtc);
             Assert.True(connectedSnapshot.PeakActiveConnections >= connectedSnapshot.ActiveConnections);
             Assert.Equal(connectedSnapshot.ReceiveOperations, GetCounterTotal(connectedSnapshot.ReceiveSizeBuckets));
             Assert.Equal(connectedSnapshot.SendOperations, GetCounterTotal(connectedSnapshot.SendSizeBuckets));
@@ -81,7 +85,9 @@ public sealed class TcpServerMetricsTests
             TcpServerMetricsSnapshot disconnectedSnapshot = await WaitForSnapshotAsync(
                 host,
                 snapshot =>
-                    snapshot.ActiveConnections == 0
+                    snapshot.SnapshotSequenceNumber >= connectedSnapshot.SnapshotSequenceNumber
+                    && snapshot.ServerStartedAtUtc == connectedSnapshot.ServerStartedAtUtc
+                    && snapshot.ActiveConnections == 0
                     && snapshot.PeakActiveConnections >= snapshot.ActiveConnections
                     && snapshot.DisconnectedConnections >= 1
                     && snapshot.AvailableClientSlots == 1
@@ -91,6 +97,8 @@ public sealed class TcpServerMetricsTests
             );
 
             Assert.Equal(0, GetLaneConnectionTotal(disconnectedSnapshot));
+            Assert.True(disconnectedSnapshot.SnapshotSequenceNumber >= connectedSnapshot.SnapshotSequenceNumber);
+            Assert.Equal(connectedSnapshot.ServerStartedAtUtc, disconnectedSnapshot.ServerStartedAtUtc);
             Assert.True(disconnectedSnapshot.PeakActiveConnections >= disconnectedSnapshot.ActiveConnections);
             Assert.Equal(10, disconnectedSnapshot.ConnectionDurationBuckets.Length);
             Assert.Equal(
@@ -572,6 +580,8 @@ public sealed class TcpServerMetricsTests
     private static string DescribeSnapshot(TcpServerMetricsSnapshot snapshot)
     {
         return
+            $"sequence={snapshot.SnapshotSequenceNumber}, " +
+            $"startedAt={snapshot.ServerStartedAtUtc:O}, " +
             $"accepted={snapshot.AcceptedConnections}, " +
             $"rejected={snapshot.RejectedConnections}, " +
             $"active={snapshot.ActiveConnections}, " +

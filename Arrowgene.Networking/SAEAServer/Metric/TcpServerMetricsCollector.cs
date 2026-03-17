@@ -19,9 +19,11 @@ internal sealed class TcpServerMetricsCollector : IDisposable
     private CancellationTokenSource? _cancellationTokenSource;
     private Thread? _thread;
     private TcpServerMetricsSnapshot _latestSnapshot;
+    private DateTime _serverStartedAtUtc;
     private DateTime _previousTimestampUtc;
     private long _previousBytesReceived;
     private long _previousBytesSent;
+    private long _snapshotSequenceNumber;
     private bool _disposed;
 
     internal TcpServerMetricsCollector(
@@ -58,6 +60,8 @@ internal sealed class TcpServerMetricsCollector : IDisposable
         _acceptPool = acceptPool;
         _consumerMetrics = consumerMetrics;
         _orderingLaneCount = orderingLaneCount;
+        _serverStartedAtUtc = DateTime.MinValue;
+        _snapshotSequenceNumber = 0;
         _latestSnapshot = CreateSnapshot(DateTime.UtcNow, 0.0d, 0.0d);
         _previousTimestampUtc = _latestSnapshot.TimestampUtc;
         _previousBytesReceived = _latestSnapshot.BytesReceived;
@@ -78,6 +82,8 @@ internal sealed class TcpServerMetricsCollector : IDisposable
             }
 
             DateTime now = DateTime.UtcNow;
+            _serverStartedAtUtc = now;
+            _snapshotSequenceNumber = 0;
             _previousTimestampUtc = now;
             _previousBytesReceived = _metricsState.GetBytesReceived();
             _previousBytesSent = _metricsState.GetBytesSent();
@@ -191,6 +197,9 @@ internal sealed class TcpServerMetricsCollector : IDisposable
         double sendBytesPerSecond)
     {
         ConsumerMetricsSnapshot? consumerMetrics = _consumerMetrics?.CreateSnapshot();
+        long snapshotSequenceNumber = _serverStartedAtUtc == DateTime.MinValue
+            ? 0
+            : Interlocked.Increment(ref _snapshotSequenceNumber);
         long activeConnections = _metricsState.GetActiveConnections();
         long peakActiveConnections = _metricsState.GetAndResetPeakActiveConnections(activeConnections);
         long[] disconnectsByReason = new long[_metricsState.DisconnectReasonCount];
@@ -208,6 +217,8 @@ internal sealed class TcpServerMetricsCollector : IDisposable
 
         return new TcpServerMetricsSnapshot(
             timestampUtc,
+            _serverStartedAtUtc,
+            snapshotSequenceNumber,
             _metricsState.GetAcceptedConnections(),
             _metricsState.GetRejectedConnections(),
             activeConnections,

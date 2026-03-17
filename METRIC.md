@@ -7,6 +7,8 @@
 | Field | Kind | Meaning |
 |---|---|---|
 | `TimestampUtc` | Timestamp | UTC time when the snapshot was captured. |
+| `ServerStartedAtUtc` | Timestamp | UTC time when the current server run started and metrics capture began. |
+| `SnapshotSequenceNumber` | Counter | Monotonically increasing sequence number for published snapshots in the current server run. |
 | `AcceptedConnections` | Counter | Total number of connections that were accepted and activated. |
 | `RejectedConnections` | Counter | Total number of accepted sockets rejected before activation, for example because the server was stopping or the client pool was full. |
 | `ActiveConnections` | Gauge | Current number of active connected clients. |
