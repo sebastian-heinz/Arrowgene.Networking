@@ -1,8 +1,8 @@
 # Metrics Reference
 
-`TcpServerMetricsCollector.GetMetricsSnapshot()` captures and returns a fresh `TcpServerMetricsSnapshot`.
+`MetricsCollector<TcpServerMetricsSnapshot>.GetMetricsSnapshot()` captures and returns a fresh `TcpServerMetricsSnapshot`.
 
-`TcpServerMetricsCollector.GetPublishedMetricsSnapshot()` returns the latest published `TcpServerMetricsSnapshot` without forcing a new capture.
+`MetricsCollector<TcpServerMetricsSnapshot>.GetPublishedMetricsSnapshot()` returns the latest published `TcpServerMetricsSnapshot` without forcing a new capture.
 
 The collector is constructed externally and receives a `TcpServer` (which implements `IMetricsCapture<TcpServerMetricsSnapshot>`).
 

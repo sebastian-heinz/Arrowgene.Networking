@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
+using Arrowgene.Networking.Metrics;
 using Arrowgene.Networking.SAEAServer;
 using Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption;
 using Arrowgene.Networking.SAEAServer.Metric;
@@ -45,7 +46,7 @@ internal sealed class ThreadedConsumerTestHost : IDisposable
 
         Consumer.Start();
         TcpServer = new TcpServer(IPAddress.Loopback, Port, Consumer, settings);
-        MetricsCollector = new TcpServerMetricsCollector(TcpServer);
+        MetricsCollector = new MetricsCollector<TcpServerMetricsSnapshot>(TcpServer);
         TcpServer.Start();
         MetricsCollector.Start("ThreadedTestMetrics");
     }
@@ -54,7 +55,7 @@ internal sealed class ThreadedConsumerTestHost : IDisposable
 
     internal TcpServer TcpServer { get; }
 
-    internal TcpServerMetricsCollector MetricsCollector { get; }
+    internal MetricsCollector<TcpServerMetricsSnapshot> MetricsCollector { get; }
 
     internal ushort Port { get; }
 

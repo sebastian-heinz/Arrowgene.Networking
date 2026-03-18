@@ -2,6 +2,7 @@ using System;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Threading;
+using Arrowgene.Networking.Metrics;
 using Arrowgene.Networking.SAEAServer;
 using Arrowgene.Networking.SAEAServer.Metric;
 using Xunit;
@@ -11,7 +12,7 @@ namespace Arrowgene.Networking.Tests;
 /// <summary>
 /// Unit coverage for the metrics collector snapshot metadata.
 /// </summary>
-public sealed class TcpServerMetricsCollectorTests
+public sealed class MetricsCollectorTests
 {
     /// <summary>
     /// Verifies snapshots expose a stable server start time and a monotonically increasing sequence.
@@ -19,7 +20,7 @@ public sealed class TcpServerMetricsCollectorTests
     [Fact]
     public void CaptureSnapshot_TracksStableStartTimeAndIncreasingSequence()
     {
-        TcpServerMetricsCollector collector = CreateCollector(
+        MetricsCollector<TcpServerMetricsSnapshot> collector = CreateCollector(
             out TcpServerMetricsState metricsState,
             out ClientRegistry clientRegistry,
             out AcceptPool acceptPool
@@ -74,7 +75,7 @@ public sealed class TcpServerMetricsCollectorTests
     [Fact]
     public void CaptureSnapshot_DerivesOperationRatesFromCounterDeltas()
     {
-        TcpServerMetricsCollector collector = CreateCollector(
+        MetricsCollector<TcpServerMetricsSnapshot> collector = CreateCollector(
             out TcpServerMetricsState metricsState,
             out ClientRegistry clientRegistry,
             out AcceptPool acceptPool
@@ -125,7 +126,7 @@ public sealed class TcpServerMetricsCollectorTests
         }
     }
 
-    private static TcpServerMetricsCollector CreateCollector(
+    private static MetricsCollector<TcpServerMetricsSnapshot> CreateCollector(
         out TcpServerMetricsState metricsState,
         out ClientRegistry clientRegistry,
         out AcceptPool acceptPool)
@@ -134,7 +135,7 @@ public sealed class TcpServerMetricsCollectorTests
         clientRegistry = new ClientRegistry(1, 1, CreateClient);
         acceptPool = new AcceptPool(1, IgnoreAcceptCompletion);
         TestServerMetricsCapture capture = new TestServerMetricsCapture(metricsState, clientRegistry, acceptPool);
-        return new TcpServerMetricsCollector(capture);
+        return new MetricsCollector<TcpServerMetricsSnapshot>(capture);
     }
 
     private static Client CreateClient(ushort clientId)

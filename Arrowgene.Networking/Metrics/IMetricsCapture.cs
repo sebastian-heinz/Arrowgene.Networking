@@ -1,4 +1,4 @@
-namespace Arrowgene.Networking.SAEAServer.Metric;
+namespace Arrowgene.Networking.Metrics;
 
 /// <summary>
 /// Provides enable/disable control over metric capture.

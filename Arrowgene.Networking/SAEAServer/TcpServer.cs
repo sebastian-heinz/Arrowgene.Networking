@@ -28,6 +28,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using Arrowgene.Logging;
+using Arrowgene.Networking.Metrics;
 using Arrowgene.Networking.SAEAServer.Consumer;
 using Arrowgene.Networking.SAEAServer.Metric;
 

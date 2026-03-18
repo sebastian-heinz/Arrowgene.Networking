@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Threading;
 using Arrowgene.Logging;
+using Arrowgene.Networking.Metrics;
 using Arrowgene.Networking.SAEAServer.Metric;
 
 namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption

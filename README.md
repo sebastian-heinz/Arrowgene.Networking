@@ -26,8 +26,8 @@ dotnet add package Arrowgene.Networking
 | `SocketSettings` | Socket-level tuning applied via `ListenSocketSettings` and `ClientSocketSettings`. |
 | `ClientHandle` | Generation-checked struct to `Send`, `Disconnect`, or inspect a live client. |
 | `ClientSnapshot` | Immutable state captured at disconnect or error time (ID, endpoint, bytes, queued send bytes, timestamps). |
-| `TcpServerMetricsCollector` | External collector constructed with a `TcpServer`; exposes `GetMetricsSnapshot()` and `GetPublishedMetricsSnapshot()`. |
-| `TcpServerMetricsSnapshot` | Immutable metrics snapshot returned by `TcpServerMetricsCollector.GetMetricsSnapshot()` or `TcpServerMetricsCollector.GetPublishedMetricsSnapshot()`. |
+| `MetricsCollector<TSnapshot>` | Generic collector constructed with any `IMetricsCapture<TSnapshot>`; exposes `GetMetricsSnapshot()` and `GetPublishedMetricsSnapshot()`. |
+| `TcpServerMetricsSnapshot` | Immutable metrics snapshot returned by `MetricsCollector<TcpServerMetricsSnapshot>.GetMetricsSnapshot()` or `GetPublishedMetricsSnapshot()`. |
 | `DisconnectReason` | Enum used for disconnect logs and `DisconnectsByReason` indexing. |
 
 ## Quick Start
@@ -86,14 +86,14 @@ server.Stop();
 
 ## Metrics
 
-Create a `TcpServerMetricsCollector` externally and pass it the `TcpServer`. Use `GetMetricsSnapshot()` when you want to force a fresh capture, or `GetPublishedMetricsSnapshot()` when you want a passive read of the latest published snapshot.
+Create a `MetricsCollector<TcpServerMetricsSnapshot>` externally and pass it the `TcpServer`. Use `GetMetricsSnapshot()` when you want to force a fresh capture, or `GetPublishedMetricsSnapshot()` when you want a passive read of the latest published snapshot.
 
 ```csharp
 using System;
 using Arrowgene.Networking.SAEAServer;
 using Arrowgene.Networking.SAEAServer.Metric;
 
-using TcpServerMetricsCollector collector = new TcpServerMetricsCollector(server);
+using MetricsCollector<TcpServerMetricsSnapshot> collector = new MetricsCollector<TcpServerMetricsSnapshot>(server);
 collector.Start("Metrics");
 
 TcpServerMetricsSnapshot metrics = collector.GetMetricsSnapshot();
