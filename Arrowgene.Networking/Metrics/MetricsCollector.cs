@@ -28,17 +28,7 @@ public sealed class MetricsCollector<TSnapshot> : IDisposable
     /// </summary>
     /// <param name="capture">The capture source that produces snapshots.</param>
     public MetricsCollector(IMetricsCapture<TSnapshot> capture)
-        : this(capture, new NullMetricsSink<TSnapshot>(), DefaultSamplingIntervalMs)
-    {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="MetricsCollector{TSnapshot}"/> class with the default sampling interval.
-    /// </summary>
-    /// <param name="capture">The capture source that produces snapshots.</param>
-    /// <param name="sink">The sink that receives every captured snapshot.</param>
-    public MetricsCollector(IMetricsCapture<TSnapshot> capture, IMetricsSink<TSnapshot> sink)
-        : this(capture, sink, DefaultSamplingIntervalMs)
+        : this(capture, new NullMetricsSink<TSnapshot>())
     {
     }
 
@@ -48,7 +38,8 @@ public sealed class MetricsCollector<TSnapshot> : IDisposable
     /// <param name="capture">The capture source that produces snapshots.</param>
     /// <param name="sink">The sink that receives every captured snapshot.</param>
     /// <param name="samplingIntervalMs">The sampling interval in milliseconds between automatic captures.</param>
-    public MetricsCollector(IMetricsCapture<TSnapshot> capture, IMetricsSink<TSnapshot> sink, int samplingIntervalMs)
+    public MetricsCollector(IMetricsCapture<TSnapshot> capture, IMetricsSink<TSnapshot> sink,
+        int samplingIntervalMs = DefaultSamplingIntervalMs)
     {
         if (capture is null)
         {
