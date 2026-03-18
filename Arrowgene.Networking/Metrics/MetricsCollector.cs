@@ -178,8 +178,14 @@ public sealed class MetricsCollector<TSnapshot> : IDisposable
             _disposed = true;
         }
 
-        Stop();
-        _sink.Dispose();
+        try
+        {
+            Stop();
+        }
+        finally
+        {
+            _sink.Dispose();
+        }
     }
 
     private void Run(CancellationToken cancellationToken)

@@ -51,7 +51,10 @@ public sealed class QueueMetricsSink<TSnapshot> : IMetricsSink<TSnapshot>
     /// <inheritdoc />
     public void Write(TSnapshot snapshot)
     {
-        _queue.TryAdd(snapshot);
+        while (!_queue.TryAdd(snapshot))
+        {
+            _queue.TryTake(out _);
+        }
     }
 
     /// <inheritdoc />

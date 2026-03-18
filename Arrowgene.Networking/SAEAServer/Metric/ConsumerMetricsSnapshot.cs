@@ -22,9 +22,9 @@ public readonly struct ConsumerMetricsSnapshot
         long[] handlerDurationBuckets)
     {
         HandlerErrors = handlerErrors;
-        QueueDepthByLane = queueDepthByLane ?? throw new ArgumentNullException(nameof(queueDepthByLane));
-        EventsProcessed = eventsProcessed ?? throw new ArgumentNullException(nameof(eventsProcessed));
-        HandlerDurationBuckets = handlerDurationBuckets ?? throw new ArgumentNullException(nameof(handlerDurationBuckets));
+        QueueDepthByLane = CloneArray(queueDepthByLane, nameof(queueDepthByLane));
+        EventsProcessed = CloneArray(eventsProcessed, nameof(eventsProcessed));
+        HandlerDurationBuckets = CloneArray(handlerDurationBuckets, nameof(handlerDurationBuckets));
     }
 
     /// <summary>
@@ -61,5 +61,15 @@ public readonly struct ConsumerMetricsSnapshot
         }
 
         return EventsProcessed.Span[index];
+    }
+
+    private static long[] CloneArray(long[] source, string paramName)
+    {
+        if (source is null)
+        {
+            throw new ArgumentNullException(paramName);
+        }
+
+        return (long[])source.Clone();
     }
 }

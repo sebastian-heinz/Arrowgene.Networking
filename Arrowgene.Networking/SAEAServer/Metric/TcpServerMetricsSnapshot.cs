@@ -117,12 +117,12 @@ public readonly struct TcpServerMetricsSnapshot
         AcceptPoolAvailable = acceptPoolAvailable;
         AvailableClientSlots = availableClientSlots;
         ConsumerMetrics = consumerMetrics;
-        DisconnectsByReason = disconnectsByReason ?? throw new ArgumentNullException(nameof(disconnectsByReason));
-        LaneActiveConnections = laneActiveConnections ?? throw new ArgumentNullException(nameof(laneActiveConnections));
-        ConnectionDurationBuckets = connectionDurationBuckets ?? throw new ArgumentNullException(nameof(connectionDurationBuckets));
-        ReceiveSizeBuckets = receiveSizeBuckets ?? throw new ArgumentNullException(nameof(receiveSizeBuckets));
-        SendSizeBuckets = sendSizeBuckets ?? throw new ArgumentNullException(nameof(sendSizeBuckets));
-        SocketErrorsByCode = socketErrorsByCode ?? throw new ArgumentNullException(nameof(socketErrorsByCode));
+        DisconnectsByReason = CloneArray(disconnectsByReason, nameof(disconnectsByReason));
+        LaneActiveConnections = CloneArray(laneActiveConnections, nameof(laneActiveConnections));
+        ConnectionDurationBuckets = CloneArray(connectionDurationBuckets, nameof(connectionDurationBuckets));
+        ReceiveSizeBuckets = CloneArray(receiveSizeBuckets, nameof(receiveSizeBuckets));
+        SendSizeBuckets = CloneArray(sendSizeBuckets, nameof(sendSizeBuckets));
+        SocketErrorsByCode = CloneArray(socketErrorsByCode, nameof(socketErrorsByCode));
         SocketErrorCodeMinimum = socketErrorCodeMinimum;
     }
 
@@ -325,5 +325,15 @@ public readonly struct TcpServerMetricsSnapshot
         }
 
         return SocketErrorsByCode.Span[index];
+    }
+
+    private static long[] CloneArray(long[] source, string paramName)
+    {
+        if (source is null)
+        {
+            throw new ArgumentNullException(paramName);
+        }
+
+        return (long[])source.Clone();
     }
 }
