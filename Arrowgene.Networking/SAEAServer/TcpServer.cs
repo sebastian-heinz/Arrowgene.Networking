@@ -96,6 +96,11 @@ public sealed class TcpServer : IDisposable
     public ushort Port { get; }
 
     /// <summary>
+    /// Gets the metrics collector for this server.
+    /// </summary>
+    public TcpServerMetricsCollector MetricsCollector => _metricsCollector;
+
+    /// <summary>
     /// Creates a server with explicit settings.
     /// </summary>
     /// <param name="ipAddress">The IP address to bind.</param>
@@ -174,36 +179,7 @@ public sealed class TcpServer : IDisposable
         _timeoutThread = CreateBackgroundThread(CheckSocketTimeout, TimeoutThreadName);
         _disconnectCleanupThread = CreateBackgroundThread(CleanupDisconnectedClients, DisconnectCleanupThreadName);
     }
-
-    /// <summary>
-    /// Captures and returns a fresh metrics snapshot for the server.
-    /// </summary>
-    /// <returns>The latest captured <see cref="TcpServerMetricsSnapshot"/>.</returns>
-    public TcpServerMetricsSnapshot GetMetricsSnapshot()
-    {
-        if (IsMetricsCaptureEnabled())
-        {
-            try
-            {
-                _metricsCollector.CaptureSnapshot();
-            }
-            catch (ObjectDisposedException)
-            {
-            }
-        }
-
-        return _metricsCollector.GetSnapshot();
-    }
-
-    /// <summary>
-    /// Returns the latest published metrics snapshot without forcing a new capture.
-    /// </summary>
-    /// <returns>The latest published <see cref="TcpServerMetricsSnapshot"/>.</returns>
-    public TcpServerMetricsSnapshot GetPublishedMetricsSnapshot()
-    {
-        return _metricsCollector.GetSnapshot();
-    }
-
+    
     /// <summary>
     /// Starts the server. The server can be started again after it has been stopped.
     /// </summary>
@@ -1391,11 +1367,6 @@ public sealed class TcpServer : IDisposable
     {
         _metricsState.DisableCapture();
         _consumerMetrics?.DisableCapture();
-    }
-
-    private bool IsMetricsCaptureEnabled()
-    {
-        return _metricsState.IsCaptureEnabled();
     }
 
 }

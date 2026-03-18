@@ -239,19 +239,19 @@ public sealed class ThreadedTcpServerMetricsTests
         TimeSpan timeout,
         string failureMessage)
     {
-        TcpServerMetricsSnapshot lastSnapshot = host.TcpServer.GetMetricsSnapshot();
+        TcpServerMetricsSnapshot lastSnapshot = host.TcpServer.MetricsCollector.GetMetricsSnapshot();
 
         await TestWait.UntilAsync(
             () =>
             {
-                lastSnapshot = host.TcpServer.GetMetricsSnapshot();
+                lastSnapshot = host.TcpServer.MetricsCollector.GetMetricsSnapshot();
                 return predicate(lastSnapshot);
             },
             timeout,
             $"{failureMessage}{Environment.NewLine}Last snapshot: {DescribeSnapshot(lastSnapshot)}"
         ).ConfigureAwait(false);
 
-        return host.TcpServer.GetMetricsSnapshot();
+        return host.TcpServer.MetricsCollector.GetMetricsSnapshot();
     }
 
     private static string DescribeSnapshot(TcpServerMetricsSnapshot snapshot)

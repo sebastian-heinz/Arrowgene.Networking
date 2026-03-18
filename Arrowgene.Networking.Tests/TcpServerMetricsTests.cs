@@ -44,7 +44,7 @@ public sealed class TcpServerMetricsTests
         {
             await consumer.WaitForConnectedCountAsync(1, ShortTimeout);
 
-            TcpServerMetricsSnapshot preTrafficSnapshot = host.TcpServer.GetMetricsSnapshot();
+            TcpServerMetricsSnapshot preTrafficSnapshot = host.TcpServer.MetricsCollector.GetMetricsSnapshot();
 
             byte[] payload = CreatePayload(256, 11);
             byte[] echoed = await host.RoundTripAsync(client, payload, MediumTimeout);
@@ -145,8 +145,8 @@ public sealed class TcpServerMetricsTests
             }
         );
 
-        TcpServerMetricsSnapshot capturedSnapshot = host.TcpServer.GetMetricsSnapshot();
-        TcpServerMetricsSnapshot publishedSnapshot = host.TcpServer.GetPublishedMetricsSnapshot();
+        TcpServerMetricsSnapshot capturedSnapshot = host.TcpServer.MetricsCollector.GetMetricsSnapshot();
+        TcpServerMetricsSnapshot publishedSnapshot = host.TcpServer.MetricsCollector.GetPublishedMetricsSnapshot();
 
         Assert.Equal(capturedSnapshot.SnapshotSequenceNumber, publishedSnapshot.SnapshotSequenceNumber);
         Assert.Equal(capturedSnapshot.TimestampUtc, publishedSnapshot.TimestampUtc);
@@ -589,7 +589,7 @@ public sealed class TcpServerMetricsTests
             host.TcpServer.Stop();
             await consumer.WaitForDisconnectedCountAsync(1, MediumTimeout);
 
-            TcpServerMetricsSnapshot stoppedSnapshot = host.TcpServer.GetMetricsSnapshot();
+            TcpServerMetricsSnapshot stoppedSnapshot = host.TcpServer.MetricsCollector.GetMetricsSnapshot();
 
             Assert.Equal(runningSnapshot.AcceptedConnections, stoppedSnapshot.AcceptedConnections);
             Assert.Equal(runningSnapshot.RejectedConnections, stoppedSnapshot.RejectedConnections);
@@ -665,19 +665,19 @@ public sealed class TcpServerMetricsTests
         TimeSpan timeout,
         string failureMessage)
     {
-        TcpServerMetricsSnapshot lastSnapshot = host.TcpServer.GetMetricsSnapshot();
+        TcpServerMetricsSnapshot lastSnapshot = host.TcpServer.MetricsCollector.GetMetricsSnapshot();
 
         await TestWait.UntilAsync(
             () =>
             {
-                lastSnapshot = host.TcpServer.GetMetricsSnapshot();
+                lastSnapshot = host.TcpServer.MetricsCollector.GetMetricsSnapshot();
                 return predicate(lastSnapshot);
             },
             timeout,
             $"{failureMessage}{Environment.NewLine}Last snapshot: {DescribeSnapshot(lastSnapshot)}"
         ).ConfigureAwait(false);
 
-        return host.TcpServer.GetMetricsSnapshot();
+        return host.TcpServer.MetricsCollector.GetMetricsSnapshot();
     }
 
     private static async Task<TcpServerMetricsSnapshot> WaitForPublishedSnapshotAsync(
@@ -686,19 +686,19 @@ public sealed class TcpServerMetricsTests
         TimeSpan timeout,
         string failureMessage)
     {
-        TcpServerMetricsSnapshot lastSnapshot = host.TcpServer.GetPublishedMetricsSnapshot();
+        TcpServerMetricsSnapshot lastSnapshot = host.TcpServer.MetricsCollector.GetPublishedMetricsSnapshot();
 
         await TestWait.UntilAsync(
             () =>
             {
-                lastSnapshot = host.TcpServer.GetPublishedMetricsSnapshot();
+                lastSnapshot = host.TcpServer.MetricsCollector.GetPublishedMetricsSnapshot();
                 return predicate(lastSnapshot);
             },
             timeout,
             $"{failureMessage}{Environment.NewLine}Last snapshot: {DescribeSnapshot(lastSnapshot)}"
         ).ConfigureAwait(false);
 
-        return host.TcpServer.GetPublishedMetricsSnapshot();
+        return host.TcpServer.MetricsCollector.GetPublishedMetricsSnapshot();
     }
 
     private static string DescribeSnapshot(TcpServerMetricsSnapshot snapshot)

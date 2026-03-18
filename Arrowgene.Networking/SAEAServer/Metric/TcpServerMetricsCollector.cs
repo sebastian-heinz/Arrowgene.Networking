@@ -4,7 +4,7 @@ using Arrowgene.Networking.SAEAServer.Consumer;
 
 namespace Arrowgene.Networking.SAEAServer.Metric;
 
-internal sealed class TcpServerMetricsCollector : IDisposable
+public sealed class TcpServerMetricsCollector : IDisposable
 {
     private const int SamplingIntervalMs = 1000;
     private const int ThreadJoinTimeoutMs = 10000;
@@ -176,7 +176,23 @@ internal sealed class TcpServerMetricsCollector : IDisposable
         }
     }
 
-    internal TcpServerMetricsSnapshot GetSnapshot()
+    public TcpServerMetricsSnapshot GetMetricsSnapshot()
+    {
+        if (_metricsState.IsCaptureEnabled())
+        {
+            try
+            {
+                CaptureSnapshot();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+
+        return GetPublishedMetricsSnapshot();
+    }
+
+    public TcpServerMetricsSnapshot GetPublishedMetricsSnapshot()
     {
         lock (_snapshotSync)
         {

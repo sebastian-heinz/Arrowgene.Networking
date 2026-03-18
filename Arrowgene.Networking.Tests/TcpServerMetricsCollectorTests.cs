@@ -30,11 +30,11 @@ public sealed class TcpServerMetricsCollectorTests
             collector.Start("MetricsCollectorTests");
             collector.Stop();
 
-            TcpServerMetricsSnapshot firstSnapshot = collector.GetSnapshot();
+            TcpServerMetricsSnapshot firstSnapshot = collector.GetPublishedMetricsSnapshot();
             collector.CaptureSnapshot();
-            TcpServerMetricsSnapshot secondSnapshot = collector.GetSnapshot();
+            TcpServerMetricsSnapshot secondSnapshot = collector.GetPublishedMetricsSnapshot();
             collector.CaptureSnapshot();
-            TcpServerMetricsSnapshot thirdSnapshot = collector.GetSnapshot();
+            TcpServerMetricsSnapshot thirdSnapshot = collector.GetPublishedMetricsSnapshot();
 
             Assert.Equal(1, firstSnapshot.SnapshotSequenceNumber);
             Assert.Equal(2, secondSnapshot.SnapshotSequenceNumber);
@@ -85,7 +85,7 @@ public sealed class TcpServerMetricsCollectorTests
             collector.Start("MetricsCollectorTests");
             collector.Stop();
 
-            TcpServerMetricsSnapshot baselineSnapshot = collector.GetSnapshot();
+            TcpServerMetricsSnapshot baselineSnapshot = collector.GetPublishedMetricsSnapshot();
 
             metricsState.IncrementAcceptedConnections();
             metricsState.IncrementAcceptedConnections();
@@ -100,7 +100,7 @@ public sealed class TcpServerMetricsCollectorTests
             Thread.Sleep(50);
             collector.CaptureSnapshot();
 
-            TcpServerMetricsSnapshot measuredSnapshot = collector.GetSnapshot();
+            TcpServerMetricsSnapshot measuredSnapshot = collector.GetPublishedMetricsSnapshot();
             double elapsedSeconds = (measuredSnapshot.TimestampUtc - baselineSnapshot.TimestampUtc).TotalSeconds;
 
             Assert.True(elapsedSeconds > 0.0d);
