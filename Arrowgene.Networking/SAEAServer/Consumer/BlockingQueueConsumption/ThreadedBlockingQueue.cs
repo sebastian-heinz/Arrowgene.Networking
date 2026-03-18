@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Threading;
 using Arrowgene.Logging;
+using Arrowgene.Networking.Metrics;
 using Arrowgene.Networking.SAEAServer.Metric;
 
 namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
@@ -10,12 +11,12 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
     /// <summary>
     /// Dispatches consumer callbacks onto one worker thread per ordering lane while preserving lane order.
     /// </summary>
-    public abstract class ThreadedBlockingQueueConsumer : IConsumer, ISupportsOrderingLaneCount, IConsumerMetrics, IDisposable
+    public abstract class ThreadedBlockingQueue : IConsumer, ISupportsOrderingLaneCount, IMetricsCapture<ConsumerMetricsSnapshot>, IDisposable
     {
         private const int DefaultQueueCapacityPerLane = 1024;
         private const int ThreadJoinTimeoutMs = 10000;
 
-        private static readonly ILogger Logger = LogProvider.Logger(typeof(ThreadedBlockingQueueConsumer));
+        private static readonly ILogger Logger = LogProvider.Logger(typeof(ThreadedBlockingQueue));
 
         private readonly object _lifecycleSync;
         private readonly BlockingCollection<IClientEvent>?[] _queues;
@@ -34,7 +35,7 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
         /// </summary>
         /// <param name="orderingLaneCount">The number of ordering lanes to process in parallel.</param>
         /// <param name="identity">The log identity used for worker threads.</param>
-        public ThreadedBlockingQueueConsumer(int orderingLaneCount, string identity = "ThreadedBlockingQueueConsumer")
+        public ThreadedBlockingQueue(int orderingLaneCount, string identity = "ThreadedBlockingQueue")
             : this(orderingLaneCount, DefaultQueueCapacityPerLane, identity)
         {
         }
@@ -45,10 +46,10 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
         /// <param name="orderingLaneCount">The number of ordering lanes to process in parallel.</param>
         /// <param name="queueCapacityPerLane">The maximum queued events allowed per ordering lane before producers backpressure.</param>
         /// <param name="identity">The log identity used for worker threads.</param>
-        public ThreadedBlockingQueueConsumer(
+        public ThreadedBlockingQueue(
             int orderingLaneCount,
             int queueCapacityPerLane,
-            string identity = "ThreadedBlockingQueueConsumer"
+            string identity = "ThreadedBlockingQueue"
         )
         {
             if (orderingLaneCount <= 0)
@@ -73,17 +74,17 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
         /// <inheritdoc />
         public int OrderingLaneCount => _orderingLaneCount;
 
-        void IConsumerMetrics.EnableCapture()
+        void IMetricsCapture.EnableCapture()
         {
             _consumerMetricsState.EnableCapture();
         }
 
-        void IConsumerMetrics.DisableCapture()
+        void IMetricsCapture.DisableCapture()
         {
             _consumerMetricsState.DisableCapture();
         }
 
-        ConsumerMetricsSnapshot IConsumerMetrics.CreateSnapshot()
+        ConsumerMetricsSnapshot IMetricsCapture<ConsumerMetricsSnapshot>.CreateSnapshot(double elapsedSeconds)
         {
             long[] queueDepthByLane = new long[_orderingLaneCount];
             long[] eventsProcessed = new long[_consumerMetricsState.ConsumerEventTypeCount];
@@ -423,7 +424,7 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
         {
             if (_disposed)
             {
-                throw new ObjectDisposedException(nameof(ThreadedBlockingQueueConsumer));
+                throw new ObjectDisposedException(nameof(ThreadedBlockingQueue));
             }
         }
     }

@@ -7,7 +7,7 @@ using Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption;
 
 namespace Arrowgene.Networking.Tests;
 
-internal sealed class ThreadedEchoRecordingConsumer : ThreadedBlockingQueueConsumer
+internal sealed class ThreadedEchoRecording : ThreadedBlockingQueue
 {
     private readonly object _sync;
     private readonly List<ConnectedClientRecord> _connectedClients;
@@ -19,13 +19,13 @@ internal sealed class ThreadedEchoRecordingConsumer : ThreadedBlockingQueueConsu
     private int _activeHandlers;
     private int _maxConcurrentHandlers;
 
-    internal ThreadedEchoRecordingConsumer(
+    internal ThreadedEchoRecording(
         int orderingLaneCount,
         bool echoReceivedData = false,
         int queueCapacityPerLane = 1024,
         int receiveDelayMs = 0
     )
-        : base(orderingLaneCount, queueCapacityPerLane, nameof(ThreadedEchoRecordingConsumer))
+        : base(orderingLaneCount, queueCapacityPerLane, nameof(ThreadedEchoRecording))
     {
         _sync = new object();
         _connectedClients = new List<ConnectedClientRecord>();

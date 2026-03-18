@@ -26,7 +26,8 @@ dotnet add package Arrowgene.Networking
 | `SocketSettings` | Socket-level tuning applied via `ListenSocketSettings` and `ClientSocketSettings`. |
 | `ClientHandle` | Generation-checked struct to `Send`, `Disconnect`, or inspect a live client. |
 | `ClientSnapshot` | Immutable state captured at disconnect or error time (ID, endpoint, bytes, queued send bytes, timestamps). |
-| `TcpServerMetricsSnapshot` | Immutable metrics snapshot returned by `TcpServer.GetMetricsSnapshot()` or `TcpServer.GetPublishedMetricsSnapshot()`. |
+| `MetricsCollector<TSnapshot>` | Generic collector constructed with any `IMetricsCapture<TSnapshot>`; exposes `GetMetricsSnapshot()` and `GetPublishedMetricsSnapshot()`. |
+| `TcpServerMetricsSnapshot` | Immutable metrics snapshot returned by `MetricsCollector<TcpServerMetricsSnapshot>.GetMetricsSnapshot()` or `GetPublishedMetricsSnapshot()`. |
 | `DisconnectReason` | Enum used for disconnect logs and `DisconnectsByReason` indexing. |
 
 ## Quick Start
@@ -85,15 +86,18 @@ server.Stop();
 
 ## Metrics
 
-Use `GetMetricsSnapshot()` when you want to force a fresh capture, or `GetPublishedMetricsSnapshot()` when you want a passive read of the latest published snapshot.
+Create a `MetricsCollector<TcpServerMetricsSnapshot>` externally and pass it the `TcpServer`. Use `GetMetricsSnapshot()` when you want to force a fresh capture, or `GetPublishedMetricsSnapshot()` when you want a passive read of the latest published snapshot.
 
 ```csharp
 using System;
 using Arrowgene.Networking.SAEAServer;
 using Arrowgene.Networking.SAEAServer.Metric;
 
-TcpServerMetricsSnapshot metrics = server.GetMetricsSnapshot();
-TcpServerMetricsSnapshot latestPublished = server.GetPublishedMetricsSnapshot();
+using MetricsCollector<TcpServerMetricsSnapshot> collector = new MetricsCollector<TcpServerMetricsSnapshot>(server);
+collector.Start("Metrics");
+
+TcpServerMetricsSnapshot metrics = collector.GetMetricsSnapshot();
+TcpServerMetricsSnapshot latestPublished = collector.GetPublishedMetricsSnapshot();
 TimeSpan uptime = metrics.Uptime;
 
 Console.WriteLine(
@@ -127,10 +131,10 @@ The snapshot includes:
 - Failure and backpressure counters: socket errors, zero-byte receives, timeouts, send queue overflows.
 - Current server state: accept-pool availability, available client slots, total queued send bytes, in-flight async callbacks, deferred disconnect cleanup depth, per-lane active connections.
 - Optional low-cost detail: connection-duration buckets, receive/send size buckets, and per-socket-error-code counters via `GetSocketErrorCount(SocketError.X)`.
-- Optional consumer detail via `ConsumerMetrics` when the consumer implements `IConsumerMetrics`; for `ThreadedBlockingQueueConsumer` this includes per-lane queue depth, processed event counts, handler duration buckets, and handler error totals.
+- Optional consumer detail via `ConsumerMetrics` when the consumer implements `IMetricsCapture<ConsumerMetricsSnapshot>`; for `ThreadedBlockingQueueConsumer` this includes per-lane queue depth, processed event counts, handler duration buckets, and handler error totals.
 - Disconnect reason counters indexed by `DisconnectReason`.
 
-Use `GetMetricsSnapshot()` from one timer or background service that owns metric sampling. Use `GetPublishedMetricsSnapshot()` for passive readers such as health endpoints or secondary exporters.
+Use `GetMetricsSnapshot()` from one timer or background service that owns metric sampling. Use `GetPublishedMetricsSnapshot()` for passive readers such as health endpoints or secondary exporters. Dispose the collector before the server.
 
 ## Consumer Models
 

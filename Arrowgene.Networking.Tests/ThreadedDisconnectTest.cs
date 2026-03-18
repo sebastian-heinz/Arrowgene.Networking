@@ -7,7 +7,7 @@ using Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption;
 
 namespace Arrowgene.Networking.Tests;
 
-internal sealed class ThreadedDisconnectTestConsumer : ThreadedBlockingQueueConsumer
+internal sealed class ThreadedDisconnectTest : ThreadedBlockingQueue
 {
     private readonly object _sync;
     private readonly List<ClientSnapshot> _disconnects;
@@ -19,13 +19,13 @@ internal sealed class ThreadedDisconnectTestConsumer : ThreadedBlockingQueueCons
     private int _throwConsumed;
     private int _handlerExceptionCount;
 
-    internal ThreadedDisconnectTestConsumer(
+    internal ThreadedDisconnectTest(
         int orderingLaneCount,
         int queueCapacityPerLane = 1024,
         bool blockFirstDisconnect = false,
         bool throwOnFirstDisconnect = false
     )
-        : base(orderingLaneCount, queueCapacityPerLane, nameof(ThreadedDisconnectTestConsumer))
+        : base(orderingLaneCount, queueCapacityPerLane, nameof(ThreadedDisconnectTest))
     {
         _sync = new object();
         _disconnects = new List<ClientSnapshot>();

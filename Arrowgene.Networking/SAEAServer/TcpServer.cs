@@ -28,6 +28,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using Arrowgene.Logging;
+using Arrowgene.Networking.Metrics;
 using Arrowgene.Networking.SAEAServer.Consumer;
 using Arrowgene.Networking.SAEAServer.Metric;
 
@@ -36,7 +37,7 @@ namespace Arrowgene.Networking.SAEAServer;
 /// <summary>
 /// A pooled TCP server built on <see cref="SocketAsyncEventArgs"/>.
 /// </summary>
-public sealed class TcpServer : IDisposable
+public sealed class TcpServer : IMetricsCapture<TcpServerMetricsSnapshot>, IDisposable
 {
     private enum ServerState : int
     {
@@ -51,7 +52,6 @@ public sealed class TcpServer : IDisposable
     private const string AcceptThreadName = "TcpServer";
     private const string TimeoutThreadName = "TcpServer_Timeout";
     private const string DisconnectCleanupThreadName = "TcpServer_DisconnectCleanup";
-    private const string MetricsThreadName = "TcpServer_Metrics";
     private const int ThreadTimeoutMs = 10000;
     private const int MinSocketTimeoutDelayMs = 1000;
     private const int MaxSocketTimeoutDelayMs = 30000;
@@ -65,9 +65,8 @@ public sealed class TcpServer : IDisposable
     private readonly AcceptPool _acceptPool;
     private readonly BufferSlab _bufferSlab;
     private readonly ClientRegistry _clientRegistry;
-    private readonly IConsumerMetrics? _consumerMetrics;
+    private readonly IMetricsCapture<ConsumerMetricsSnapshot>? _consumerMetrics;
     private readonly TcpServerMetricsState _metricsState;
-    private readonly TcpServerMetricsCollector _metricsCollector;
     private readonly TimeSpan _socketTimeout;
     private readonly int _bufferSize;
     private readonly string _identity;
@@ -94,11 +93,6 @@ public sealed class TcpServer : IDisposable
     /// Gets the local TCP port the server binds to.
     /// </summary>
     public ushort Port { get; }
-
-    /// <summary>
-    /// Gets the metrics collector for this server.
-    /// </summary>
-    public TcpServerMetricsCollector MetricsCollector => _metricsCollector;
 
     /// <summary>
     /// Creates a server with explicit settings.
@@ -139,7 +133,7 @@ public sealed class TcpServer : IDisposable
         IpAddress = ipAddress;
         Port = port;
         _consumer = consumer;
-        _consumerMetrics = consumer as IConsumerMetrics;
+        _consumerMetrics = consumer as IMetricsCapture<ConsumerMetricsSnapshot>;
         _settings = new TcpServerSettings(settings);
         _bufferSize = settings.BufferSize;
 
@@ -163,13 +157,6 @@ public sealed class TcpServer : IDisposable
         );
         _metricsState = new TcpServerMetricsState();
         _acceptPool = new AcceptPool(_settings.ConcurrentAccepts, AcceptCompleted);
-        _metricsCollector = new TcpServerMetricsCollector(
-            _metricsState,
-            _clientRegistry,
-            _acceptPool,
-            _consumerMetrics,
-            _settings.OrderingLaneCount
-        );
 
         _state = ServerState.Created;
         _shutdownCompleted = new ManualResetEventSlim(false);
@@ -215,14 +202,12 @@ public sealed class TcpServer : IDisposable
             }
 
             _state = ServerState.Running;
-            EnableMetricsCapture();
+            ((IMetricsCapture)this).EnableCapture();
             startTimeoutThread = _socketTimeout > TimeSpan.Zero;
         }
 
         try
         {
-            string metricsThreadName = $"{_identity}{MetricsThreadName}".Trim();
-            _metricsCollector.Start(metricsThreadName);
             _disconnectCleanupThread.Start();
             if (startTimeoutThread)
             {
@@ -240,7 +225,7 @@ public sealed class TcpServer : IDisposable
                 if (_state == ServerState.Running)
                 {
                     _state = ServerState.Stopping;
-                    DisableMetricsCapture();
+                    ((IMetricsCapture)this).DisableCapture();
                 }
             }
 
@@ -279,11 +264,10 @@ public sealed class TcpServer : IDisposable
             }
 
             _state = ServerState.Stopping;
-            DisableMetricsCapture();
+            ((IMetricsCapture)this).DisableCapture();
         }
 
         Log(LogLevel.Info, nameof(Stop), "Stopping server...");
-        _metricsCollector.Stop();
         Shutdown();
         Log(LogLevel.Info, nameof(Stop), "TcpServer stopped.");
     }
@@ -303,7 +287,7 @@ public sealed class TcpServer : IDisposable
                 if (_state == ServerState.Running)
                 {
                     _state = ServerState.Stopping;
-                    DisableMetricsCapture();
+                    ((IMetricsCapture)this).DisableCapture();
                     shouldShutdown = true;
                 }
             }
@@ -1107,14 +1091,12 @@ public sealed class TcpServer : IDisposable
                 if (_state == ServerState.Running || _state == ServerState.Created)
                 {
                     _state = ServerState.Stopping;
-                    DisableMetricsCapture();
+                    ((IMetricsCapture)this).DisableCapture();
                 }
 
                 listenSocket = _listenSocket;
                 _listenSocket = null;
             }
-
-            _metricsCollector.Stop();
 
             Service.CloseSocket(listenSocket);
             try
@@ -1168,7 +1150,6 @@ public sealed class TcpServer : IDisposable
         }
 
         Shutdown();
-        _metricsCollector.Dispose();
         _acceptPool.Dispose();
         _clientRegistry.Dispose();
         _shutdownCompleted.Dispose();
@@ -1357,16 +1338,96 @@ public sealed class TcpServer : IDisposable
         };
     }
 
-    private void EnableMetricsCapture()
+    void IMetricsCapture.EnableCapture()
     {
         _metricsState.EnableCapture();
         _consumerMetrics?.EnableCapture();
     }
 
-    private void DisableMetricsCapture()
+    void IMetricsCapture.DisableCapture()
     {
         _metricsState.DisableCapture();
         _consumerMetrics?.DisableCapture();
+    }
+
+    TcpServerMetricsSnapshot IMetricsCapture<TcpServerMetricsSnapshot>.CreateSnapshot(double elapsedSeconds)
+    {
+        ConsumerMetricsSnapshot? consumerMetrics = _consumerMetrics?.CreateSnapshot(elapsedSeconds);
+        long activeConnections = _metricsState.GetActiveConnections();
+        long peakActiveConnections = _metricsState.GetAndResetPeakActiveConnections(activeConnections);
+        long totalSendQueuedBytes = _clientRegistry.GetTotalSendQueuedBytes();
+        long acceptedConnections = _metricsState.GetAcceptedConnections();
+        long bytesReceived = _metricsState.GetBytesReceived();
+        long bytesSent = _metricsState.GetBytesSent();
+        long receiveOperations = _metricsState.GetReceiveOperations();
+        long sendOperations = _metricsState.GetSendOperations();
+        int orderingLaneCount = _settings.OrderingLaneCount;
+        long[] disconnectsByReason = new long[_metricsState.DisconnectReasonCount];
+        long[] laneActiveConnections = new long[orderingLaneCount];
+        long[] connectionDurationBuckets = new long[_metricsState.ConnectionDurationBucketsCount];
+        long[] receiveSizeBuckets = new long[_metricsState.ReceiveSizeBucketCount];
+        long[] sendSizeBuckets = new long[_metricsState.SendSizeBucketCount];
+        long[] socketErrorsByCode = new long[_metricsState.SocketErrorCodeCount];
+        _metricsState.SetTotalSendQueuedBytes(totalSendQueuedBytes);
+        _metricsState.CopyDisconnectsByReason(disconnectsByReason);
+        _metricsState.CopyConnectionDurationBuckets(connectionDurationBuckets);
+        _metricsState.CopyReceiveSizeBuckets(receiveSizeBuckets);
+        _metricsState.CopySendSizeBuckets(sendSizeBuckets);
+        _metricsState.CopySocketErrorsByCode(socketErrorsByCode);
+        _clientRegistry.SnapshotLaneLoads(laneActiveConnections);
+
+        _metricsState.SnapshotRates(
+            elapsedSeconds,
+            bytesReceived,
+            bytesSent,
+            receiveOperations,
+            sendOperations,
+            acceptedConnections,
+            out double receiveBytesPerSecond,
+            out double sendBytesPerSecond,
+            out double receiveOpsPerSecond,
+            out double sendOpsPerSecond,
+            out double acceptsPerSecond
+        );
+
+        return new TcpServerMetricsSnapshot(
+            DateTime.UtcNow,
+            _metricsState.GetServerStartedAtUtc(),
+            _metricsState.IncrementSnapshotSequenceNumber(),
+            acceptedConnections,
+            _metricsState.GetRejectedConnections(),
+            activeConnections,
+            peakActiveConnections,
+            _metricsState.GetDisconnectedConnections(),
+            _metricsState.GetTimedOutConnections(),
+            _metricsState.GetSendQueueOverflows(),
+            _metricsState.GetSocketAcceptErrors(),
+            _metricsState.GetSocketReceiveErrors(),
+            _metricsState.GetSocketSendErrors(),
+            _metricsState.GetZeroByteReceives(),
+            receiveOperations,
+            sendOperations,
+            bytesReceived,
+            bytesSent,
+            receiveBytesPerSecond,
+            sendBytesPerSecond,
+            receiveOpsPerSecond,
+            sendOpsPerSecond,
+            acceptsPerSecond,
+            _metricsState.GetTotalSendQueuedBytes(),
+            _metricsState.GetInFlightAsyncCallbacks(),
+            _metricsState.GetDisconnectCleanupQueueDepth(),
+            _acceptPool.CurrentCount,
+            _clientRegistry.GetAvailableClientSlotCount(),
+            consumerMetrics,
+            disconnectsByReason,
+            laneActiveConnections,
+            connectionDurationBuckets,
+            receiveSizeBuckets,
+            sendSizeBuckets,
+            socketErrorsByCode,
+            _metricsState.SocketErrorCodeMinimum
+        );
     }
 
 }

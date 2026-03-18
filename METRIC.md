@@ -1,8 +1,10 @@
 # Metrics Reference
 
-`TcpServer.GetMetricsSnapshot()` captures and returns a fresh `TcpServerMetricsSnapshot`.
+`MetricsCollector<TcpServerMetricsSnapshot>.GetMetricsSnapshot()` captures and returns a fresh `TcpServerMetricsSnapshot`.
 
-`TcpServer.GetPublishedMetricsSnapshot()` returns the latest published `TcpServerMetricsSnapshot` without forcing a new capture.
+`MetricsCollector<TcpServerMetricsSnapshot>.GetPublishedMetricsSnapshot()` returns the latest published `TcpServerMetricsSnapshot` without forcing a new capture.
+
+The collector is constructed externally and receives a `TcpServer` (which implements `IMetricsCapture<TcpServerMetricsSnapshot>`).
 
 ## Snapshot Fields
 
@@ -42,7 +44,7 @@
 | `ConnectionDurationBuckets` | Indexed counter | Connection lifetime histogram recorded at disconnect time using these ranges: `0..1s`, `1..5s`, `5..30s`, `30s..2m`, `2..10m`, `10..60m`, `60m..6h`, `6h..24h`, `24h..72h`, `72h+`. |
 | `ReceiveSizeBuckets` | Indexed counter | Receive completions bucketed into these ranges: `0..64`, `65..256`, `257..1024`, `1025..4096`, `4097..8192`, `8193..16384`, `16385..65536`, `65537..262144`, `262145..1048576`, `1048577+`. |
 | `SendSizeBuckets` | Indexed counter | Send completions bucketed into these ranges: `0..64`, `65..256`, `257..1024`, `1025..4096`, `4097..8192`, `8193..16384`, `16385..65536`, `65537..262144`, `262145..1048576`, `1048577+`. |
-| `ConsumerMetrics` | Nested snapshot | Optional consumer metrics snapshot. `null` when the consumer does not implement `IConsumerMetrics`. |
+| `ConsumerMetrics` | Nested snapshot | Optional consumer metrics snapshot. `null` when the consumer does not implement `IMetricsCapture<ConsumerMetricsSnapshot>`. |
 | `SocketErrorsByCode` | Indexed counter | Socket errors indexed by raw `SocketError` value offset from `SocketErrorCodeMinimum`, or queried via `GetSocketErrorCount(SocketError.X)`. |
 | `SocketErrorCodeMinimum` | Scalar | Minimum raw `SocketError` value represented in `SocketErrorsByCode`. |
 

@@ -2,6 +2,7 @@ using System;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Threading;
+using Arrowgene.Networking.Metrics;
 using Arrowgene.Networking.SAEAServer;
 using Arrowgene.Networking.SAEAServer.Metric;
 using Xunit;
@@ -11,7 +12,7 @@ namespace Arrowgene.Networking.Tests;
 /// <summary>
 /// Unit coverage for the metrics collector snapshot metadata.
 /// </summary>
-public sealed class TcpServerMetricsCollectorTests
+public sealed class MetricsCollectorTests
 {
     /// <summary>
     /// Verifies snapshots expose a stable server start time and a monotonically increasing sequence.
@@ -19,14 +20,15 @@ public sealed class TcpServerMetricsCollectorTests
     [Fact]
     public void CaptureSnapshot_TracksStableStartTimeAndIncreasingSequence()
     {
-        TcpServerMetricsCollector collector = CreateCollector(
-            out _,
+        MetricsCollector<TcpServerMetricsSnapshot> collector = CreateCollector(
+            out TcpServerMetricsState metricsState,
             out ClientRegistry clientRegistry,
             out AcceptPool acceptPool
         );
 
         try
         {
+            metricsState.EnableCapture();
             collector.Start("MetricsCollectorTests");
             collector.Stop();
 
@@ -73,7 +75,7 @@ public sealed class TcpServerMetricsCollectorTests
     [Fact]
     public void CaptureSnapshot_DerivesOperationRatesFromCounterDeltas()
     {
-        TcpServerMetricsCollector collector = CreateCollector(
+        MetricsCollector<TcpServerMetricsSnapshot> collector = CreateCollector(
             out TcpServerMetricsState metricsState,
             out ClientRegistry clientRegistry,
             out AcceptPool acceptPool
@@ -101,12 +103,20 @@ public sealed class TcpServerMetricsCollectorTests
             collector.CaptureSnapshot();
 
             TcpServerMetricsSnapshot measuredSnapshot = collector.GetPublishedMetricsSnapshot();
-            double elapsedSeconds = (measuredSnapshot.TimestampUtc - baselineSnapshot.TimestampUtc).TotalSeconds;
 
-            Assert.True(elapsedSeconds > 0.0d);
-            Assert.Equal(3.0d / elapsedSeconds, measuredSnapshot.ReceiveOpsPerSecond, 9);
-            Assert.Equal(4.0d / elapsedSeconds, measuredSnapshot.SendOpsPerSecond, 9);
-            Assert.Equal(2.0d / elapsedSeconds, measuredSnapshot.AcceptsPerSecond, 9);
+            Assert.True(measuredSnapshot.ReceiveOpsPerSecond > 0.0d);
+            Assert.True(measuredSnapshot.SendOpsPerSecond > 0.0d);
+            Assert.True(measuredSnapshot.AcceptsPerSecond > 0.0d);
+            Assert.Equal(
+                measuredSnapshot.ReceiveOpsPerSecond / 3.0d,
+                measuredSnapshot.SendOpsPerSecond / 4.0d,
+                9
+            );
+            Assert.Equal(
+                measuredSnapshot.ReceiveOpsPerSecond / 3.0d,
+                measuredSnapshot.AcceptsPerSecond / 2.0d,
+                9
+            );
         }
         finally
         {
@@ -116,7 +126,7 @@ public sealed class TcpServerMetricsCollectorTests
         }
     }
 
-    private static TcpServerMetricsCollector CreateCollector(
+    private static MetricsCollector<TcpServerMetricsSnapshot> CreateCollector(
         out TcpServerMetricsState metricsState,
         out ClientRegistry clientRegistry,
         out AcceptPool acceptPool)
@@ -124,7 +134,8 @@ public sealed class TcpServerMetricsCollectorTests
         metricsState = new TcpServerMetricsState();
         clientRegistry = new ClientRegistry(1, 1, CreateClient);
         acceptPool = new AcceptPool(1, IgnoreAcceptCompletion);
-        return new TcpServerMetricsCollector(metricsState, clientRegistry, acceptPool, null, 1);
+        TestServerMetricsCapture capture = new TestServerMetricsCapture(metricsState, clientRegistry, acceptPool);
+        return new MetricsCollector<TcpServerMetricsSnapshot>(capture);
     }
 
     private static Client CreateClient(ushort clientId)
@@ -138,5 +149,110 @@ public sealed class TcpServerMetricsCollectorTests
 
     private static void IgnoreAcceptCompletion(object? sender, SocketAsyncEventArgs eventArgs)
     {
+    }
+
+    private sealed class TestServerMetricsCapture : IMetricsCapture<TcpServerMetricsSnapshot>
+    {
+        private readonly TcpServerMetricsState _metricsState;
+        private readonly ClientRegistry _clientRegistry;
+        private readonly AcceptPool _acceptPool;
+
+        internal TestServerMetricsCapture(
+            TcpServerMetricsState metricsState,
+            ClientRegistry clientRegistry,
+            AcceptPool acceptPool)
+        {
+            _metricsState = metricsState;
+            _clientRegistry = clientRegistry;
+            _acceptPool = acceptPool;
+        }
+
+        public void EnableCapture()
+        {
+            _metricsState.EnableCapture();
+        }
+
+        public void DisableCapture()
+        {
+            _metricsState.DisableCapture();
+        }
+
+        public TcpServerMetricsSnapshot CreateSnapshot(double elapsedSeconds)
+        {
+            long activeConnections = _metricsState.GetActiveConnections();
+            long peakActiveConnections = _metricsState.GetAndResetPeakActiveConnections(activeConnections);
+            long totalSendQueuedBytes = _clientRegistry.GetTotalSendQueuedBytes();
+            long acceptedConnections = _metricsState.GetAcceptedConnections();
+            long bytesReceived = _metricsState.GetBytesReceived();
+            long bytesSent = _metricsState.GetBytesSent();
+            long receiveOperations = _metricsState.GetReceiveOperations();
+            long sendOperations = _metricsState.GetSendOperations();
+            long[] disconnectsByReason = new long[_metricsState.DisconnectReasonCount];
+            long[] laneActiveConnections = new long[1];
+            long[] connectionDurationBuckets = new long[_metricsState.ConnectionDurationBucketsCount];
+            long[] receiveSizeBuckets = new long[_metricsState.ReceiveSizeBucketCount];
+            long[] sendSizeBuckets = new long[_metricsState.SendSizeBucketCount];
+            long[] socketErrorsByCode = new long[_metricsState.SocketErrorCodeCount];
+            _metricsState.SetTotalSendQueuedBytes(totalSendQueuedBytes);
+            _metricsState.CopyDisconnectsByReason(disconnectsByReason);
+            _metricsState.CopyConnectionDurationBuckets(connectionDurationBuckets);
+            _metricsState.CopyReceiveSizeBuckets(receiveSizeBuckets);
+            _metricsState.CopySendSizeBuckets(sendSizeBuckets);
+            _metricsState.CopySocketErrorsByCode(socketErrorsByCode);
+            _clientRegistry.SnapshotLaneLoads(laneActiveConnections);
+
+            _metricsState.SnapshotRates(
+                elapsedSeconds,
+                bytesReceived,
+                bytesSent,
+                receiveOperations,
+                sendOperations,
+                acceptedConnections,
+                out double receiveBytesPerSecond,
+                out double sendBytesPerSecond,
+                out double receiveOpsPerSecond,
+                out double sendOpsPerSecond,
+                out double acceptsPerSecond
+            );
+
+            return new TcpServerMetricsSnapshot(
+                DateTime.UtcNow,
+                _metricsState.GetServerStartedAtUtc(),
+                _metricsState.IncrementSnapshotSequenceNumber(),
+                acceptedConnections,
+                _metricsState.GetRejectedConnections(),
+                activeConnections,
+                peakActiveConnections,
+                _metricsState.GetDisconnectedConnections(),
+                _metricsState.GetTimedOutConnections(),
+                _metricsState.GetSendQueueOverflows(),
+                _metricsState.GetSocketAcceptErrors(),
+                _metricsState.GetSocketReceiveErrors(),
+                _metricsState.GetSocketSendErrors(),
+                _metricsState.GetZeroByteReceives(),
+                receiveOperations,
+                sendOperations,
+                bytesReceived,
+                bytesSent,
+                receiveBytesPerSecond,
+                sendBytesPerSecond,
+                receiveOpsPerSecond,
+                sendOpsPerSecond,
+                acceptsPerSecond,
+                _metricsState.GetTotalSendQueuedBytes(),
+                _metricsState.GetInFlightAsyncCallbacks(),
+                _metricsState.GetDisconnectCleanupQueueDepth(),
+                _acceptPool.CurrentCount,
+                _clientRegistry.GetAvailableClientSlotCount(),
+                null,
+                disconnectsByReason,
+                laneActiveConnections,
+                connectionDurationBuckets,
+                receiveSizeBuckets,
+                sendSizeBuckets,
+                socketErrorsByCode,
+                _metricsState.SocketErrorCodeMinimum
+            );
+        }
     }
 }

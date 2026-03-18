@@ -5,8 +5,10 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
+using Arrowgene.Networking.Metrics;
 using Arrowgene.Networking.SAEAServer;
 using Arrowgene.Networking.SAEAServer.Consumer;
+using Arrowgene.Networking.SAEAServer.Metric;
 
 namespace Arrowgene.Networking.Tests;
 
@@ -42,12 +44,16 @@ internal sealed class ServerTestHost : IDisposable
         _trackedClients = new List<TcpClient>();
         Port = PortAllocator.GetFreeTcpPort();
         TcpServer = new TcpServer(IPAddress.Loopback, Port, Consumer, settings);
+        MetricsCollector = new MetricsCollector<TcpServerMetricsSnapshot>(TcpServer);
         TcpServer.Start();
+        MetricsCollector.Start("TestMetrics");
     }
 
     internal IConsumer Consumer { get; }
 
     internal TcpServer TcpServer { get; }
+
+    internal MetricsCollector<TcpServerMetricsSnapshot> MetricsCollector { get; }
 
     internal ushort Port { get; }
 
@@ -188,6 +194,7 @@ internal sealed class ServerTestHost : IDisposable
         }
 
         Thread.Sleep(100);
+        MetricsCollector.Dispose();
         TcpServer.Dispose();
         _disposed = true;
     }
