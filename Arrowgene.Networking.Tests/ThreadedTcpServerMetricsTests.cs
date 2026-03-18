@@ -24,7 +24,7 @@ public sealed class ThreadedTcpServerMetricsTests
     [Fact]
     public async Task MetricsSnapshot_TracksThreadedConsumerQueueDepthAndProcessedEvents()
     {
-        using ThreadedDisconnectTestConsumer consumer = new ThreadedDisconnectTestConsumer(
+        using ThreadedDisconnectTest consumer = new ThreadedDisconnectTest(
             orderingLaneCount: 1,
             queueCapacityPerLane: 2,
             blockFirstDisconnect: true
@@ -94,7 +94,7 @@ public sealed class ThreadedTcpServerMetricsTests
     [Fact]
     public async Task MetricsSnapshot_TracksThreadedConsumerHandlerErrors()
     {
-        using ThreadedDisconnectTestConsumer consumer = new ThreadedDisconnectTestConsumer(
+        using ThreadedDisconnectTest consumer = new ThreadedDisconnectTest(
             orderingLaneCount: 1,
             throwOnFirstDisconnect: true
         );
@@ -141,7 +141,7 @@ public sealed class ThreadedTcpServerMetricsTests
     [Fact]
     public async Task MetricsSnapshot_TracksThreadedConsumerServerEventTypes()
     {
-        ThreadedEchoRecordingConsumer consumer = new ThreadedEchoRecordingConsumer(
+        ThreadedEchoRecording consumer = new ThreadedEchoRecording(
             orderingLaneCount: 1,
             echoReceivedData: true
         );
@@ -239,19 +239,19 @@ public sealed class ThreadedTcpServerMetricsTests
         TimeSpan timeout,
         string failureMessage)
     {
-        TcpServerMetricsSnapshot lastSnapshot = host.TcpServer.MetricsCollector.GetMetricsSnapshot();
+        TcpServerMetricsSnapshot lastSnapshot = host.MetricsCollector.GetMetricsSnapshot();
 
         await TestWait.UntilAsync(
             () =>
             {
-                lastSnapshot = host.TcpServer.MetricsCollector.GetMetricsSnapshot();
+                lastSnapshot = host.MetricsCollector.GetMetricsSnapshot();
                 return predicate(lastSnapshot);
             },
             timeout,
             $"{failureMessage}{Environment.NewLine}Last snapshot: {DescribeSnapshot(lastSnapshot)}"
         ).ConfigureAwait(false);
 
-        return host.TcpServer.MetricsCollector.GetMetricsSnapshot();
+        return host.MetricsCollector.GetMetricsSnapshot();
     }
 
     private static string DescribeSnapshot(TcpServerMetricsSnapshot snapshot)

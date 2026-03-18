@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Arrowgene.Networking.SAEAServer;
 using Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption;
+using Arrowgene.Networking.SAEAServer.Metric;
 
 namespace Arrowgene.Networking.Tests;
 
@@ -17,7 +18,7 @@ internal sealed class ThreadedConsumerTestHost : IDisposable
     private bool _disposed;
 
     internal ThreadedConsumerTestHost(
-        ThreadedBlockingQueueConsumer consumer,
+        ThreadedBlockingQueue consumer,
         Action<TcpServerSettings>? configureSettings = null
     )
     {
@@ -44,12 +45,16 @@ internal sealed class ThreadedConsumerTestHost : IDisposable
 
         Consumer.Start();
         TcpServer = new TcpServer(IPAddress.Loopback, Port, Consumer, settings);
+        MetricsCollector = new TcpServerMetricsCollector(TcpServer);
         TcpServer.Start();
+        MetricsCollector.Start("ThreadedTestMetrics");
     }
 
-    internal ThreadedBlockingQueueConsumer Consumer { get; }
+    internal ThreadedBlockingQueue Consumer { get; }
 
     internal TcpServer TcpServer { get; }
+
+    internal TcpServerMetricsCollector MetricsCollector { get; }
 
     internal ushort Port { get; }
 
@@ -190,6 +195,7 @@ internal sealed class ThreadedConsumerTestHost : IDisposable
         }
 
         Thread.Sleep(100);
+        MetricsCollector.Dispose();
         TcpServer.Dispose();
         Consumer.Dispose();
         _disposed = true;

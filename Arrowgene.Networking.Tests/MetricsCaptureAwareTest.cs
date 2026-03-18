@@ -7,7 +7,7 @@ using Arrowgene.Networking.SAEAServer.Metric;
 
 namespace Arrowgene.Networking.Tests;
 
-internal sealed class MetricsAwareTestConsumer : IConsumer, IConsumerMetrics
+internal sealed class MetricsCaptureAwareTest : IConsumer, IMetricsCapture<ConsumerMetricsSnapshot>
 {
     private const int HandlerDurationBucketCount = 10;
     private readonly long[] _queueDepthByLane;
@@ -19,7 +19,7 @@ internal sealed class MetricsAwareTestConsumer : IConsumer, IConsumerMetrics
     private int _disconnectedCount;
     private long _handlerErrors;
 
-    internal MetricsAwareTestConsumer(int metricsLaneCount)
+    internal MetricsCaptureAwareTest(int metricsLaneCount)
     {
         if (metricsLaneCount <= 0)
         {
@@ -38,19 +38,19 @@ internal sealed class MetricsAwareTestConsumer : IConsumer, IConsumerMetrics
 
     internal int DisconnectedCount => Volatile.Read(ref _disconnectedCount);
 
-    void IConsumerMetrics.EnableCapture()
+    void IMetricsCapture.EnableCapture()
     {
         Interlocked.Increment(ref _enableCaptureCount);
         Volatile.Write(ref _captureEnabled, 1);
     }
 
-    void IConsumerMetrics.DisableCapture()
+    void IMetricsCapture.DisableCapture()
     {
         Interlocked.Increment(ref _disableCaptureCount);
         Volatile.Write(ref _captureEnabled, 0);
     }
 
-    ConsumerMetricsSnapshot IConsumerMetrics.CreateSnapshot()
+    ConsumerMetricsSnapshot IMetricsCapture<ConsumerMetricsSnapshot>.CreateSnapshot(double elapsedSeconds)
     {
         long[] queueDepthByLane = new long[_queueDepthByLane.Length];
         long[] eventsProcessed = new long[_eventsProcessed.Length];

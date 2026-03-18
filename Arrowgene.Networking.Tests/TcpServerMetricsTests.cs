@@ -44,7 +44,7 @@ public sealed class TcpServerMetricsTests
         {
             await consumer.WaitForConnectedCountAsync(1, ShortTimeout);
 
-            TcpServerMetricsSnapshot preTrafficSnapshot = host.TcpServer.MetricsCollector.GetMetricsSnapshot();
+            TcpServerMetricsSnapshot preTrafficSnapshot = host.MetricsCollector.GetMetricsSnapshot();
 
             byte[] payload = CreatePayload(256, 11);
             byte[] echoed = await host.RoundTripAsync(client, payload, MediumTimeout);
@@ -145,8 +145,8 @@ public sealed class TcpServerMetricsTests
             }
         );
 
-        TcpServerMetricsSnapshot capturedSnapshot = host.TcpServer.MetricsCollector.GetMetricsSnapshot();
-        TcpServerMetricsSnapshot publishedSnapshot = host.TcpServer.MetricsCollector.GetPublishedMetricsSnapshot();
+        TcpServerMetricsSnapshot capturedSnapshot = host.MetricsCollector.GetMetricsSnapshot();
+        TcpServerMetricsSnapshot publishedSnapshot = host.MetricsCollector.GetPublishedMetricsSnapshot();
 
         Assert.Equal(capturedSnapshot.SnapshotSequenceNumber, publishedSnapshot.SnapshotSequenceNumber);
         Assert.Equal(capturedSnapshot.TimestampUtc, publishedSnapshot.TimestampUtc);
@@ -218,12 +218,12 @@ public sealed class TcpServerMetricsTests
     }
 
     /// <summary>
-    /// Verifies non-threaded consumers can opt in to metrics publication through <see cref="IConsumerMetrics"/>.
+    /// Verifies non-threaded consumers can opt in to metrics publication through <see cref="IMetricsCapture"/>.
     /// </summary>
     [Fact]
     public async Task MetricsSnapshot_UsesInterfaceDrivenConsumerMetricsForOptInConsumer()
     {
-        MetricsAwareTestConsumer consumer = new MetricsAwareTestConsumer(metricsLaneCount: 1);
+        MetricsCaptureAwareTest consumer = new MetricsCaptureAwareTest(metricsLaneCount: 1);
 
         using ServerTestHost host = new ServerTestHost(
             consumer,
@@ -589,7 +589,7 @@ public sealed class TcpServerMetricsTests
             host.TcpServer.Stop();
             await consumer.WaitForDisconnectedCountAsync(1, MediumTimeout);
 
-            TcpServerMetricsSnapshot stoppedSnapshot = host.TcpServer.MetricsCollector.GetMetricsSnapshot();
+            TcpServerMetricsSnapshot stoppedSnapshot = host.MetricsCollector.GetMetricsSnapshot();
 
             Assert.Equal(runningSnapshot.AcceptedConnections, stoppedSnapshot.AcceptedConnections);
             Assert.Equal(runningSnapshot.RejectedConnections, stoppedSnapshot.RejectedConnections);
@@ -665,19 +665,19 @@ public sealed class TcpServerMetricsTests
         TimeSpan timeout,
         string failureMessage)
     {
-        TcpServerMetricsSnapshot lastSnapshot = host.TcpServer.MetricsCollector.GetMetricsSnapshot();
+        TcpServerMetricsSnapshot lastSnapshot = host.MetricsCollector.GetMetricsSnapshot();
 
         await TestWait.UntilAsync(
             () =>
             {
-                lastSnapshot = host.TcpServer.MetricsCollector.GetMetricsSnapshot();
+                lastSnapshot = host.MetricsCollector.GetMetricsSnapshot();
                 return predicate(lastSnapshot);
             },
             timeout,
             $"{failureMessage}{Environment.NewLine}Last snapshot: {DescribeSnapshot(lastSnapshot)}"
         ).ConfigureAwait(false);
 
-        return host.TcpServer.MetricsCollector.GetMetricsSnapshot();
+        return host.MetricsCollector.GetMetricsSnapshot();
     }
 
     private static async Task<TcpServerMetricsSnapshot> WaitForPublishedSnapshotAsync(
@@ -686,19 +686,19 @@ public sealed class TcpServerMetricsTests
         TimeSpan timeout,
         string failureMessage)
     {
-        TcpServerMetricsSnapshot lastSnapshot = host.TcpServer.MetricsCollector.GetPublishedMetricsSnapshot();
+        TcpServerMetricsSnapshot lastSnapshot = host.MetricsCollector.GetPublishedMetricsSnapshot();
 
         await TestWait.UntilAsync(
             () =>
             {
-                lastSnapshot = host.TcpServer.MetricsCollector.GetPublishedMetricsSnapshot();
+                lastSnapshot = host.MetricsCollector.GetPublishedMetricsSnapshot();
                 return predicate(lastSnapshot);
             },
             timeout,
             $"{failureMessage}{Environment.NewLine}Last snapshot: {DescribeSnapshot(lastSnapshot)}"
         ).ConfigureAwait(false);
 
-        return host.TcpServer.MetricsCollector.GetPublishedMetricsSnapshot();
+        return host.MetricsCollector.GetPublishedMetricsSnapshot();
     }
 
     private static string DescribeSnapshot(TcpServerMetricsSnapshot snapshot)

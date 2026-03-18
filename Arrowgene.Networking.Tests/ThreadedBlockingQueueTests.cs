@@ -9,7 +9,7 @@ using Xunit;
 
 namespace Arrowgene.Networking.Tests;
 
-public sealed class ThreadedBlockingQueueConsumerTests
+public sealed class ThreadedBlockingQueueTests
 {
     private static readonly TimeSpan ShortTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan MediumTimeout = TimeSpan.FromSeconds(10);
@@ -18,7 +18,7 @@ public sealed class ThreadedBlockingQueueConsumerTests
     [Fact]
     public void DisconnectLaneOutOfRange_ThrowsArgumentOutOfRangeException()
     {
-        using ThreadedDisconnectTestConsumer consumer = new ThreadedDisconnectTestConsumer(1);
+        using ThreadedDisconnectTest consumer = new ThreadedDisconnectTest(1);
         IConsumer queuedConsumer = consumer;
         ClientSnapshot snapshot = CreateSnapshot(unitOfOrder: 1, clientId: 1);
 
@@ -30,7 +30,7 @@ public sealed class ThreadedBlockingQueueConsumerTests
     [Fact]
     public async Task BoundedLaneQueue_BackpressuresProducerUntilWorkerDrains()
     {
-        using ThreadedDisconnectTestConsumer consumer = new ThreadedDisconnectTestConsumer(
+        using ThreadedDisconnectTest consumer = new ThreadedDisconnectTest(
             orderingLaneCount: 1,
             queueCapacityPerLane: 1,
             blockFirstDisconnect: true
@@ -61,7 +61,7 @@ public sealed class ThreadedBlockingQueueConsumerTests
     [Fact]
     public async Task HandlerException_DoesNotKillLaneThread()
     {
-        using ThreadedDisconnectTestConsumer consumer = new ThreadedDisconnectTestConsumer(
+        using ThreadedDisconnectTest consumer = new ThreadedDisconnectTest(
             orderingLaneCount: 1,
             throwOnFirstDisconnect: true
         );
@@ -81,7 +81,7 @@ public sealed class ThreadedBlockingQueueConsumerTests
     [Fact]
     public void StopAndDispose_AreIdempotent_AndIgnoreLateEvents()
     {
-        ThreadedDisconnectTestConsumer consumer = new ThreadedDisconnectTestConsumer(1);
+        ThreadedDisconnectTest consumer = new ThreadedDisconnectTest(1);
         IConsumer queuedConsumer = consumer;
 
         consumer.Start();
@@ -98,7 +98,7 @@ public sealed class ThreadedBlockingQueueConsumerTests
     [Fact]
     public async Task LaneOrdering_PreservesPerLaneDisconnectSequence()
     {
-        using ThreadedDisconnectTestConsumer consumer = new ThreadedDisconnectTestConsumer(orderingLaneCount: 2);
+        using ThreadedDisconnectTest consumer = new ThreadedDisconnectTest(orderingLaneCount: 2);
         IConsumer queuedConsumer = consumer;
 
         consumer.Start();
@@ -135,7 +135,7 @@ public sealed class ThreadedBlockingQueueConsumerTests
     [Fact]
     public async Task Disconnection_PreservesAssignedLane()
     {
-        ThreadedEchoRecordingConsumer consumer = new ThreadedEchoRecordingConsumer(orderingLaneCount: 2);
+        ThreadedEchoRecording consumer = new ThreadedEchoRecording(orderingLaneCount: 2);
 
         using ThreadedConsumerTestHost host = new ThreadedConsumerTestHost(
             consumer,
@@ -171,7 +171,7 @@ public sealed class ThreadedBlockingQueueConsumerTests
     [Fact]
     public async Task StressLoad_CanEchoAcrossMultipleLanes()
     {
-        ThreadedEchoRecordingConsumer consumer = new ThreadedEchoRecordingConsumer(
+        ThreadedEchoRecording consumer = new ThreadedEchoRecording(
             orderingLaneCount: 4,
             echoReceivedData: true,
             receiveDelayMs: 1
@@ -230,7 +230,7 @@ public sealed class ThreadedBlockingQueueConsumerTests
     [Fact]
     public async Task LoadWaves_CanConnectRoundTripAndDisconnectAcrossBursts()
     {
-        ThreadedEchoRecordingConsumer consumer = new ThreadedEchoRecordingConsumer(
+        ThreadedEchoRecording consumer = new ThreadedEchoRecording(
             orderingLaneCount: 4,
             echoReceivedData: true,
             receiveDelayMs: 1

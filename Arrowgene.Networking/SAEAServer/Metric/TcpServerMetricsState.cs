@@ -15,6 +15,13 @@ internal sealed class TcpServerMetricsState
     private readonly long[] _socketErrorsByCode;
     private readonly int _socketErrorCodeMinimum;
     private int _captureEnabled;
+    private DateTime _serverStartedAtUtc;
+    private long _snapshotSequenceNumber;
+    private long _previousBytesReceived;
+    private long _previousBytesSent;
+    private long _previousReceiveOperations;
+    private long _previousSendOperations;
+    private long _previousAcceptedConnections;
     private long _acceptedConnections;
     private long _rejectedConnections;
     private long _activeConnections;
@@ -77,6 +84,13 @@ internal sealed class TcpServerMetricsState
     internal void EnableCapture()
     {
         Volatile.Write(ref _captureEnabled, 1);
+        _serverStartedAtUtc = DateTime.UtcNow;
+        _snapshotSequenceNumber = 0;
+        _previousBytesReceived = Interlocked.Read(ref _bytesReceived);
+        _previousBytesSent = Interlocked.Read(ref _bytesSent);
+        _previousReceiveOperations = Interlocked.Read(ref _receiveOperations);
+        _previousSendOperations = Interlocked.Read(ref _sendOperations);
+        _previousAcceptedConnections = Interlocked.Read(ref _acceptedConnections);
     }
 
     internal void DisableCapture()
@@ -383,6 +397,53 @@ internal sealed class TcpServerMetricsState
     internal long GetDisconnectCleanupQueueDepth()
     {
         return Interlocked.Read(ref _disconnectCleanupQueueDepth);
+    }
+
+    internal DateTime GetServerStartedAtUtc()
+    {
+        return _serverStartedAtUtc;
+    }
+
+    internal long IncrementSnapshotSequenceNumber()
+    {
+        return _serverStartedAtUtc == DateTime.MinValue
+            ? 0
+            : Interlocked.Increment(ref _snapshotSequenceNumber);
+    }
+
+    internal void SnapshotRates(
+        double elapsedSeconds,
+        long bytesReceived,
+        long bytesSent,
+        long receiveOperations,
+        long sendOperations,
+        long acceptedConnections,
+        out double receiveBytesPerSecond,
+        out double sendBytesPerSecond,
+        out double receiveOpsPerSecond,
+        out double sendOpsPerSecond,
+        out double acceptsPerSecond)
+    {
+        receiveBytesPerSecond = 0.0d;
+        sendBytesPerSecond = 0.0d;
+        receiveOpsPerSecond = 0.0d;
+        sendOpsPerSecond = 0.0d;
+        acceptsPerSecond = 0.0d;
+
+        if (elapsedSeconds > 0.0d)
+        {
+            receiveBytesPerSecond = (bytesReceived - _previousBytesReceived) / elapsedSeconds;
+            sendBytesPerSecond = (bytesSent - _previousBytesSent) / elapsedSeconds;
+            receiveOpsPerSecond = (receiveOperations - _previousReceiveOperations) / elapsedSeconds;
+            sendOpsPerSecond = (sendOperations - _previousSendOperations) / elapsedSeconds;
+            acceptsPerSecond = (acceptedConnections - _previousAcceptedConnections) / elapsedSeconds;
+        }
+
+        _previousBytesReceived = bytesReceived;
+        _previousBytesSent = bytesSent;
+        _previousReceiveOperations = receiveOperations;
+        _previousSendOperations = sendOperations;
+        _previousAcceptedConnections = acceptedConnections;
     }
 
     internal void CopyDisconnectsByReason(long[] destination)
