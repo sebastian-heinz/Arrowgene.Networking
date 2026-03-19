@@ -20,10 +20,13 @@
         /// </summary>
         public ClientHandle ClientHandle { get; }
 
-        internal ClientDataEvent(ClientHandle clientHandle, byte[] data)
+        internal long EnqueuedTimestamp { get; }
+
+        internal ClientDataEvent(ClientHandle clientHandle, byte[] data, long enqueuedTimestamp = 0L)
         {
             ClientHandle = clientHandle;
             Data = data;
+            EnqueuedTimestamp = enqueuedTimestamp;
         }
     }
 }

@@ -51,7 +51,11 @@ public sealed class ThreadedTcpServerMetricsTests
                 && consumerMetrics.QueueDepthByLane.Span[0] == 1
                 && consumerMetrics.GetEventsProcessedCount(ClientEventType.Disconnected) == 0
                 && consumerMetrics.HandlerDurationBuckets.Length == 10
+                && consumerMetrics.ReceivedDataQueueDelayBuckets.Length == 10
+                && consumerMetrics.ReceivedDataHandlerDurationBuckets.Length == 10
                 && GetCounterTotal(consumerMetrics.HandlerDurationBuckets) == 0
+                && GetCounterTotal(consumerMetrics.ReceivedDataQueueDelayBuckets) == 0
+                && GetCounterTotal(consumerMetrics.ReceivedDataHandlerDurationBuckets) == 0
                 && consumerMetrics.HandlerErrors == 0,
             MediumTimeout,
             "Timed out waiting for the queued threaded consumer metrics snapshot."
@@ -61,7 +65,11 @@ public sealed class ThreadedTcpServerMetricsTests
         Assert.Equal(1, queuedConsumerMetrics.QueueDepthByLane.Span[0]);
         Assert.Equal(0, queuedConsumerMetrics.GetEventsProcessedCount(ClientEventType.Disconnected));
         Assert.Equal(10, queuedConsumerMetrics.HandlerDurationBuckets.Length);
+        Assert.Equal(10, queuedConsumerMetrics.ReceivedDataQueueDelayBuckets.Length);
+        Assert.Equal(10, queuedConsumerMetrics.ReceivedDataHandlerDurationBuckets.Length);
         Assert.Equal(0, GetCounterTotal(queuedConsumerMetrics.HandlerDurationBuckets));
+        Assert.Equal(0, GetCounterTotal(queuedConsumerMetrics.ReceivedDataQueueDelayBuckets));
+        Assert.Equal(0, GetCounterTotal(queuedConsumerMetrics.ReceivedDataHandlerDurationBuckets));
         Assert.Equal(0, queuedConsumerMetrics.HandlerErrors);
 
         consumer.ReleaseBlockedDisconnect();
@@ -74,7 +82,11 @@ public sealed class ThreadedTcpServerMetricsTests
                 && consumerMetrics.QueueDepthByLane.Span[0] == 0
                 && consumerMetrics.GetEventsProcessedCount(ClientEventType.Disconnected) == 2
                 && consumerMetrics.HandlerDurationBuckets.Length == 10
+                && consumerMetrics.ReceivedDataQueueDelayBuckets.Length == 10
+                && consumerMetrics.ReceivedDataHandlerDurationBuckets.Length == 10
                 && GetCounterTotal(consumerMetrics.HandlerDurationBuckets) == 2
+                && GetCounterTotal(consumerMetrics.ReceivedDataQueueDelayBuckets) == 0
+                && GetCounterTotal(consumerMetrics.ReceivedDataHandlerDurationBuckets) == 0
                 && consumerMetrics.HandlerErrors == 0,
             MediumTimeout,
             "Timed out waiting for the drained threaded consumer metrics snapshot."
@@ -84,7 +96,11 @@ public sealed class ThreadedTcpServerMetricsTests
         Assert.Equal(0, drainedConsumerMetrics.QueueDepthByLane.Span[0]);
         Assert.Equal(2, drainedConsumerMetrics.GetEventsProcessedCount(ClientEventType.Disconnected));
         Assert.Equal(10, drainedConsumerMetrics.HandlerDurationBuckets.Length);
+        Assert.Equal(10, drainedConsumerMetrics.ReceivedDataQueueDelayBuckets.Length);
+        Assert.Equal(10, drainedConsumerMetrics.ReceivedDataHandlerDurationBuckets.Length);
         Assert.Equal(2, GetCounterTotal(drainedConsumerMetrics.HandlerDurationBuckets));
+        Assert.Equal(0, GetCounterTotal(drainedConsumerMetrics.ReceivedDataQueueDelayBuckets));
+        Assert.Equal(0, GetCounterTotal(drainedConsumerMetrics.ReceivedDataHandlerDurationBuckets));
         Assert.Equal(0, drainedConsumerMetrics.HandlerErrors);
     }
 
@@ -121,7 +137,11 @@ public sealed class ThreadedTcpServerMetricsTests
                 && consumerMetrics.QueueDepthByLane.Span[0] == 0
                 && consumerMetrics.HandlerErrors == 1
                 && consumerMetrics.HandlerDurationBuckets.Length == 10
+                && consumerMetrics.ReceivedDataQueueDelayBuckets.Length == 10
+                && consumerMetrics.ReceivedDataHandlerDurationBuckets.Length == 10
                 && GetCounterTotal(consumerMetrics.HandlerDurationBuckets) == 1
+                && GetCounterTotal(consumerMetrics.ReceivedDataQueueDelayBuckets) == 0
+                && GetCounterTotal(consumerMetrics.ReceivedDataHandlerDurationBuckets) == 0
                 && consumerMetrics.GetEventsProcessedCount(ClientEventType.Disconnected) == 1,
             MediumTimeout,
             "Timed out waiting for the threaded consumer handler error metrics snapshot."
@@ -131,7 +151,11 @@ public sealed class ThreadedTcpServerMetricsTests
         Assert.Equal(1, consumer.HandlerExceptionCount);
         Assert.Equal(1, snapshotConsumerMetrics.HandlerErrors);
         Assert.Equal(10, snapshotConsumerMetrics.HandlerDurationBuckets.Length);
+        Assert.Equal(10, snapshotConsumerMetrics.ReceivedDataQueueDelayBuckets.Length);
+        Assert.Equal(10, snapshotConsumerMetrics.ReceivedDataHandlerDurationBuckets.Length);
         Assert.Equal(1, GetCounterTotal(snapshotConsumerMetrics.HandlerDurationBuckets));
+        Assert.Equal(0, GetCounterTotal(snapshotConsumerMetrics.ReceivedDataQueueDelayBuckets));
+        Assert.Equal(0, GetCounterTotal(snapshotConsumerMetrics.ReceivedDataHandlerDurationBuckets));
         Assert.Equal(1, snapshotConsumerMetrics.GetEventsProcessedCount(ClientEventType.Disconnected));
     }
 
@@ -179,8 +203,14 @@ public sealed class ThreadedTcpServerMetricsTests
                     && consumerMetrics.GetEventsProcessedCount(ClientEventType.ReceivedData) >= 1
                     && consumerMetrics.GetEventsProcessedCount(ClientEventType.Disconnected) >= 1
                     && consumerMetrics.HandlerDurationBuckets.Length == 10
+                    && consumerMetrics.ReceivedDataQueueDelayBuckets.Length == 10
+                    && consumerMetrics.ReceivedDataHandlerDurationBuckets.Length == 10
                     && GetCounterTotal(consumerMetrics.HandlerDurationBuckets)
                         == GetConsumerEventCountTotal(consumerMetrics)
+                    && GetCounterTotal(consumerMetrics.ReceivedDataQueueDelayBuckets)
+                        == consumerMetrics.GetEventsProcessedCount(ClientEventType.ReceivedData)
+                    && GetCounterTotal(consumerMetrics.ReceivedDataHandlerDurationBuckets)
+                        == consumerMetrics.GetEventsProcessedCount(ClientEventType.ReceivedData)
                     && consumerMetrics.HandlerErrors == 0,
                 MediumTimeout,
                 "Timed out waiting for the threaded consumer server event metrics snapshot."
@@ -192,11 +222,106 @@ public sealed class ThreadedTcpServerMetricsTests
             Assert.True(consumerMetrics.GetEventsProcessedCount(ClientEventType.ReceivedData) >= 1);
             Assert.True(consumerMetrics.GetEventsProcessedCount(ClientEventType.Disconnected) >= 1);
             Assert.Equal(10, consumerMetrics.HandlerDurationBuckets.Length);
+            Assert.Equal(10, consumerMetrics.ReceivedDataQueueDelayBuckets.Length);
+            Assert.Equal(10, consumerMetrics.ReceivedDataHandlerDurationBuckets.Length);
             Assert.Equal(GetConsumerEventCountTotal(consumerMetrics), GetCounterTotal(consumerMetrics.HandlerDurationBuckets));
+            Assert.Equal(
+                consumerMetrics.GetEventsProcessedCount(ClientEventType.ReceivedData),
+                GetCounterTotal(consumerMetrics.ReceivedDataQueueDelayBuckets)
+            );
+            Assert.Equal(
+                consumerMetrics.GetEventsProcessedCount(ClientEventType.ReceivedData),
+                GetCounterTotal(consumerMetrics.ReceivedDataHandlerDurationBuckets)
+            );
             Assert.Equal(0, consumerMetrics.HandlerErrors);
         }
         finally
         {
+            host.DisposeClient(client);
+        }
+    }
+
+    /// <summary>
+    /// Verifies threaded consumer metrics publish received-data queue delays from handoff attempt to handler start.
+    /// </summary>
+    [Fact]
+    public async Task MetricsSnapshot_TracksThreadedReceivedDataQueueDelayAndHandlerDuration()
+    {
+        ThreadedEchoRecording consumer = new ThreadedEchoRecording(
+            orderingLaneCount: 1,
+            blockFirstReceive: true
+        );
+
+        using ThreadedConsumerTestHost host = new ThreadedConsumerTestHost(
+            consumer,
+            settings =>
+            {
+                settings.MaxConnections = 1;
+                settings.OrderingLaneCount = 1;
+                settings.ConcurrentAccepts = 1;
+                settings.BufferSize = 256;
+            }
+        );
+
+        TcpClient client = await host.ConnectClientAsync();
+
+        try
+        {
+            await consumer.WaitForConnectedCountAsync(1, ShortTimeout);
+
+            byte[] firstPayload = CreatePayload(64, 31);
+            byte[] secondPayload = CreatePayload(64, 47);
+            await host.WriteAsync(client, firstPayload, ShortTimeout);
+            await consumer.WaitForBlockedReceiveAsync(ShortTimeout);
+            await host.WriteAsync(client, secondPayload, ShortTimeout);
+
+            TcpServerMetricsSnapshot queuedSnapshot = await WaitForSnapshotAsync(
+                host,
+                candidate => candidate.ConsumerMetrics is ConsumerMetricsSnapshot consumerMetrics
+                    && consumerMetrics.QueueDepthByLane.Length == 1
+                    && consumerMetrics.QueueDepthByLane.Span[0] == 1
+                    && consumerMetrics.GetEventsProcessedCount(ClientEventType.ReceivedData) == 0
+                    && consumerMetrics.ReceivedDataQueueDelayBuckets.Length == 10
+                    && consumerMetrics.ReceivedDataHandlerDurationBuckets.Length == 10
+                    && GetCounterTotal(consumerMetrics.ReceivedDataQueueDelayBuckets) == 1
+                    && GetCounterTotal(consumerMetrics.ReceivedDataHandlerDurationBuckets) == 0,
+                MediumTimeout,
+                "Timed out waiting for queued threaded receive-delay metrics."
+            );
+
+            ConsumerMetricsSnapshot queuedConsumerMetrics = GetRequiredConsumerMetrics(queuedSnapshot);
+            Assert.Equal(1, queuedConsumerMetrics.QueueDepthByLane.Span[0]);
+            Assert.Equal(1, GetCounterTotal(queuedConsumerMetrics.ReceivedDataQueueDelayBuckets));
+            Assert.Equal(0, GetCounterTotal(queuedConsumerMetrics.ReceivedDataHandlerDurationBuckets));
+
+            consumer.ReleaseBlockedReceive();
+            await consumer.WaitForTotalReceivedBytesAsync(firstPayload.Length + secondPayload.Length, MediumTimeout);
+
+            TcpServerMetricsSnapshot drainedSnapshot = await WaitForSnapshotAsync(
+                host,
+                candidate => candidate.ConsumerMetrics is ConsumerMetricsSnapshot consumerMetrics
+                    && consumerMetrics.QueueDepthByLane.Length == 1
+                    && consumerMetrics.QueueDepthByLane.Span[0] == 0
+                    && consumerMetrics.GetEventsProcessedCount(ClientEventType.ReceivedData) == 2
+                    && consumerMetrics.ReceivedDataQueueDelayBuckets.Length == 10
+                    && consumerMetrics.ReceivedDataHandlerDurationBuckets.Length == 10
+                    && GetCounterTotal(consumerMetrics.ReceivedDataQueueDelayBuckets) == 2
+                    && GetCounterTotal(consumerMetrics.ReceivedDataHandlerDurationBuckets) == 2
+                    && GetCounterTotalBeyondFirstBucket(consumerMetrics.ReceivedDataQueueDelayBuckets) >= 1,
+                MediumTimeout,
+                "Timed out waiting for drained threaded receive-delay metrics."
+            );
+
+            ConsumerMetricsSnapshot drainedConsumerMetrics = GetRequiredConsumerMetrics(drainedSnapshot);
+            Assert.Equal(0, drainedConsumerMetrics.QueueDepthByLane.Span[0]);
+            Assert.Equal(2, drainedConsumerMetrics.GetEventsProcessedCount(ClientEventType.ReceivedData));
+            Assert.Equal(2, GetCounterTotal(drainedConsumerMetrics.ReceivedDataQueueDelayBuckets));
+            Assert.Equal(2, GetCounterTotal(drainedConsumerMetrics.ReceivedDataHandlerDurationBuckets));
+            Assert.True(GetCounterTotalBeyondFirstBucket(drainedConsumerMetrics.ReceivedDataQueueDelayBuckets) >= 1);
+        }
+        finally
+        {
+            consumer.ReleaseBlockedReceive();
             host.DisposeClient(client);
         }
     }
@@ -262,10 +387,14 @@ public sealed class ThreadedTcpServerMetricsTests
         long receivedProcessed = consumerMetrics?.GetEventsProcessedCount(ClientEventType.ReceivedData) ?? 0;
         long queueDepth = 0;
         long handlerDurationTotal = 0;
+        long receivedDataQueueDelayTotal = 0;
+        long receivedDataHandlerDurationTotal = 0;
         if (consumerMetrics is ConsumerMetricsSnapshot metrics && metrics.QueueDepthByLane.Length > 0)
         {
             queueDepth = metrics.QueueDepthByLane.Span[0];
             handlerDurationTotal = GetCounterTotal(metrics.HandlerDurationBuckets);
+            receivedDataQueueDelayTotal = GetCounterTotal(metrics.ReceivedDataQueueDelayBuckets);
+            receivedDataHandlerDurationTotal = GetCounterTotal(metrics.ReceivedDataHandlerDurationBuckets);
         }
 
         return
@@ -274,6 +403,8 @@ public sealed class ThreadedTcpServerMetricsTests
             $"receivedProcessed={receivedProcessed}, " +
             $"disconnectedProcessed={disconnectedProcessed}, " +
             $"handlerDurations={handlerDurationTotal}, " +
+            $"receivedDataQueueDelays={receivedDataQueueDelayTotal}, " +
+            $"receivedDataHandlerDurations={receivedDataHandlerDurationTotal}, " +
             $"laneZeroQueueDepth={queueDepth}.";
     }
 
@@ -298,6 +429,19 @@ public sealed class ThreadedTcpServerMetricsTests
         ReadOnlySpan<long> values = counters.Span;
 
         for (int index = 0; index < values.Length; index++)
+        {
+            total += values[index];
+        }
+
+        return total;
+    }
+
+    private static long GetCounterTotalBeyondFirstBucket(ReadOnlyMemory<long> counters)
+    {
+        long total = 0;
+        ReadOnlySpan<long> values = counters.Span;
+
+        for (int index = 1; index < values.Length; index++)
         {
             total += values[index];
         }

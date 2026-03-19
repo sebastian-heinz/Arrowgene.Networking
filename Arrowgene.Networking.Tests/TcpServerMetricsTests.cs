@@ -269,6 +269,8 @@ public sealed class TcpServerMetricsTests
                     && consumerMetrics.QueueDepthByLane.Span[0] == 7
                     && consumerMetrics.HandlerErrors == 3
                     && consumerMetrics.HandlerDurationBuckets.Length == 10
+                    && consumerMetrics.ReceivedDataQueueDelayBuckets.Length == 0
+                    && consumerMetrics.ReceivedDataHandlerDurationBuckets.Length == 0
                     && GetCounterTotal(consumerMetrics.HandlerDurationBuckets) == 0
                     && consumerMetrics.GetEventsProcessedCount(ClientEventType.Connected) >= 1
                     && consumerMetrics.GetEventsProcessedCount(ClientEventType.Disconnected) >= 1,
@@ -280,6 +282,8 @@ public sealed class TcpServerMetricsTests
             Assert.Equal(7, consumerMetrics.QueueDepthByLane.Span[0]);
             Assert.Equal(3, consumerMetrics.HandlerErrors);
             Assert.Equal(10, consumerMetrics.HandlerDurationBuckets.Length);
+            Assert.Equal(0, consumerMetrics.ReceivedDataQueueDelayBuckets.Length);
+            Assert.Equal(0, consumerMetrics.ReceivedDataHandlerDurationBuckets.Length);
             Assert.Equal(0, GetCounterTotal(consumerMetrics.HandlerDurationBuckets));
             Assert.True(consumerMetrics.GetEventsProcessedCount(ClientEventType.Connected) >= 1);
             Assert.True(consumerMetrics.GetEventsProcessedCount(ClientEventType.Disconnected) >= 1);

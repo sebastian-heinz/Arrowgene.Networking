@@ -20,11 +20,45 @@ public readonly struct ConsumerMetricsSnapshot
         long[] queueDepthByLane,
         long[] eventsProcessed,
         long[] handlerDurationBuckets)
+        : this(
+            handlerErrors,
+            queueDepthByLane,
+            eventsProcessed,
+            handlerDurationBuckets,
+            Array.Empty<long>(),
+            Array.Empty<long>())
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ConsumerMetricsSnapshot"/> struct.
+    /// </summary>
+    /// <param name="handlerErrors">The total number of handler errors recorded by the consumer.</param>
+    /// <param name="queueDepthByLane">Consumer queue depths indexed by ordering lane.</param>
+    /// <param name="eventsProcessed">Consumer event counters indexed by <see cref="ClientEventType"/>.</param>
+    /// <param name="handlerDurationBuckets">Consumer handler duration buckets using the fixed latency histogram ranges.</param>
+    /// <param name="receivedDataQueueDelayBuckets">Received-data queue-delay buckets using the fixed latency histogram ranges.</param>
+    /// <param name="receivedDataHandlerDurationBuckets">Received-data handler duration buckets using the fixed latency histogram ranges.</param>
+    public ConsumerMetricsSnapshot(
+        long handlerErrors,
+        long[] queueDepthByLane,
+        long[] eventsProcessed,
+        long[] handlerDurationBuckets,
+        long[] receivedDataQueueDelayBuckets,
+        long[] receivedDataHandlerDurationBuckets)
     {
         HandlerErrors = handlerErrors;
         QueueDepthByLane = CloneArray(queueDepthByLane, nameof(queueDepthByLane));
         EventsProcessed = CloneArray(eventsProcessed, nameof(eventsProcessed));
         HandlerDurationBuckets = CloneArray(handlerDurationBuckets, nameof(handlerDurationBuckets));
+        ReceivedDataQueueDelayBuckets = CloneArray(
+            receivedDataQueueDelayBuckets,
+            nameof(receivedDataQueueDelayBuckets)
+        );
+        ReceivedDataHandlerDurationBuckets = CloneArray(
+            receivedDataHandlerDurationBuckets,
+            nameof(receivedDataHandlerDurationBuckets)
+        );
     }
 
     /// <summary>
@@ -46,6 +80,18 @@ public readonly struct ConsumerMetricsSnapshot
     /// Gets handler duration histogram buckets using the ranges 0..100us, 100us..1ms, 1..10ms, 10..50ms, 50..250ms, 250ms..1s, 1..5s, 5..30s, 30s..2m, and 2m+.
     /// </summary>
     public ReadOnlyMemory<long> HandlerDurationBuckets { get; }
+
+    /// <summary>
+    /// Gets received-data queue-delay histogram buckets using the ranges 0..100us, 100us..1ms, 1..10ms, 10..50ms, 50..250ms, 250ms..1s, 1..5s, 5..30s, 30s..2m, and 2m+.
+    /// Empty when the consumer does not publish received-data queue-delay detail.
+    /// </summary>
+    public ReadOnlyMemory<long> ReceivedDataQueueDelayBuckets { get; }
+
+    /// <summary>
+    /// Gets received-data handler duration histogram buckets using the ranges 0..100us, 100us..1ms, 1..10ms, 10..50ms, 50..250ms, 250ms..1s, 1..5s, 5..30s, 30s..2m, and 2m+.
+    /// Empty when the consumer does not publish received-data duration detail.
+    /// </summary>
+    public ReadOnlyMemory<long> ReceivedDataHandlerDurationBuckets { get; }
 
     /// <summary>
     /// Gets the count recorded for a specific consumer event type.

@@ -66,6 +66,74 @@ public sealed class ConsumerMetricsStateTests
         Assert.Equal(1, GetCounterTotal(handlerDurationBuckets));
     }
 
+    /// <summary>
+    /// Verifies received-data queue delays and handler durations are bucketed at the documented latency boundaries.
+    /// </summary>
+    [Fact]
+    public void ReceivedDataLatencyMetrics_TrackBucketBoundaries()
+    {
+        ConsumerMetricsState state = new ConsumerMetricsState();
+        state.EnableCapture();
+
+        long[] samples = new long[]
+        {
+            GetElapsedTicksAtOrBelowMicroseconds(100.0d),
+            GetElapsedTicksAtOrBelowMicroseconds(1_000.0d),
+            GetElapsedTicksAtOrBelowMicroseconds(10_000.0d),
+            GetElapsedTicksAtOrBelowMicroseconds(50_000.0d),
+            GetElapsedTicksAtOrBelowMicroseconds(250_000.0d),
+            GetElapsedTicksAtOrBelowMicroseconds(1_000_000.0d),
+            GetElapsedTicksAtOrBelowMicroseconds(5_000_000.0d),
+            GetElapsedTicksAtOrBelowMicroseconds(30_000_000.0d),
+            GetElapsedTicksAtOrBelowMicroseconds(120_000_000.0d),
+            GetElapsedTicksAboveMicroseconds(120_000_000.0d)
+        };
+
+        for (int index = 0; index < samples.Length; index++)
+        {
+            state.RecordReceivedDataQueueDelay(samples[index]);
+            state.RecordReceivedDataHandlerDuration(samples[index]);
+        }
+
+        long[] receivedDataQueueDelayBuckets = new long[state.ReceivedDataQueueDelayBucketsCount];
+        long[] receivedDataHandlerDurationBuckets = new long[state.ReceivedDataHandlerDurationBucketsCount];
+        state.CopyReceivedDataQueueDelayBuckets(receivedDataQueueDelayBuckets);
+        state.CopyReceivedDataHandlerDurationBuckets(receivedDataHandlerDurationBuckets);
+
+        Assert.Equal(new long[] { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 }, receivedDataQueueDelayBuckets);
+        Assert.Equal(new long[] { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 }, receivedDataHandlerDurationBuckets);
+        Assert.Equal(samples.Length, GetCounterTotal(receivedDataQueueDelayBuckets));
+        Assert.Equal(samples.Length, GetCounterTotal(receivedDataHandlerDurationBuckets));
+    }
+
+    /// <summary>
+    /// Verifies received-data queue delays and handler durations are ignored when capture is disabled.
+    /// </summary>
+    [Fact]
+    public void ReceivedDataLatencyMetrics_DoNotTrackWhenCaptureIsDisabled()
+    {
+        ConsumerMetricsState state = new ConsumerMetricsState();
+
+        state.RecordReceivedDataQueueDelay(GetElapsedTicksAtOrBelowMicroseconds(10_000.0d));
+        state.RecordReceivedDataHandlerDuration(GetElapsedTicksAtOrBelowMicroseconds(10_000.0d));
+        state.EnableCapture();
+        state.RecordReceivedDataQueueDelay(GetElapsedTicksAtOrBelowMicroseconds(10_000.0d));
+        state.RecordReceivedDataHandlerDuration(GetElapsedTicksAtOrBelowMicroseconds(10_000.0d));
+        state.DisableCapture();
+        state.RecordReceivedDataQueueDelay(GetElapsedTicksAboveMicroseconds(1_000_000.0d));
+        state.RecordReceivedDataHandlerDuration(GetElapsedTicksAboveMicroseconds(1_000_000.0d));
+
+        long[] receivedDataQueueDelayBuckets = new long[state.ReceivedDataQueueDelayBucketsCount];
+        long[] receivedDataHandlerDurationBuckets = new long[state.ReceivedDataHandlerDurationBucketsCount];
+        state.CopyReceivedDataQueueDelayBuckets(receivedDataQueueDelayBuckets);
+        state.CopyReceivedDataHandlerDurationBuckets(receivedDataHandlerDurationBuckets);
+
+        Assert.Equal(new long[] { 0, 0, 1, 0, 0, 0, 0, 0, 0, 0 }, receivedDataQueueDelayBuckets);
+        Assert.Equal(new long[] { 0, 0, 1, 0, 0, 0, 0, 0, 0, 0 }, receivedDataHandlerDurationBuckets);
+        Assert.Equal(1, GetCounterTotal(receivedDataQueueDelayBuckets));
+        Assert.Equal(1, GetCounterTotal(receivedDataHandlerDurationBuckets));
+    }
+
     private static long GetElapsedTicksAtOrBelowMicroseconds(double microseconds)
     {
         long elapsedTicks = (long)Math.Floor(microseconds * Stopwatch.Frequency / 1_000_000.0d);

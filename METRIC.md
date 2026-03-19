@@ -57,7 +57,9 @@ When `ConsumerMetrics` has a value on `TcpServerMetricsSnapshot`, the nested `Co
 | `HandlerErrors` | Counter | Total number of consumer handler invocations that threw. |
 | `QueueDepthByLane` | Indexed gauge | Current queued event count per ordering lane. |
 | `EventsProcessed` | Indexed counter | Successfully processed consumer events indexed by `ClientEventType`. |
-| `HandlerDurationBuckets` | Indexed counter | Successful handler durations bucketed into these ranges: `0..100us`, `100us..1ms`, `1..10ms`, `10..50ms`, `50..250ms`, `250ms..1s`, `1..5s`, `5..30s`, `30s..2m`, `2m+`. |
+| `HandlerDurationBuckets` | Indexed counter | Successful consumer-event handler durations across all event types bucketed into these ranges: `0..100us`, `100us..1ms`, `1..10ms`, `10..50ms`, `50..250ms`, `250ms..1s`, `1..5s`, `5..30s`, `30s..2m`, `2m+`. |
+| `ReceivedDataQueueDelayBuckets` | Indexed counter | Received-data queue delays from threaded-consumer handoff attempt to handler start bucketed into these ranges: `0..100us`, `100us..1ms`, `1..10ms`, `10..50ms`, `50..250ms`, `250ms..1s`, `1..5s`, `5..30s`, `30s..2m`, `2m+`. Empty when the consumer does not publish this detail. |
+| `ReceivedDataHandlerDurationBuckets` | Indexed counter | Successful received-data handler durations bucketed into these ranges: `0..100us`, `100us..1ms`, `1..10ms`, `10..50ms`, `50..250ms`, `250ms..1s`, `1..5s`, `5..30s`, `30s..2m`, `2m+`. Empty when the consumer does not publish this detail. |
 
 ## DisconnectReason
 
@@ -87,5 +89,5 @@ Use `DisconnectsByReason.Span[(int)DisconnectReason.X]` to read a specific disco
 | Per-lane values | Array positions match the ordering lane index. |
 | Connection duration buckets | Bucket positions map to the fixed connection lifetime ranges listed above. |
 | Size buckets | Bucket positions map to the fixed ranges listed above. |
-| Consumer metrics | When `ConsumerMetrics` has a value, use `HandlerErrors`, `QueueDepthByLane`, and `GetEventsProcessedCount(ClientEventType.X)` on the nested snapshot. |
+| Consumer metrics | When `ConsumerMetrics` has a value, use `HandlerErrors`, `QueueDepthByLane`, `GetEventsProcessedCount(ClientEventType.X)`, and the histogram fields on the nested snapshot. |
 | Socket error buckets | Use `GetSocketErrorCount(SocketError.X)` for direct lookup, or compute `((int)socketError) - SocketErrorCodeMinimum` to index `SocketErrorsByCode`. |

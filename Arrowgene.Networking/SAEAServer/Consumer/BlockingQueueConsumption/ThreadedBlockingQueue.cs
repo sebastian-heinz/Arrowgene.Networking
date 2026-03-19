@@ -89,15 +89,21 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
             long[] queueDepthByLane = new long[_orderingLaneCount];
             long[] eventsProcessed = new long[_consumerMetricsState.ConsumerEventTypeCount];
             long[] handlerDurationBuckets = new long[_consumerMetricsState.HandlerDurationBucketsCount];
+            long[] receivedDataQueueDelayBuckets = new long[_consumerMetricsState.ReceivedDataQueueDelayBucketsCount];
+            long[] receivedDataHandlerDurationBuckets = new long[_consumerMetricsState.ReceivedDataHandlerDurationBucketsCount];
             SnapshotQueueDepthByLane(queueDepthByLane);
             _consumerMetricsState.CopyConsumerEventsProcessed(eventsProcessed);
             _consumerMetricsState.CopyHandlerDurationBuckets(handlerDurationBuckets);
+            _consumerMetricsState.CopyReceivedDataQueueDelayBuckets(receivedDataQueueDelayBuckets);
+            _consumerMetricsState.CopyReceivedDataHandlerDurationBuckets(receivedDataHandlerDurationBuckets);
 
             return new ConsumerMetricsSnapshot(
                 _consumerMetricsState.GetConsumerHandlerErrors(),
                 queueDepthByLane,
                 eventsProcessed,
-                handlerDurationBuckets
+                handlerDurationBuckets,
+                receivedDataQueueDelayBuckets,
+                receivedDataHandlerDurationBuckets
             );
         }
 
@@ -152,10 +158,19 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
                 try
                 {
                     long startTimestamp = Stopwatch.GetTimestamp();
+                    bool receivedDataEventHandled = false;
 
                     switch (clientEvent)
                     {
                         case ClientDataEvent dataEvent:
+                            receivedDataEventHandled = true;
+                            if (dataEvent.EnqueuedTimestamp > 0L)
+                            {
+                                _consumerMetricsState.RecordReceivedDataQueueDelay(
+                                    startTimestamp - dataEvent.EnqueuedTimestamp
+                                );
+                            }
+
                             HandleReceived(dataEvent.ClientHandle, dataEvent.Data);
                             break;
                         case ClientConnectedEvent connectedEvent:
@@ -174,6 +189,11 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
 
                     long elapsedTicks = Stopwatch.GetTimestamp() - startTimestamp;
                     _consumerMetricsState.RecordHandlerDuration(elapsedTicks);
+                    if (receivedDataEventHandled)
+                    {
+                        _consumerMetricsState.RecordReceivedDataHandlerDuration(elapsedTicks);
+                    }
+
                     _consumerMetricsState.RecordProcessedEvent(clientEvent.ClientEventType);
                 }
                 catch (Exception exception)
@@ -281,7 +301,11 @@ namespace Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption
 
         void IConsumer.OnReceivedData(ClientHandle clientHandle, byte[] data)
         {
-            EnqueueForHandle(clientHandle, new ClientDataEvent(clientHandle, data), nameof(IConsumer.OnReceivedData));
+            EnqueueForHandle(
+                clientHandle,
+                new ClientDataEvent(clientHandle, data, Stopwatch.GetTimestamp()),
+                nameof(IConsumer.OnReceivedData)
+            );
         }
 
         void IConsumer.OnClientDisconnected(ClientSnapshot clientSnapshot)

@@ -131,7 +131,7 @@ The snapshot includes:
 - Failure and backpressure counters: socket errors, zero-byte receives, timeouts, send queue overflows.
 - Current server state: accept-pool availability, available client slots, total queued send bytes, in-flight async callbacks, deferred disconnect cleanup depth, per-lane active connections.
 - Optional low-cost detail: connection-duration buckets, receive/send size buckets, and per-socket-error-code counters via `GetSocketErrorCount(SocketError.X)`.
-- Optional consumer detail via `ConsumerMetrics` when the consumer implements `IMetricsCapture<ConsumerMetricsSnapshot>`; for `ThreadedBlockingQueueConsumer` this includes per-lane queue depth, processed event counts, handler duration buckets, and handler error totals.
+- Optional consumer detail via `ConsumerMetrics` when the consumer implements `IMetricsCapture<ConsumerMetricsSnapshot>`; for `ThreadedBlockingQueueConsumer` this includes per-lane queue depth, processed event counts, all-event handler duration buckets, received-data queue-delay buckets, received-data handler duration buckets, and handler error totals.
 - Disconnect reason counters indexed by `DisconnectReason`.
 
 Use `GetMetricsSnapshot()` from one timer or background service that owns metric sampling. Use `GetPublishedMetricsSnapshot()` for passive readers such as health endpoints or secondary exporters. Dispose the collector before the server.

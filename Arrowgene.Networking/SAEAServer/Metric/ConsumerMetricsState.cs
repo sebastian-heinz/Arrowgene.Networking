@@ -7,21 +7,29 @@ namespace Arrowgene.Networking.SAEAServer.Metric;
 
 internal sealed class ConsumerMetricsState
 {
-    private const int HandlerDurationBucketCount = 10;
+    private const int LatencyBucketCount = 10;
     private readonly long[] _consumerEventsProcessed;
     private readonly long[] _handlerDurationBuckets;
+    private readonly long[] _receivedDataHandlerDurationBuckets;
+    private readonly long[] _receivedDataQueueDelayBuckets;
     private int _captureEnabled;
     private long _consumerHandlerErrors;
 
     internal ConsumerMetricsState()
     {
         _consumerEventsProcessed = new long[Enum.GetValues<ClientEventType>().Length];
-        _handlerDurationBuckets = new long[HandlerDurationBucketCount];
+        _handlerDurationBuckets = new long[LatencyBucketCount];
+        _receivedDataQueueDelayBuckets = new long[LatencyBucketCount];
+        _receivedDataHandlerDurationBuckets = new long[LatencyBucketCount];
     }
 
     internal int ConsumerEventTypeCount => _consumerEventsProcessed.Length;
 
     internal int HandlerDurationBucketsCount => _handlerDurationBuckets.Length;
+
+    internal int ReceivedDataHandlerDurationBucketsCount => _receivedDataHandlerDurationBuckets.Length;
+
+    internal int ReceivedDataQueueDelayBucketsCount => _receivedDataQueueDelayBuckets.Length;
 
     internal void EnableCapture()
     {
@@ -55,7 +63,29 @@ internal sealed class ConsumerMetricsState
             return;
         }
 
-        Interlocked.Increment(ref _handlerDurationBuckets[GetHandlerDurationBucketIndex(elapsedTicks)]);
+        Interlocked.Increment(ref _handlerDurationBuckets[GetLatencyBucketIndex(elapsedTicks)]);
+    }
+
+    internal void RecordReceivedDataHandlerDuration(long elapsedTicks)
+    {
+        if (!IsCaptureEnabled())
+        {
+            return;
+        }
+
+        Interlocked.Increment(
+            ref _receivedDataHandlerDurationBuckets[GetLatencyBucketIndex(elapsedTicks)]
+        );
+    }
+
+    internal void RecordReceivedDataQueueDelay(long elapsedTicks)
+    {
+        if (!IsCaptureEnabled())
+        {
+            return;
+        }
+
+        Interlocked.Increment(ref _receivedDataQueueDelayBuckets[GetLatencyBucketIndex(elapsedTicks)]);
     }
 
     internal void IncrementConsumerHandlerErrors()
@@ -86,8 +116,31 @@ internal sealed class ConsumerMetricsState
         );
     }
 
-    private static int GetHandlerDurationBucketIndex(long elapsedTicks)
+    internal void CopyReceivedDataHandlerDurationBuckets(long[] destination)
     {
+        CopyCounterArray(
+            _receivedDataHandlerDurationBuckets,
+            destination,
+            "Destination must be at least as large as the received-data handler-duration counter array."
+        );
+    }
+
+    internal void CopyReceivedDataQueueDelayBuckets(long[] destination)
+    {
+        CopyCounterArray(
+            _receivedDataQueueDelayBuckets,
+            destination,
+            "Destination must be at least as large as the received-data queue-delay counter array."
+        );
+    }
+
+    private static int GetLatencyBucketIndex(long elapsedTicks)
+    {
+        if (elapsedTicks < 0)
+        {
+            elapsedTicks = 0;
+        }
+
         double microseconds = (double)elapsedTicks / Stopwatch.Frequency * 1_000_000.0d;
 
         if (microseconds <= 100.0d)

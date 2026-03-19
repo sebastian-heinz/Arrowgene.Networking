@@ -15,15 +15,20 @@ internal sealed class ThreadedEchoRecording : ThreadedBlockingQueue
     private readonly List<Exception> _errors;
     private readonly bool _echoReceivedData;
     private readonly int _receiveDelayMs;
+    private readonly bool _blockFirstReceive;
+    private readonly ManualResetEventSlim _blockedReceiveEntered;
+    private readonly ManualResetEventSlim _blockedReceiveRelease;
     private long _totalReceivedBytes;
     private int _activeHandlers;
+    private int _blockedReceiveConsumed;
     private int _maxConcurrentHandlers;
 
     internal ThreadedEchoRecording(
         int orderingLaneCount,
         bool echoReceivedData = false,
         int queueCapacityPerLane = 1024,
-        int receiveDelayMs = 0
+        int receiveDelayMs = 0,
+        bool blockFirstReceive = false
     )
         : base(orderingLaneCount, queueCapacityPerLane, nameof(ThreadedEchoRecording))
     {
@@ -33,6 +38,9 @@ internal sealed class ThreadedEchoRecording : ThreadedBlockingQueue
         _errors = new List<Exception>();
         _echoReceivedData = echoReceivedData;
         _receiveDelayMs = receiveDelayMs;
+        _blockFirstReceive = blockFirstReceive;
+        _blockedReceiveEntered = new ManualResetEventSlim(false);
+        _blockedReceiveRelease = new ManualResetEventSlim(!blockFirstReceive);
     }
 
     internal int ConnectedCount
@@ -108,6 +116,12 @@ internal sealed class ThreadedEchoRecording : ThreadedBlockingQueue
 
             Interlocked.Add(ref _totalReceivedBytes, data.Length);
 
+            if (_blockFirstReceive && Interlocked.CompareExchange(ref _blockedReceiveConsumed, 1, 0) == 0)
+            {
+                _blockedReceiveEntered.Set();
+                _blockedReceiveRelease.Wait();
+            }
+
             if (_echoReceivedData)
             {
                 clientHandle.Send(data);
@@ -178,6 +192,29 @@ internal sealed class ThreadedEchoRecording : ThreadedBlockingQueue
             timeout,
             $"Timed out waiting for {expected} disconnected clients. Current count: {DisconnectedCount}."
         ).ConfigureAwait(false);
+    }
+
+    internal async Task WaitForTotalReceivedBytesAsync(long expected, TimeSpan timeout)
+    {
+        await TestWait.UntilAsync(
+            () => TotalReceivedBytes >= expected,
+            timeout,
+            $"Timed out waiting for {expected} received bytes. Current total: {TotalReceivedBytes}."
+        ).ConfigureAwait(false);
+    }
+
+    internal async Task WaitForBlockedReceiveAsync(TimeSpan timeout)
+    {
+        await TestWait.UntilAsync(
+            () => _blockedReceiveEntered.IsSet,
+            timeout,
+            "Timed out waiting for the blocked threaded receive handler to start."
+        ).ConfigureAwait(false);
+    }
+
+    internal void ReleaseBlockedReceive()
+    {
+        _blockedReceiveRelease.Set();
     }
 
     private void UpdateMaxConcurrentHandlers(int activeHandlers)
