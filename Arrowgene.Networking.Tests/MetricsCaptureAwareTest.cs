@@ -10,7 +10,7 @@ namespace Arrowgene.Networking.Tests;
 
 internal sealed class MetricsCaptureAwareTest : IConsumer, IMetricsCapture<ConsumerMetricsSnapshot>
 {
-    private const int HandlerDurationBucketCount = 10;
+    private static readonly int HandlerDurationBucketCount = MetricBucketDefinitions.DurationBucketNames.Count;
     private readonly long[] _queueDepthByLane;
     private readonly long[] _eventsProcessed;
     private int _captureEnabled;

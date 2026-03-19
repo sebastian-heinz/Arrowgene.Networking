@@ -14,7 +14,7 @@ public readonly struct ConsumerMetricsSnapshot
     /// <param name="handlerErrors">The total number of handler errors recorded by the consumer.</param>
     /// <param name="queueDepthByLane">Consumer queue depths indexed by ordering lane.</param>
     /// <param name="eventsProcessed">Consumer event counters indexed by <see cref="ClientEventType"/>.</param>
-    /// <param name="handlerDurationBuckets">Consumer handler duration buckets using the fixed latency histogram ranges.</param>
+    /// <param name="handlerDurationBuckets">Consumer handler duration buckets indexed by <see cref="MetricBucketDefinitions.DurationBucketNames"/>.</param>
     public ConsumerMetricsSnapshot(
         long handlerErrors,
         long[] queueDepthByLane,
@@ -36,9 +36,9 @@ public readonly struct ConsumerMetricsSnapshot
     /// <param name="handlerErrors">The total number of handler errors recorded by the consumer.</param>
     /// <param name="queueDepthByLane">Consumer queue depths indexed by ordering lane.</param>
     /// <param name="eventsProcessed">Consumer event counters indexed by <see cref="ClientEventType"/>.</param>
-    /// <param name="handlerDurationBuckets">Consumer handler duration buckets using the fixed latency histogram ranges.</param>
-    /// <param name="receivedDataQueueDelayBuckets">Received-data queue-delay buckets using the fixed latency histogram ranges.</param>
-    /// <param name="receivedDataHandlerDurationBuckets">Received-data handler duration buckets using the fixed latency histogram ranges.</param>
+    /// <param name="handlerDurationBuckets">Consumer handler duration buckets indexed by <see cref="MetricBucketDefinitions.DurationBucketNames"/>.</param>
+    /// <param name="receivedDataQueueDelayBuckets">Received-data queue-delay buckets indexed by <see cref="MetricBucketDefinitions.DurationBucketNames"/>.</param>
+    /// <param name="receivedDataHandlerDurationBuckets">Received-data handler duration buckets indexed by <see cref="MetricBucketDefinitions.DurationBucketNames"/>.</param>
     public ConsumerMetricsSnapshot(
         long handlerErrors,
         long[] queueDepthByLane,
@@ -77,18 +77,18 @@ public readonly struct ConsumerMetricsSnapshot
     public ReadOnlyMemory<long> EventsProcessed { get; }
 
     /// <summary>
-    /// Gets handler duration histogram buckets using the ranges 0..100us, 100us..1ms, 1..10ms, 10..50ms, 50..250ms, 250ms..1s, 1..5s, 5..30s, 30s..2m, and 2m+.
+    /// Gets handler duration histogram buckets indexed by the shared duration scale defined in <see cref="MetricBucketDefinitions.DurationBucketNames"/>.
     /// </summary>
     public ReadOnlyMemory<long> HandlerDurationBuckets { get; }
 
     /// <summary>
-    /// Gets received-data queue-delay histogram buckets using the ranges 0..100us, 100us..1ms, 1..10ms, 10..50ms, 50..250ms, 250ms..1s, 1..5s, 5..30s, 30s..2m, and 2m+.
+    /// Gets received-data queue-delay histogram buckets indexed by the shared duration scale defined in <see cref="MetricBucketDefinitions.DurationBucketNames"/>.
     /// Empty when the consumer does not publish received-data queue-delay detail.
     /// </summary>
     public ReadOnlyMemory<long> ReceivedDataQueueDelayBuckets { get; }
 
     /// <summary>
-    /// Gets received-data handler duration histogram buckets using the ranges 0..100us, 100us..1ms, 1..10ms, 10..50ms, 50..250ms, 250ms..1s, 1..5s, 5..30s, 30s..2m, and 2m+.
+    /// Gets received-data handler duration histogram buckets indexed by the shared duration scale defined in <see cref="MetricBucketDefinitions.DurationBucketNames"/>.
     /// Empty when the consumer does not publish received-data duration detail.
     /// </summary>
     public ReadOnlyMemory<long> ReceivedDataHandlerDurationBuckets { get; }

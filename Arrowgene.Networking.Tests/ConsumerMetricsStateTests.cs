@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using Arrowgene.Networking.SAEAServer.Metric;
 using Xunit;
@@ -10,6 +11,8 @@ namespace Arrowgene.Networking.Tests;
 /// </summary>
 public sealed class ConsumerMetricsStateTests
 {
+    private static readonly int DurationBucketCount = MetricBucketDefinitions.DurationBucketNames.Count;
+
     /// <summary>
     /// Verifies handler durations are bucketed at the documented latency boundaries.
     /// </summary>
@@ -19,19 +22,7 @@ public sealed class ConsumerMetricsStateTests
         ConsumerMetricsState state = new ConsumerMetricsState();
         state.EnableCapture();
 
-        long[] samples = new long[]
-        {
-            GetElapsedTicksAtOrBelowMicroseconds(100.0d),
-            GetElapsedTicksAtOrBelowMicroseconds(1_000.0d),
-            GetElapsedTicksAtOrBelowMicroseconds(10_000.0d),
-            GetElapsedTicksAtOrBelowMicroseconds(50_000.0d),
-            GetElapsedTicksAtOrBelowMicroseconds(250_000.0d),
-            GetElapsedTicksAtOrBelowMicroseconds(1_000_000.0d),
-            GetElapsedTicksAtOrBelowMicroseconds(5_000_000.0d),
-            GetElapsedTicksAtOrBelowMicroseconds(30_000_000.0d),
-            GetElapsedTicksAtOrBelowMicroseconds(120_000_000.0d),
-            GetElapsedTicksAboveMicroseconds(120_000_000.0d)
-        };
+        long[] samples = CreateDurationBoundarySamples();
 
         for (int index = 0; index < samples.Length; index++)
         {
@@ -41,7 +32,7 @@ public sealed class ConsumerMetricsStateTests
         long[] handlerDurationBuckets = new long[state.HandlerDurationBucketsCount];
         state.CopyHandlerDurationBuckets(handlerDurationBuckets);
 
-        Assert.Equal(new long[] { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 }, handlerDurationBuckets);
+        Assert.Equal(CreateDurationBoundaryBucketCounts(), handlerDurationBuckets);
         Assert.Equal(samples.Length, GetCounterTotal(handlerDurationBuckets));
     }
 
@@ -53,16 +44,17 @@ public sealed class ConsumerMetricsStateTests
     {
         ConsumerMetricsState state = new ConsumerMetricsState();
 
-        state.RecordHandlerDuration(GetElapsedTicksAtOrBelowMicroseconds(10_000.0d));
+        TimeSpan sampleDuration = TimeSpan.FromMilliseconds(10);
+        state.RecordHandlerDuration(GetElapsedTicksAtOrBelow(sampleDuration));
         state.EnableCapture();
-        state.RecordHandlerDuration(GetElapsedTicksAtOrBelowMicroseconds(10_000.0d));
+        state.RecordHandlerDuration(GetElapsedTicksAtOrBelow(sampleDuration));
         state.DisableCapture();
-        state.RecordHandlerDuration(GetElapsedTicksAboveMicroseconds(1_000_000.0d));
+        state.RecordHandlerDuration(GetElapsedTicksAbove(TimeSpan.FromSeconds(1)));
 
         long[] handlerDurationBuckets = new long[state.HandlerDurationBucketsCount];
         state.CopyHandlerDurationBuckets(handlerDurationBuckets);
 
-        Assert.Equal(new long[] { 0, 0, 1, 0, 0, 0, 0, 0, 0, 0 }, handlerDurationBuckets);
+        Assert.Equal(CreateSingleBucketCounterArray(sampleDuration), handlerDurationBuckets);
         Assert.Equal(1, GetCounterTotal(handlerDurationBuckets));
     }
 
@@ -75,19 +67,7 @@ public sealed class ConsumerMetricsStateTests
         ConsumerMetricsState state = new ConsumerMetricsState();
         state.EnableCapture();
 
-        long[] samples = new long[]
-        {
-            GetElapsedTicksAtOrBelowMicroseconds(100.0d),
-            GetElapsedTicksAtOrBelowMicroseconds(1_000.0d),
-            GetElapsedTicksAtOrBelowMicroseconds(10_000.0d),
-            GetElapsedTicksAtOrBelowMicroseconds(50_000.0d),
-            GetElapsedTicksAtOrBelowMicroseconds(250_000.0d),
-            GetElapsedTicksAtOrBelowMicroseconds(1_000_000.0d),
-            GetElapsedTicksAtOrBelowMicroseconds(5_000_000.0d),
-            GetElapsedTicksAtOrBelowMicroseconds(30_000_000.0d),
-            GetElapsedTicksAtOrBelowMicroseconds(120_000_000.0d),
-            GetElapsedTicksAboveMicroseconds(120_000_000.0d)
-        };
+        long[] samples = CreateDurationBoundarySamples();
 
         for (int index = 0; index < samples.Length; index++)
         {
@@ -100,8 +80,8 @@ public sealed class ConsumerMetricsStateTests
         state.CopyReceivedDataQueueDelayBuckets(receivedDataQueueDelayBuckets);
         state.CopyReceivedDataHandlerDurationBuckets(receivedDataHandlerDurationBuckets);
 
-        Assert.Equal(new long[] { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 }, receivedDataQueueDelayBuckets);
-        Assert.Equal(new long[] { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 }, receivedDataHandlerDurationBuckets);
+        Assert.Equal(CreateDurationBoundaryBucketCounts(), receivedDataQueueDelayBuckets);
+        Assert.Equal(CreateDurationBoundaryBucketCounts(), receivedDataHandlerDurationBuckets);
         Assert.Equal(samples.Length, GetCounterTotal(receivedDataQueueDelayBuckets));
         Assert.Equal(samples.Length, GetCounterTotal(receivedDataHandlerDurationBuckets));
     }
@@ -114,28 +94,65 @@ public sealed class ConsumerMetricsStateTests
     {
         ConsumerMetricsState state = new ConsumerMetricsState();
 
-        state.RecordReceivedDataQueueDelay(GetElapsedTicksAtOrBelowMicroseconds(10_000.0d));
-        state.RecordReceivedDataHandlerDuration(GetElapsedTicksAtOrBelowMicroseconds(10_000.0d));
+        TimeSpan sampleDuration = TimeSpan.FromMilliseconds(10);
+        state.RecordReceivedDataQueueDelay(GetElapsedTicksAtOrBelow(sampleDuration));
+        state.RecordReceivedDataHandlerDuration(GetElapsedTicksAtOrBelow(sampleDuration));
         state.EnableCapture();
-        state.RecordReceivedDataQueueDelay(GetElapsedTicksAtOrBelowMicroseconds(10_000.0d));
-        state.RecordReceivedDataHandlerDuration(GetElapsedTicksAtOrBelowMicroseconds(10_000.0d));
+        state.RecordReceivedDataQueueDelay(GetElapsedTicksAtOrBelow(sampleDuration));
+        state.RecordReceivedDataHandlerDuration(GetElapsedTicksAtOrBelow(sampleDuration));
         state.DisableCapture();
-        state.RecordReceivedDataQueueDelay(GetElapsedTicksAboveMicroseconds(1_000_000.0d));
-        state.RecordReceivedDataHandlerDuration(GetElapsedTicksAboveMicroseconds(1_000_000.0d));
+        state.RecordReceivedDataQueueDelay(GetElapsedTicksAbove(TimeSpan.FromSeconds(1)));
+        state.RecordReceivedDataHandlerDuration(GetElapsedTicksAbove(TimeSpan.FromSeconds(1)));
 
         long[] receivedDataQueueDelayBuckets = new long[state.ReceivedDataQueueDelayBucketsCount];
         long[] receivedDataHandlerDurationBuckets = new long[state.ReceivedDataHandlerDurationBucketsCount];
         state.CopyReceivedDataQueueDelayBuckets(receivedDataQueueDelayBuckets);
         state.CopyReceivedDataHandlerDurationBuckets(receivedDataHandlerDurationBuckets);
 
-        Assert.Equal(new long[] { 0, 0, 1, 0, 0, 0, 0, 0, 0, 0 }, receivedDataQueueDelayBuckets);
-        Assert.Equal(new long[] { 0, 0, 1, 0, 0, 0, 0, 0, 0, 0 }, receivedDataHandlerDurationBuckets);
+        Assert.Equal(CreateSingleBucketCounterArray(sampleDuration), receivedDataQueueDelayBuckets);
+        Assert.Equal(CreateSingleBucketCounterArray(sampleDuration), receivedDataHandlerDurationBuckets);
         Assert.Equal(1, GetCounterTotal(receivedDataQueueDelayBuckets));
         Assert.Equal(1, GetCounterTotal(receivedDataHandlerDurationBuckets));
     }
 
-    private static long GetElapsedTicksAtOrBelowMicroseconds(double microseconds)
+    private static long[] CreateDurationBoundarySamples()
     {
+        IReadOnlyList<TimeSpan> upperBounds = MetricBucketDefinitions.DurationBucketUpperBounds;
+        long[] samples = new long[upperBounds.Count + 1];
+
+        for (int index = 0; index < upperBounds.Count; index++)
+        {
+            samples[index] = GetElapsedTicksAtOrBelow(upperBounds[index]);
+        }
+
+        samples[samples.Length - 1] = GetElapsedTicksAbove(upperBounds[upperBounds.Count - 1]);
+        return samples;
+    }
+
+    private static long[] CreateDurationBoundaryBucketCounts()
+    {
+        long[] counters = new long[DurationBucketCount];
+
+        for (int index = 0; index < counters.Length; index++)
+        {
+            counters[index] = 1;
+        }
+
+        counters[counters.Length - 1]++;
+        return counters;
+    }
+
+    private static long[] CreateSingleBucketCounterArray(TimeSpan duration)
+    {
+        long[] counters = new long[DurationBucketCount];
+        int bucketIndex = MetricBucketDefinitions.GetDurationBucketIndex(duration);
+        counters[bucketIndex] = 1;
+        return counters;
+    }
+
+    private static long GetElapsedTicksAtOrBelow(TimeSpan duration)
+    {
+        double microseconds = duration.TotalMicroseconds;
         long elapsedTicks = (long)Math.Floor(microseconds * Stopwatch.Frequency / 1_000_000.0d);
 
         while (elapsedTicks > 0 && GetMicroseconds(elapsedTicks) > microseconds)
@@ -146,8 +163,9 @@ public sealed class ConsumerMetricsStateTests
         return elapsedTicks;
     }
 
-    private static long GetElapsedTicksAboveMicroseconds(double microseconds)
+    private static long GetElapsedTicksAbove(TimeSpan duration)
     {
+        double microseconds = duration.TotalMicroseconds;
         long elapsedTicks = (long)Math.Floor(microseconds * Stopwatch.Frequency / 1_000_000.0d) + 1L;
 
         while (GetMicroseconds(elapsedTicks) <= microseconds)

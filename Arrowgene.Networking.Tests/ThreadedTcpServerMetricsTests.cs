@@ -15,6 +15,7 @@ namespace Arrowgene.Networking.Tests;
 /// </summary>
 public sealed class ThreadedTcpServerMetricsTests
 {
+    private static readonly int DurationBucketCount = MetricBucketDefinitions.DurationBucketNames.Count;
     private static readonly TimeSpan ShortTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan MediumTimeout = TimeSpan.FromSeconds(10);
 
@@ -50,9 +51,9 @@ public sealed class ThreadedTcpServerMetricsTests
                 && consumerMetrics.QueueDepthByLane.Length == 1
                 && consumerMetrics.QueueDepthByLane.Span[0] == 1
                 && consumerMetrics.GetEventsProcessedCount(ClientEventType.Disconnected) == 0
-                && consumerMetrics.HandlerDurationBuckets.Length == 10
-                && consumerMetrics.ReceivedDataQueueDelayBuckets.Length == 10
-                && consumerMetrics.ReceivedDataHandlerDurationBuckets.Length == 10
+                && consumerMetrics.HandlerDurationBuckets.Length == DurationBucketCount
+                && consumerMetrics.ReceivedDataQueueDelayBuckets.Length == DurationBucketCount
+                && consumerMetrics.ReceivedDataHandlerDurationBuckets.Length == DurationBucketCount
                 && GetCounterTotal(consumerMetrics.HandlerDurationBuckets) == 0
                 && GetCounterTotal(consumerMetrics.ReceivedDataQueueDelayBuckets) == 0
                 && GetCounterTotal(consumerMetrics.ReceivedDataHandlerDurationBuckets) == 0
@@ -64,9 +65,9 @@ public sealed class ThreadedTcpServerMetricsTests
         ConsumerMetricsSnapshot queuedConsumerMetrics = GetRequiredConsumerMetrics(queuedSnapshot);
         Assert.Equal(1, queuedConsumerMetrics.QueueDepthByLane.Span[0]);
         Assert.Equal(0, queuedConsumerMetrics.GetEventsProcessedCount(ClientEventType.Disconnected));
-        Assert.Equal(10, queuedConsumerMetrics.HandlerDurationBuckets.Length);
-        Assert.Equal(10, queuedConsumerMetrics.ReceivedDataQueueDelayBuckets.Length);
-        Assert.Equal(10, queuedConsumerMetrics.ReceivedDataHandlerDurationBuckets.Length);
+        Assert.Equal(DurationBucketCount, queuedConsumerMetrics.HandlerDurationBuckets.Length);
+        Assert.Equal(DurationBucketCount, queuedConsumerMetrics.ReceivedDataQueueDelayBuckets.Length);
+        Assert.Equal(DurationBucketCount, queuedConsumerMetrics.ReceivedDataHandlerDurationBuckets.Length);
         Assert.Equal(0, GetCounterTotal(queuedConsumerMetrics.HandlerDurationBuckets));
         Assert.Equal(0, GetCounterTotal(queuedConsumerMetrics.ReceivedDataQueueDelayBuckets));
         Assert.Equal(0, GetCounterTotal(queuedConsumerMetrics.ReceivedDataHandlerDurationBuckets));
@@ -81,9 +82,9 @@ public sealed class ThreadedTcpServerMetricsTests
                 && consumerMetrics.QueueDepthByLane.Length == 1
                 && consumerMetrics.QueueDepthByLane.Span[0] == 0
                 && consumerMetrics.GetEventsProcessedCount(ClientEventType.Disconnected) == 2
-                && consumerMetrics.HandlerDurationBuckets.Length == 10
-                && consumerMetrics.ReceivedDataQueueDelayBuckets.Length == 10
-                && consumerMetrics.ReceivedDataHandlerDurationBuckets.Length == 10
+                && consumerMetrics.HandlerDurationBuckets.Length == DurationBucketCount
+                && consumerMetrics.ReceivedDataQueueDelayBuckets.Length == DurationBucketCount
+                && consumerMetrics.ReceivedDataHandlerDurationBuckets.Length == DurationBucketCount
                 && GetCounterTotal(consumerMetrics.HandlerDurationBuckets) == 2
                 && GetCounterTotal(consumerMetrics.ReceivedDataQueueDelayBuckets) == 0
                 && GetCounterTotal(consumerMetrics.ReceivedDataHandlerDurationBuckets) == 0
@@ -95,9 +96,9 @@ public sealed class ThreadedTcpServerMetricsTests
         ConsumerMetricsSnapshot drainedConsumerMetrics = GetRequiredConsumerMetrics(drainedSnapshot);
         Assert.Equal(0, drainedConsumerMetrics.QueueDepthByLane.Span[0]);
         Assert.Equal(2, drainedConsumerMetrics.GetEventsProcessedCount(ClientEventType.Disconnected));
-        Assert.Equal(10, drainedConsumerMetrics.HandlerDurationBuckets.Length);
-        Assert.Equal(10, drainedConsumerMetrics.ReceivedDataQueueDelayBuckets.Length);
-        Assert.Equal(10, drainedConsumerMetrics.ReceivedDataHandlerDurationBuckets.Length);
+        Assert.Equal(DurationBucketCount, drainedConsumerMetrics.HandlerDurationBuckets.Length);
+        Assert.Equal(DurationBucketCount, drainedConsumerMetrics.ReceivedDataQueueDelayBuckets.Length);
+        Assert.Equal(DurationBucketCount, drainedConsumerMetrics.ReceivedDataHandlerDurationBuckets.Length);
         Assert.Equal(2, GetCounterTotal(drainedConsumerMetrics.HandlerDurationBuckets));
         Assert.Equal(0, GetCounterTotal(drainedConsumerMetrics.ReceivedDataQueueDelayBuckets));
         Assert.Equal(0, GetCounterTotal(drainedConsumerMetrics.ReceivedDataHandlerDurationBuckets));
@@ -136,9 +137,9 @@ public sealed class ThreadedTcpServerMetricsTests
                 && consumerMetrics.QueueDepthByLane.Length == 1
                 && consumerMetrics.QueueDepthByLane.Span[0] == 0
                 && consumerMetrics.HandlerErrors == 1
-                && consumerMetrics.HandlerDurationBuckets.Length == 10
-                && consumerMetrics.ReceivedDataQueueDelayBuckets.Length == 10
-                && consumerMetrics.ReceivedDataHandlerDurationBuckets.Length == 10
+                && consumerMetrics.HandlerDurationBuckets.Length == DurationBucketCount
+                && consumerMetrics.ReceivedDataQueueDelayBuckets.Length == DurationBucketCount
+                && consumerMetrics.ReceivedDataHandlerDurationBuckets.Length == DurationBucketCount
                 && GetCounterTotal(consumerMetrics.HandlerDurationBuckets) == 1
                 && GetCounterTotal(consumerMetrics.ReceivedDataQueueDelayBuckets) == 0
                 && GetCounterTotal(consumerMetrics.ReceivedDataHandlerDurationBuckets) == 0
@@ -150,9 +151,9 @@ public sealed class ThreadedTcpServerMetricsTests
         ConsumerMetricsSnapshot snapshotConsumerMetrics = GetRequiredConsumerMetrics(snapshot);
         Assert.Equal(1, consumer.HandlerExceptionCount);
         Assert.Equal(1, snapshotConsumerMetrics.HandlerErrors);
-        Assert.Equal(10, snapshotConsumerMetrics.HandlerDurationBuckets.Length);
-        Assert.Equal(10, snapshotConsumerMetrics.ReceivedDataQueueDelayBuckets.Length);
-        Assert.Equal(10, snapshotConsumerMetrics.ReceivedDataHandlerDurationBuckets.Length);
+        Assert.Equal(DurationBucketCount, snapshotConsumerMetrics.HandlerDurationBuckets.Length);
+        Assert.Equal(DurationBucketCount, snapshotConsumerMetrics.ReceivedDataQueueDelayBuckets.Length);
+        Assert.Equal(DurationBucketCount, snapshotConsumerMetrics.ReceivedDataHandlerDurationBuckets.Length);
         Assert.Equal(1, GetCounterTotal(snapshotConsumerMetrics.HandlerDurationBuckets));
         Assert.Equal(0, GetCounterTotal(snapshotConsumerMetrics.ReceivedDataQueueDelayBuckets));
         Assert.Equal(0, GetCounterTotal(snapshotConsumerMetrics.ReceivedDataHandlerDurationBuckets));
@@ -202,9 +203,9 @@ public sealed class ThreadedTcpServerMetricsTests
                     && consumerMetrics.GetEventsProcessedCount(ClientEventType.Connected) >= 1
                     && consumerMetrics.GetEventsProcessedCount(ClientEventType.ReceivedData) >= 1
                     && consumerMetrics.GetEventsProcessedCount(ClientEventType.Disconnected) >= 1
-                    && consumerMetrics.HandlerDurationBuckets.Length == 10
-                    && consumerMetrics.ReceivedDataQueueDelayBuckets.Length == 10
-                    && consumerMetrics.ReceivedDataHandlerDurationBuckets.Length == 10
+                    && consumerMetrics.HandlerDurationBuckets.Length == DurationBucketCount
+                    && consumerMetrics.ReceivedDataQueueDelayBuckets.Length == DurationBucketCount
+                    && consumerMetrics.ReceivedDataHandlerDurationBuckets.Length == DurationBucketCount
                     && GetCounterTotal(consumerMetrics.HandlerDurationBuckets)
                         == GetConsumerEventCountTotal(consumerMetrics)
                     && GetCounterTotal(consumerMetrics.ReceivedDataQueueDelayBuckets)
@@ -221,9 +222,9 @@ public sealed class ThreadedTcpServerMetricsTests
             Assert.True(consumerMetrics.GetEventsProcessedCount(ClientEventType.Connected) >= 1);
             Assert.True(consumerMetrics.GetEventsProcessedCount(ClientEventType.ReceivedData) >= 1);
             Assert.True(consumerMetrics.GetEventsProcessedCount(ClientEventType.Disconnected) >= 1);
-            Assert.Equal(10, consumerMetrics.HandlerDurationBuckets.Length);
-            Assert.Equal(10, consumerMetrics.ReceivedDataQueueDelayBuckets.Length);
-            Assert.Equal(10, consumerMetrics.ReceivedDataHandlerDurationBuckets.Length);
+            Assert.Equal(DurationBucketCount, consumerMetrics.HandlerDurationBuckets.Length);
+            Assert.Equal(DurationBucketCount, consumerMetrics.ReceivedDataQueueDelayBuckets.Length);
+            Assert.Equal(DurationBucketCount, consumerMetrics.ReceivedDataHandlerDurationBuckets.Length);
             Assert.Equal(GetConsumerEventCountTotal(consumerMetrics), GetCounterTotal(consumerMetrics.HandlerDurationBuckets));
             Assert.Equal(
                 consumerMetrics.GetEventsProcessedCount(ClientEventType.ReceivedData),
@@ -281,8 +282,8 @@ public sealed class ThreadedTcpServerMetricsTests
                     && consumerMetrics.QueueDepthByLane.Length == 1
                     && consumerMetrics.QueueDepthByLane.Span[0] == 1
                     && consumerMetrics.GetEventsProcessedCount(ClientEventType.ReceivedData) == 0
-                    && consumerMetrics.ReceivedDataQueueDelayBuckets.Length == 10
-                    && consumerMetrics.ReceivedDataHandlerDurationBuckets.Length == 10
+                    && consumerMetrics.ReceivedDataQueueDelayBuckets.Length == DurationBucketCount
+                    && consumerMetrics.ReceivedDataHandlerDurationBuckets.Length == DurationBucketCount
                     && GetCounterTotal(consumerMetrics.ReceivedDataQueueDelayBuckets) == 1
                     && GetCounterTotal(consumerMetrics.ReceivedDataHandlerDurationBuckets) == 0,
                 MediumTimeout,
@@ -303,8 +304,8 @@ public sealed class ThreadedTcpServerMetricsTests
                     && consumerMetrics.QueueDepthByLane.Length == 1
                     && consumerMetrics.QueueDepthByLane.Span[0] == 0
                     && consumerMetrics.GetEventsProcessedCount(ClientEventType.ReceivedData) == 2
-                    && consumerMetrics.ReceivedDataQueueDelayBuckets.Length == 10
-                    && consumerMetrics.ReceivedDataHandlerDurationBuckets.Length == 10
+                    && consumerMetrics.ReceivedDataQueueDelayBuckets.Length == DurationBucketCount
+                    && consumerMetrics.ReceivedDataHandlerDurationBuckets.Length == DurationBucketCount
                     && GetCounterTotal(consumerMetrics.ReceivedDataQueueDelayBuckets) == 2
                     && GetCounterTotal(consumerMetrics.ReceivedDataHandlerDurationBuckets) == 2
                     && GetCounterTotalBeyondFirstBucket(consumerMetrics.ReceivedDataQueueDelayBuckets) >= 1,

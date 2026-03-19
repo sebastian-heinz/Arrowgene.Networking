@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net.Sockets;
 using Arrowgene.Networking.SAEAServer;
 using Arrowgene.Networking.SAEAServer.Metric;
@@ -11,6 +12,8 @@ namespace Arrowgene.Networking.Tests;
 /// </summary>
 public sealed class TcpServerMetricsStateTests
 {
+    private static readonly int DurationBucketCount = MetricBucketDefinitions.DurationBucketNames.Count;
+
     /// <summary>
     /// Verifies transfer sizes are bucketed and counted on both receive and send paths.
     /// </summary>
@@ -211,20 +214,7 @@ public sealed class TcpServerMetricsStateTests
         TcpServerMetricsState state = new TcpServerMetricsState();
         state.EnableCapture();
 
-        TimeSpan[] samples = new TimeSpan[]
-        {
-            TimeSpan.FromMilliseconds(500),
-            TimeSpan.FromSeconds(1),
-            TimeSpan.FromSeconds(5),
-            TimeSpan.FromSeconds(30),
-            TimeSpan.FromSeconds(120),
-            TimeSpan.FromSeconds(600),
-            TimeSpan.FromSeconds(3600),
-            TimeSpan.FromHours(6),
-            TimeSpan.FromHours(24),
-            TimeSpan.FromDays(3),
-            TimeSpan.FromDays(7)
-        };
+        TimeSpan[] samples = CreateDurationBoundarySamples();
 
         for (int index = 0; index < samples.Length; index++)
         {
@@ -234,7 +224,7 @@ public sealed class TcpServerMetricsStateTests
         long[] connectionDurationBuckets = new long[state.ConnectionDurationBucketsCount];
         state.CopyConnectionDurationBuckets(connectionDurationBuckets);
 
-        Assert.Equal(new long[] { 2, 1, 1, 1, 1, 1, 1, 1, 1, 1 }, connectionDurationBuckets);
+        Assert.Equal(CreateDurationBoundaryBucketCounts(), connectionDurationBuckets);
         Assert.Equal(samples.Length, GetCounterTotal(connectionDurationBuckets));
     }
 
@@ -246,16 +236,17 @@ public sealed class TcpServerMetricsStateTests
     {
         TcpServerMetricsState state = new TcpServerMetricsState();
 
-        state.RecordConnectionDuration(TimeSpan.FromMinutes(2));
+        TimeSpan sampleDuration = TimeSpan.FromMinutes(2);
+        state.RecordConnectionDuration(sampleDuration);
         state.EnableCapture();
-        state.RecordConnectionDuration(TimeSpan.FromMinutes(2));
+        state.RecordConnectionDuration(sampleDuration);
         state.DisableCapture();
         state.RecordConnectionDuration(TimeSpan.FromHours(2));
 
         long[] connectionDurationBuckets = new long[state.ConnectionDurationBucketsCount];
         state.CopyConnectionDurationBuckets(connectionDurationBuckets);
 
-        Assert.Equal(new long[] { 0, 0, 0, 1, 0, 0, 0, 0, 0, 0 }, connectionDurationBuckets);
+        Assert.Equal(CreateSingleBucketCounterArray(sampleDuration), connectionDurationBuckets);
         Assert.Equal(1, GetCounterTotal(connectionDurationBuckets));
     }
 
@@ -296,6 +287,41 @@ public sealed class TcpServerMetricsStateTests
         }
 
         return total;
+    }
+
+    private static TimeSpan[] CreateDurationBoundarySamples()
+    {
+        IReadOnlyList<TimeSpan> upperBounds = MetricBucketDefinitions.DurationBucketUpperBounds;
+        TimeSpan[] samples = new TimeSpan[upperBounds.Count + 1];
+
+        for (int index = 0; index < upperBounds.Count; index++)
+        {
+            samples[index] = upperBounds[index];
+        }
+
+        samples[samples.Length - 1] = TimeSpan.FromHours(2);
+        return samples;
+    }
+
+    private static long[] CreateDurationBoundaryBucketCounts()
+    {
+        long[] counters = new long[DurationBucketCount];
+
+        for (int index = 0; index < counters.Length; index++)
+        {
+            counters[index] = 1;
+        }
+
+        counters[counters.Length - 1]++;
+        return counters;
+    }
+
+    private static long[] CreateSingleBucketCounterArray(TimeSpan duration)
+    {
+        long[] counters = new long[DurationBucketCount];
+        int bucketIndex = MetricBucketDefinitions.GetDurationBucketIndex(duration);
+        counters[bucketIndex] = 1;
+        return counters;
     }
 
     private static long GetCounterTotal(long[] counters)

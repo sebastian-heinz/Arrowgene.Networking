@@ -41,9 +41,9 @@ The collector is constructed externally and receives a `TcpServer` (which implem
 | `DisconnectCleanupQueueDepth` | Gauge | Current number of disconnected clients waiting for deferred cleanup finalization. |
 | `DisconnectsByReason` | Indexed counter | Disconnect totals indexed by `DisconnectReason`. |
 | `LaneActiveConnections` | Indexed gauge | Current active connection count per ordering lane. |
-| `ConnectionDurationBuckets` | Indexed counter | Connection lifetime histogram recorded at disconnect time using these ranges: `0..1s`, `1..5s`, `5..30s`, `30s..2m`, `2..10m`, `10..60m`, `60m..6h`, `6h..24h`, `24h..72h`, `72h+`. |
-| `ReceiveSizeBuckets` | Indexed counter | Receive completions bucketed into these ranges: `0..64`, `65..256`, `257..1024`, `1025..4096`, `4097..8192`, `8193..16384`, `16385..65536`, `65537..262144`, `262145..1048576`, `1048577+`. |
-| `SendSizeBuckets` | Indexed counter | Send completions bucketed into these ranges: `0..64`, `65..256`, `257..1024`, `1025..4096`, `4097..8192`, `8193..16384`, `16385..65536`, `65537..262144`, `262145..1048576`, `1048577+`. |
+| `ConnectionDurationBuckets` | Indexed counter | Connection lifetime histogram recorded at disconnect time using `MetricBucketDefinitions.DurationBucketNames`: `0..100us`, `100us..500us`, `500us..1ms`, `1ms..5ms`, `5ms..10ms`, `10ms..50ms`, `50ms..100ms`, `100ms..250ms`, `250ms..500ms`, `500ms..1s`, `1s..2s`, `2s..5s`, `5s..10s`, `10s..30s`, `30s..1m`, `1m..2m`, `2m..5m`, `5m..10m`, `10m..30m`, `30m..1h+`. |
+| `ReceiveSizeBuckets` | Indexed counter | Receive completions bucketed using `MetricBucketDefinitions.TransferSizeBucketNames`: `0..64`, `65..256`, `257..1024`, `1025..4096`, `4097..8192`, `8193..16384`, `16385..65536`, `65537..262144`, `262145..1048576`, `1048577+`. |
+| `SendSizeBuckets` | Indexed counter | Send completions bucketed using `MetricBucketDefinitions.TransferSizeBucketNames`: `0..64`, `65..256`, `257..1024`, `1025..4096`, `4097..8192`, `8193..16384`, `16385..65536`, `65537..262144`, `262145..1048576`, `1048577+`. |
 | `ConsumerMetrics` | Nested snapshot | Optional consumer metrics snapshot. `null` when the consumer does not implement `IMetricsCapture<ConsumerMetricsSnapshot>`. |
 | `SocketErrorsByCode` | Indexed counter | Socket errors indexed by raw `SocketError` value offset from `SocketErrorCodeMinimum`, or queried via `GetSocketErrorCount(SocketError.X)`. |
 | `SocketErrorCodeMinimum` | Scalar | Minimum raw `SocketError` value represented in `SocketErrorsByCode`. |
@@ -57,9 +57,9 @@ When `ConsumerMetrics` has a value on `TcpServerMetricsSnapshot`, the nested `Co
 | `HandlerErrors` | Counter | Total number of consumer handler invocations that threw. |
 | `QueueDepthByLane` | Indexed gauge | Current queued event count per ordering lane. |
 | `EventsProcessed` | Indexed counter | Successfully processed consumer events indexed by `ClientEventType`. |
-| `HandlerDurationBuckets` | Indexed counter | Successful consumer-event handler durations across all event types bucketed into these ranges: `0..100us`, `100us..1ms`, `1..10ms`, `10..50ms`, `50..250ms`, `250ms..1s`, `1..5s`, `5..30s`, `30s..2m`, `2m+`. |
-| `ReceivedDataQueueDelayBuckets` | Indexed counter | Received-data queue delays from threaded-consumer handoff attempt to handler start bucketed into these ranges: `0..100us`, `100us..1ms`, `1..10ms`, `10..50ms`, `50..250ms`, `250ms..1s`, `1..5s`, `5..30s`, `30s..2m`, `2m+`. Empty when the consumer does not publish this detail. |
-| `ReceivedDataHandlerDurationBuckets` | Indexed counter | Successful received-data handler durations bucketed into these ranges: `0..100us`, `100us..1ms`, `1..10ms`, `10..50ms`, `50..250ms`, `250ms..1s`, `1..5s`, `5..30s`, `30s..2m`, `2m+`. Empty when the consumer does not publish this detail. |
+| `HandlerDurationBuckets` | Indexed counter | Successful consumer-event handler durations across all event types bucketed using `MetricBucketDefinitions.DurationBucketNames`: `0..100us`, `100us..500us`, `500us..1ms`, `1ms..5ms`, `5ms..10ms`, `10ms..50ms`, `50ms..100ms`, `100ms..250ms`, `250ms..500ms`, `500ms..1s`, `1s..2s`, `2s..5s`, `5s..10s`, `10s..30s`, `30s..1m`, `1m..2m`, `2m..5m`, `5m..10m`, `10m..30m`, `30m..1h+`. |
+| `ReceivedDataQueueDelayBuckets` | Indexed counter | Received-data queue delays from threaded-consumer handoff attempt to handler start bucketed using `MetricBucketDefinitions.DurationBucketNames`: `0..100us`, `100us..500us`, `500us..1ms`, `1ms..5ms`, `5ms..10ms`, `10ms..50ms`, `50ms..100ms`, `100ms..250ms`, `250ms..500ms`, `500ms..1s`, `1s..2s`, `2s..5s`, `5s..10s`, `10s..30s`, `30s..1m`, `1m..2m`, `2m..5m`, `5m..10m`, `10m..30m`, `30m..1h+`. Empty when the consumer does not publish this detail. |
+| `ReceivedDataHandlerDurationBuckets` | Indexed counter | Successful received-data handler durations bucketed using `MetricBucketDefinitions.DurationBucketNames`: `0..100us`, `100us..500us`, `500us..1ms`, `1ms..5ms`, `5ms..10ms`, `10ms..50ms`, `50ms..100ms`, `100ms..250ms`, `250ms..500ms`, `500ms..1s`, `1s..2s`, `2s..5s`, `5s..10s`, `10s..30s`, `30s..1m`, `1m..2m`, `2m..5m`, `5m..10m`, `10m..30m`, `30m..1h+`. Empty when the consumer does not publish this detail. |
 
 ## DisconnectReason
 
@@ -87,7 +87,7 @@ Use `DisconnectsByReason.Span[(int)DisconnectReason.X]` to read a specific disco
 | Gauges | Current values at snapshot time. |
 | Rates | Derived values computed from recent counter deltas. |
 | Per-lane values | Array positions match the ordering lane index. |
-| Connection duration buckets | Bucket positions map to the fixed connection lifetime ranges listed above. |
-| Size buckets | Bucket positions map to the fixed ranges listed above. |
+| Connection duration buckets | Bucket positions map to `MetricBucketDefinitions.DurationBucketNames`. |
+| Size buckets | Bucket positions map to `MetricBucketDefinitions.TransferSizeBucketNames`. |
 | Consumer metrics | When `ConsumerMetrics` has a value, use `HandlerErrors`, `QueueDepthByLane`, `GetEventsProcessedCount(ClientEventType.X)`, and the histogram fields on the nested snapshot. |
 | Socket error buckets | Use `GetSocketErrorCount(SocketError.X)` for direct lookup, or compute `((int)socketError) - SocketErrorCodeMinimum` to index `SocketErrorsByCode`. |

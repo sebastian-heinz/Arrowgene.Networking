@@ -287,17 +287,17 @@ public readonly struct TcpServerMetricsSnapshot
     public ReadOnlyMemory<long> LaneActiveConnections { get; }
 
     /// <summary>
-    /// Gets disconnect-time connection duration histogram buckets using the ranges 0..1s, 1..5s, 5..30s, 30s..2m, 2..10m, 10..60m, 60m..6h, 6h..24h, 24h..72h, and 72h+.
+    /// Gets disconnect-time connection duration histogram buckets indexed by the shared duration scale defined in <see cref="MetricBucketDefinitions.DurationBucketNames"/>.
     /// </summary>
     public ReadOnlyMemory<long> ConnectionDurationBuckets { get; }
 
     /// <summary>
-    /// Gets receive-size histogram buckets using the ranges 0..64, 65..256, 257..1024, 1025..4096, 4097..8192, 8193..16384, 16385..65536, 65537..262144, 262145..1048576, and 1048577+.
+    /// Gets receive-size histogram buckets indexed by <see cref="MetricBucketDefinitions.TransferSizeBucketNames"/>.
     /// </summary>
     public ReadOnlyMemory<long> ReceiveSizeBuckets { get; }
 
     /// <summary>
-    /// Gets send-size histogram buckets using the ranges 0..64, 65..256, 257..1024, 1025..4096, 4097..8192, 8193..16384, 16385..65536, 65537..262144, 262145..1048576, and 1048577+.
+    /// Gets send-size histogram buckets indexed by <see cref="MetricBucketDefinitions.TransferSizeBucketNames"/>.
     /// </summary>
     public ReadOnlyMemory<long> SendSizeBuckets { get; }
 

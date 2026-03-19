@@ -121,6 +121,8 @@ long timeoutDisconnects = metrics.DisconnectsByReason.Span[(int)DisconnectReason
 long laneZeroConnections = metrics.LaneActiveConnections.Span[0];
 long shortLivedConnections = metrics.ConnectionDurationBuckets.Span[0];
 long smallReceives = metrics.ReceiveSizeBuckets.Span[0];
+string shortestDurationBucket = MetricBucketDefinitions.DurationBucketNames[0];
+string smallestTransferBucket = MetricBucketDefinitions.TransferSizeBucketNames[0];
 ```
 
 The snapshot includes:
@@ -130,7 +132,7 @@ The snapshot includes:
 - Throughput totals and rates: accepts, receive/send operations, bytes, operations per second, and bytes per second.
 - Failure and backpressure counters: socket errors, zero-byte receives, timeouts, send queue overflows.
 - Current server state: accept-pool availability, available client slots, total queued send bytes, in-flight async callbacks, deferred disconnect cleanup depth, per-lane active connections.
-- Optional low-cost detail: connection-duration buckets, receive/send size buckets, and per-socket-error-code counters via `GetSocketErrorCount(SocketError.X)`.
+- Optional low-cost detail: connection-duration buckets, receive/send size buckets, and per-socket-error-code counters via `GetSocketErrorCount(SocketError.X)`. Bucket labels are exposed publicly through `MetricBucketDefinitions.DurationBucketNames` and `MetricBucketDefinitions.TransferSizeBucketNames`.
 - Optional consumer detail via `ConsumerMetrics` when the consumer implements `IMetricsCapture<ConsumerMetricsSnapshot>`; for `ThreadedBlockingQueueConsumer` this includes per-lane queue depth, processed event counts, all-event handler duration buckets, received-data queue-delay buckets, received-data handler duration buckets, and handler error totals.
 - Disconnect reason counters indexed by `DisconnectReason`.
 

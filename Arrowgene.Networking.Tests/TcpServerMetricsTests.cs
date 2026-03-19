@@ -15,6 +15,8 @@ namespace Arrowgene.Networking.Tests;
 /// </summary>
 public sealed class TcpServerMetricsTests
 {
+    private static readonly int DurationBucketCount = MetricBucketDefinitions.DurationBucketNames.Count;
+    private static readonly int TransferSizeBucketCount = MetricBucketDefinitions.TransferSizeBucketNames.Count;
     private static readonly TimeSpan ShortTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan MediumTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan LongTimeout = TimeSpan.FromSeconds(20);
@@ -69,9 +71,9 @@ public sealed class TcpServerMetricsTests
                 "Timed out waiting for the connected traffic metrics snapshot."
             );
 
-            Assert.Equal(10, connectedSnapshot.ReceiveSizeBuckets.Length);
-            Assert.Equal(10, connectedSnapshot.SendSizeBuckets.Length);
-            Assert.Equal(10, connectedSnapshot.ConnectionDurationBuckets.Length);
+            Assert.Equal(TransferSizeBucketCount, connectedSnapshot.ReceiveSizeBuckets.Length);
+            Assert.Equal(TransferSizeBucketCount, connectedSnapshot.SendSizeBuckets.Length);
+            Assert.Equal(DurationBucketCount, connectedSnapshot.ConnectionDurationBuckets.Length);
             Assert.True(connectedSnapshot.SnapshotSequenceNumber > preTrafficSnapshot.SnapshotSequenceNumber);
             Assert.Equal(preTrafficSnapshot.ServerStartedAtUtc, connectedSnapshot.ServerStartedAtUtc);
             Assert.True(connectedSnapshot.ServerStartedAtUtc <= connectedSnapshot.TimestampUtc);
@@ -113,7 +115,7 @@ public sealed class TcpServerMetricsTests
             Assert.True(disconnectedSnapshot.SnapshotSequenceNumber >= connectedSnapshot.SnapshotSequenceNumber);
             Assert.Equal(connectedSnapshot.ServerStartedAtUtc, disconnectedSnapshot.ServerStartedAtUtc);
             Assert.True(disconnectedSnapshot.PeakActiveConnections >= disconnectedSnapshot.ActiveConnections);
-            Assert.Equal(10, disconnectedSnapshot.ConnectionDurationBuckets.Length);
+            Assert.Equal(DurationBucketCount, disconnectedSnapshot.ConnectionDurationBuckets.Length);
             Assert.Equal(
                 disconnectedSnapshot.DisconnectedConnections,
                 GetCounterTotal(disconnectedSnapshot.ConnectionDurationBuckets)
@@ -268,7 +270,7 @@ public sealed class TcpServerMetricsTests
                     && consumerMetrics.QueueDepthByLane.Length == 1
                     && consumerMetrics.QueueDepthByLane.Span[0] == 7
                     && consumerMetrics.HandlerErrors == 3
-                    && consumerMetrics.HandlerDurationBuckets.Length == 10
+                    && consumerMetrics.HandlerDurationBuckets.Length == DurationBucketCount
                     && consumerMetrics.ReceivedDataQueueDelayBuckets.Length == 0
                     && consumerMetrics.ReceivedDataHandlerDurationBuckets.Length == 0
                     && GetCounterTotal(consumerMetrics.HandlerDurationBuckets) == 0
@@ -281,7 +283,7 @@ public sealed class TcpServerMetricsTests
             ConsumerMetricsSnapshot consumerMetrics = GetRequiredConsumerMetrics(snapshot);
             Assert.Equal(7, consumerMetrics.QueueDepthByLane.Span[0]);
             Assert.Equal(3, consumerMetrics.HandlerErrors);
-            Assert.Equal(10, consumerMetrics.HandlerDurationBuckets.Length);
+            Assert.Equal(DurationBucketCount, consumerMetrics.HandlerDurationBuckets.Length);
             Assert.Equal(0, consumerMetrics.ReceivedDataQueueDelayBuckets.Length);
             Assert.Equal(0, consumerMetrics.ReceivedDataHandlerDurationBuckets.Length);
             Assert.Equal(0, GetCounterTotal(consumerMetrics.HandlerDurationBuckets));

@@ -1,5 +1,4 @@
 using System;
-using System.Diagnostics;
 using System.Threading;
 using Arrowgene.Networking.SAEAServer.Consumer.BlockingQueueConsumption;
 
@@ -7,7 +6,6 @@ namespace Arrowgene.Networking.SAEAServer.Metric;
 
 internal sealed class ConsumerMetricsState
 {
-    private const int LatencyBucketCount = 10;
     private readonly long[] _consumerEventsProcessed;
     private readonly long[] _handlerDurationBuckets;
     private readonly long[] _receivedDataHandlerDurationBuckets;
@@ -17,10 +15,11 @@ internal sealed class ConsumerMetricsState
 
     internal ConsumerMetricsState()
     {
+        int latencyBucketCount = MetricBucketDefinitions.DurationBucketNames.Count;
         _consumerEventsProcessed = new long[Enum.GetValues<ClientEventType>().Length];
-        _handlerDurationBuckets = new long[LatencyBucketCount];
-        _receivedDataQueueDelayBuckets = new long[LatencyBucketCount];
-        _receivedDataHandlerDurationBuckets = new long[LatencyBucketCount];
+        _handlerDurationBuckets = new long[latencyBucketCount];
+        _receivedDataQueueDelayBuckets = new long[latencyBucketCount];
+        _receivedDataHandlerDurationBuckets = new long[latencyBucketCount];
     }
 
     internal int ConsumerEventTypeCount => _consumerEventsProcessed.Length;
@@ -63,7 +62,9 @@ internal sealed class ConsumerMetricsState
             return;
         }
 
-        Interlocked.Increment(ref _handlerDurationBuckets[GetLatencyBucketIndex(elapsedTicks)]);
+        Interlocked.Increment(
+            ref _handlerDurationBuckets[MetricBucketDefinitions.GetDurationBucketIndex(elapsedTicks)]
+        );
     }
 
     internal void RecordReceivedDataHandlerDuration(long elapsedTicks)
@@ -74,7 +75,9 @@ internal sealed class ConsumerMetricsState
         }
 
         Interlocked.Increment(
-            ref _receivedDataHandlerDurationBuckets[GetLatencyBucketIndex(elapsedTicks)]
+            ref _receivedDataHandlerDurationBuckets[
+                MetricBucketDefinitions.GetDurationBucketIndex(elapsedTicks)
+            ]
         );
     }
 
@@ -85,7 +88,11 @@ internal sealed class ConsumerMetricsState
             return;
         }
 
-        Interlocked.Increment(ref _receivedDataQueueDelayBuckets[GetLatencyBucketIndex(elapsedTicks)]);
+        Interlocked.Increment(
+            ref _receivedDataQueueDelayBuckets[
+                MetricBucketDefinitions.GetDurationBucketIndex(elapsedTicks)
+            ]
+        );
     }
 
     internal void IncrementConsumerHandlerErrors()
@@ -132,63 +139,6 @@ internal sealed class ConsumerMetricsState
             destination,
             "Destination must be at least as large as the received-data queue-delay counter array."
         );
-    }
-
-    private static int GetLatencyBucketIndex(long elapsedTicks)
-    {
-        if (elapsedTicks < 0)
-        {
-            elapsedTicks = 0;
-        }
-
-        double microseconds = (double)elapsedTicks / Stopwatch.Frequency * 1_000_000.0d;
-
-        if (microseconds <= 100.0d)
-        {
-            return 0;
-        }
-
-        if (microseconds <= 1_000.0d)
-        {
-            return 1;
-        }
-
-        if (microseconds <= 10_000.0d)
-        {
-            return 2;
-        }
-
-        if (microseconds <= 50_000.0d)
-        {
-            return 3;
-        }
-
-        if (microseconds <= 250_000.0d)
-        {
-            return 4;
-        }
-
-        if (microseconds <= 1_000_000.0d)
-        {
-            return 5;
-        }
-
-        if (microseconds <= 5_000_000.0d)
-        {
-            return 6;
-        }
-
-        if (microseconds <= 30_000_000.0d)
-        {
-            return 7;
-        }
-
-        if (microseconds <= 120_000_000.0d)
-        {
-            return 8;
-        }
-
-        return 9;
     }
 
     private static void CopyCounterArray(long[] source, long[] destination, string lengthErrorMessage)
